@@ -234,8 +234,8 @@ export default function MonitoreoUsuarios() {
       full_name: buildFullName(form.firstName.trim(), form.lastName.trim()),
       role: form.role,
       status: form.status,
-      doc_type: form.role === 'admin' ? form.docType : null,
-      doc_number: form.role === 'admin' ? form.docNumber.trim() : null,
+      doc_type: form.docType,
+      doc_number: form.docNumber.trim(),
       email: form.email.trim(),
       password: form.password.trim() || undefined,
     };
@@ -251,12 +251,12 @@ export default function MonitoreoUsuarios() {
         return;
       }
 
-      if (form.role === 'admin' && !payload.doc_number) {
-        setError('El DNI o CE es obligatorio para administradores.');
+      if (!payload.doc_number) {
+        setError('El documento es obligatorio.');
         return;
       }
 
-      if (form.role === 'admin' && form.docType === 'DNI' && !/^\d{8}$/.test(String(payload.doc_number))) {
+      if (form.docType === 'DNI' && !/^\d{8}$/.test(String(payload.doc_number))) {
         setError('El DNI debe tener 8 digitos.');
         return;
       }
@@ -466,26 +466,24 @@ export default function MonitoreoUsuarios() {
                   placeholder="usuario@ugel.gob.pe"
                 />
 
-                {form.role === 'admin' ? (
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <Select
-                      id="docType"
-                      label="Tipo documento"
-                      value={form.docType}
-                      onChange={(event) => setForm((prev) => ({ ...prev, docType: event.target.value }))}
-                    >
-                      <option value="DNI">DNI</option>
-                      <option value="CE">CE</option>
-                    </Select>
-                    <Input
-                      id="docNumber"
-                      label="Documento"
-                      value={form.docNumber}
-                      onChange={(event) => setForm((prev) => ({ ...prev, docNumber: event.target.value }))}
-                      placeholder={form.docType === 'DNI' ? '8 digitos' : 'Documento'}
-                    />
-                  </div>
-                ) : null}
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <Select
+                    id="docType"
+                    label="Tipo documento"
+                    value={form.docType}
+                    onChange={(event) => setForm((prev) => ({ ...prev, docType: event.target.value }))}
+                  >
+                    <option value="DNI">DNI</option>
+                    <option value="CE">CE</option>
+                  </Select>
+                  <Input
+                    id="docNumber"
+                    label="Documento"
+                    value={form.docNumber}
+                    onChange={(event) => setForm((prev) => ({ ...prev, docNumber: event.target.value }))}
+                    placeholder={form.docType === 'DNI' ? '8 digitos' : 'Documento'}
+                  />
+                </div>
 
                 <label className="flex flex-col gap-2 text-sm text-slate-200">
                   <span className="text-xs uppercase tracking-wide text-slate-400">
