@@ -1,5 +1,5 @@
 ﻿import { useEffect, useMemo, useRef, useState } from 'react';
-import { CheckCircle2, Copy, RefreshCw } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Copy, KeyRound, Loader2, RefreshCw } from 'lucide-react';
 import Card from '../components/ui/Card.jsx';
 import Input from '../components/ui/Input.jsx';
 import Select from '../components/ui/Select.jsx';
@@ -66,11 +66,18 @@ export default function MonitoreoUsuarios() {
   const [roleFilter, setRoleFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
   const [loading, setLoading] = useState(true);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [passwordActionId, setPasswordActionId] = useState('');
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [tempPassword, setTempPassword] = useState('');
   const [copied, setCopied] = useState(false);
-  const [toast, setToast] = useState({ show: false, visible: false, message: '' });
+  const [toast, setToast] = useState({
+    show: false,
+    visible: false,
+    message: '',
+    tone: 'success',
+  });
   const toastTimersRef = useRef({ hide: null, remove: null });
 
   const readFunctionError = async (fnError) => {
@@ -114,6 +121,21 @@ export default function MonitoreoUsuarios() {
     };
   };
 
+  const showToast = (message, tone = 'success') => {
+    if (toastTimersRef.current.hide) clearTimeout(toastTimersRef.current.hide);
+    if (toastTimersRef.current.remove) clearTimeout(toastTimersRef.current.remove);
+
+    setToast({ show: true, visible: true, message, tone });
+
+    toastTimersRef.current.hide = setTimeout(() => {
+      setToast((prev) => ({ ...prev, visible: false }));
+    }, 2300);
+
+    toastTimersRef.current.remove = setTimeout(() => {
+      setToast({ show: false, visible: false, message: '', tone: 'success' });
+    }, 2800);
+  };
+
   const loadUsers = async () => {
     setLoading(true);
     setError('');
@@ -134,7 +156,9 @@ export default function MonitoreoUsuarios() {
     if (fnError) {
       const details = await readFunctionError(fnError);
       console.error('Usuarios list error', fnError, details);
-      setError(details || fnError.message || 'No se pudieron cargar los usuarios.');
+      const message = details || fnError.message || 'No se pudieron cargar los usuarios.';
+      setError(message);
+      showToast(message, 'error');
       setUsers([]);
     } else {
       setUsers(data?.data || []);
@@ -195,23 +219,10 @@ export default function MonitoreoUsuarios() {
     }
   };
 
-  const showSuccessToast = (message) => {
-    if (toastTimersRef.current.hide) clearTimeout(toastTimersRef.current.hide);
-    if (toastTimersRef.current.remove) clearTimeout(toastTimersRef.current.remove);
-
-    setToast({ show: true, visible: true, message });
-
-    toastTimersRef.current.hide = setTimeout(() => {
-      setToast((prev) => ({ ...prev, visible: false }));
-    }, 2300);
-
-    toastTimersRef.current.remove = setTimeout(() => {
-      setToast({ show: false, visible: false, message: '' });
-    }, 2800);
-  };
-
   const handleSubmit = async (event) => {
     event.preventDefault();
+    if (isSubmitting) return;
+
     setError('');
     setSuccess('');
 
@@ -226,7 +237,7 @@ export default function MonitoreoUsuarios() {
       doc_type: form.role === 'admin' ? form.docType : null,
       doc_number: form.role === 'admin' ? form.docNumber.trim() : null,
       email: form.email.trim(),
-      password: form.id ? undefined : form.password.trim(),
+      password: form.password.trim() || undefined,
     };
 
     if (!payload.first_name || !payload.last_name) {
@@ -259,6 +270,9 @@ export default function MonitoreoUsuarios() {
         setError('La contrasena temporal debe tener 9 caracteres e incluir mayuscula, minuscula, numero y simbolo.');
         return;
       }
+    } else if (payload.password && !isStrongTempPassword(payload.password)) {
+      setError('La nueva contrasena debe tener 9 caracteres e incluir mayuscula, minuscula, numero y simbolo.');
+      return;
     }
 
     const headers = await getAuthHeaders();
@@ -267,26 +281,34 @@ export default function MonitoreoUsuarios() {
       return;
     }
 
-    const { data, error: fnError } = await supabase.functions.invoke('admin-users', {
-      body: payload,
-      headers,
-    });
+    setIsSubmitting(true);
+    try {
+      const { data, error: fnError } = await supabase.functions.invoke('admin-users', {
+        body: payload,
+        headers,
+      });
 
-    if (fnError) {
-      const details = await readFunctionError(fnError);
-      console.error('Usuarios create/update error', fnError, details, data);
-      setError(details || data?.error || fnError.message || 'No se pudo guardar el usuario.');
-      return;
+      if (fnError) {
+        const details = await readFunctionError(fnError);
+        console.error('Usuarios create/update error', fnError, details, data);
+        const message = details || data?.error || fnError.message || 'No se pudo guardar el usuario.';
+        setError(message);
+        showToast(message, 'error');
+        return;
+      }
+
+      const successMessage = form.id ? 'Usuario actualizado con exito' : 'Usuario creado con exito';
+      setSuccess(form.id ? 'Usuario actualizado.' : 'Usuario creado correctamente.');
+      if (!form.id) {
+        setTempPassword(form.password.trim());
+      }
+      showToast(successMessage, 'success');
+
+      resetForm();
+      await loadUsers();
+    } finally {
+      setIsSubmitting(false);
     }
-
-    setSuccess(form.id ? 'Usuario actualizado.' : 'Usuario creado correctamente.');
-    if (!form.id) {
-      setTempPassword(form.password.trim());
-      showSuccessToast('Usuario creado con exito');
-    }
-
-    resetForm();
-    await loadUsers();
   };
 
   const handleEdit = (user) => {
@@ -314,18 +336,58 @@ export default function MonitoreoUsuarios() {
       return;
     }
 
-    const { error: fnError } = await supabase.functions.invoke('admin-users', {
-      body: { action: 'disable', id: user.id },
-      headers,
-    });
+    setIsSubmitting(true);
+    try {
+      const { error: fnError } = await supabase.functions.invoke('admin-users', {
+        body: { action: 'disable', id: user.id },
+        headers,
+      });
 
-    if (fnError) {
-      const details = await readFunctionError(fnError);
-      setError(details || 'No se pudo desactivar el usuario.');
+      if (fnError) {
+        const details = await readFunctionError(fnError);
+        const message = details || 'No se pudo desactivar el usuario.';
+        setError(message);
+        showToast(message, 'error');
+        return;
+      }
+
+      showToast('Usuario desactivado con exito', 'success');
+      await loadUsers();
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleResetAndCopyPassword = async (user) => {
+    const headers = await getAuthHeaders();
+    if (!headers) {
+      setError('Sesion invalida. Vuelve a iniciar sesion.');
       return;
     }
 
-    await loadUsers();
+    const newPassword = buildTempPassword();
+    setPasswordActionId(user.id);
+    try {
+      const { data, error: fnError } = await supabase.functions.invoke('admin-users', {
+        body: { action: 'update', id: user.id, password: newPassword },
+        headers,
+      });
+
+      if (fnError) {
+        const details = await readFunctionError(fnError);
+        const message = details || data?.error || 'No se pudo generar la nueva contrasena.';
+        setError(message);
+        showToast(message, 'error');
+        return;
+      }
+
+      await navigator.clipboard.writeText(newPassword);
+      showToast('Nueva contrasena copiada. Compartela con el usuario.', 'success');
+    } catch {
+      showToast('No se pudo copiar la contrasena al portapapeles.', 'error');
+    } finally {
+      setPasswordActionId('');
+    }
   };
 
   return (
@@ -336,8 +398,18 @@ export default function MonitoreoUsuarios() {
             toast.visible ? 'translate-y-0 opacity-100' : '-translate-y-2 opacity-0'
           }`}
         >
-          <div className="flex items-center gap-3 rounded-2xl border border-emerald-300/30 bg-emerald-500/15 px-4 py-3 text-emerald-100 shadow-[0_16px_44px_rgba(16,185,129,0.24)] backdrop-blur-xl">
-            <CheckCircle2 size={18} className="text-emerald-200" />
+          <div
+            className={`flex items-center gap-3 rounded-2xl px-4 py-3 backdrop-blur-xl ${
+              toast.tone === 'success'
+                ? 'border border-emerald-300/30 bg-emerald-500/15 text-emerald-100 shadow-[0_16px_44px_rgba(16,185,129,0.24)]'
+                : 'border border-rose-300/30 bg-rose-500/15 text-rose-100 shadow-[0_16px_44px_rgba(244,63,94,0.24)]'
+            }`}
+          >
+            {toast.tone === 'success' ? (
+              <CheckCircle2 size={18} className="text-emerald-200" />
+            ) : (
+              <AlertTriangle size={18} className="text-rose-200" />
+            )}
             <p className="text-sm font-medium">{toast.message}</p>
           </div>
         </div>
@@ -356,62 +428,69 @@ export default function MonitoreoUsuarios() {
               title="Usuarios"
               description="Crea y administra cuentas del sistema."
             />
-            <form onSubmit={handleSubmit} className="grid gap-4 md:grid-cols-2">
-              <Input
-                id="firstName"
-                label="Nombres"
-                value={form.firstName}
-                onChange={(event) => setForm((prev) => ({ ...prev, firstName: event.target.value }))}
-                placeholder="Nombres"
-              />
-              <Input
-                id="lastName"
-                label="Apellidos"
-                value={form.lastName}
-                onChange={(event) => setForm((prev) => ({ ...prev, lastName: event.target.value }))}
-                placeholder="Apellidos"
-              />
-              <Select
-                id="role"
-                label="Rol"
-                value={form.role}
-                onChange={(event) => setForm((prev) => ({ ...prev, role: event.target.value }))}
-              >
-                <option value="user">Usuario</option>
-                <option value="admin">Administrador</option>
-              </Select>
-              <Input
-                id="email"
-                label="Correo institucional"
-                value={form.email}
-                onChange={(event) => setForm((prev) => ({ ...prev, email: event.target.value }))}
-                placeholder="usuario@ugel.gob.pe"
-              />
+            {isSubmitting ? (
+              <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-800/60">
+                <div className="h-full w-1/3 animate-pulse rounded-full bg-cyan-400/70" />
+              </div>
+            ) : null}
+            <form onSubmit={handleSubmit}>
+              <fieldset disabled={isSubmitting} className="grid gap-4 md:grid-cols-2 disabled:opacity-80">
+                <Input
+                  id="firstName"
+                  label="Nombres"
+                  value={form.firstName}
+                  onChange={(event) => setForm((prev) => ({ ...prev, firstName: event.target.value }))}
+                  placeholder="Nombres"
+                />
+                <Input
+                  id="lastName"
+                  label="Apellidos"
+                  value={form.lastName}
+                  onChange={(event) => setForm((prev) => ({ ...prev, lastName: event.target.value }))}
+                  placeholder="Apellidos"
+                />
+                <Select
+                  id="role"
+                  label="Rol"
+                  value={form.role}
+                  onChange={(event) => setForm((prev) => ({ ...prev, role: event.target.value }))}
+                >
+                  <option value="user">Usuario</option>
+                  <option value="admin">Administrador</option>
+                </Select>
+                <Input
+                  id="email"
+                  label="Correo institucional"
+                  value={form.email}
+                  onChange={(event) => setForm((prev) => ({ ...prev, email: event.target.value }))}
+                  placeholder="usuario@ugel.gob.pe"
+                />
 
-              {form.role === 'admin' ? (
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <Select
-                    id="docType"
-                    label="Tipo documento"
-                    value={form.docType}
-                    onChange={(event) => setForm((prev) => ({ ...prev, docType: event.target.value }))}
-                  >
-                    <option value="DNI">DNI</option>
-                    <option value="CE">CE</option>
-                  </Select>
-                  <Input
-                    id="docNumber"
-                    label="Documento"
-                    value={form.docNumber}
-                    onChange={(event) => setForm((prev) => ({ ...prev, docNumber: event.target.value }))}
-                    placeholder={form.docType === 'DNI' ? '8 digitos' : 'Documento'}
-                  />
-                </div>
-              ) : null}
+                {form.role === 'admin' ? (
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <Select
+                      id="docType"
+                      label="Tipo documento"
+                      value={form.docType}
+                      onChange={(event) => setForm((prev) => ({ ...prev, docType: event.target.value }))}
+                    >
+                      <option value="DNI">DNI</option>
+                      <option value="CE">CE</option>
+                    </Select>
+                    <Input
+                      id="docNumber"
+                      label="Documento"
+                      value={form.docNumber}
+                      onChange={(event) => setForm((prev) => ({ ...prev, docNumber: event.target.value }))}
+                      placeholder={form.docType === 'DNI' ? '8 digitos' : 'Documento'}
+                    />
+                  </div>
+                ) : null}
 
-              {!form.id ? (
                 <label className="flex flex-col gap-2 text-sm text-slate-200">
-                  <span className="text-xs uppercase tracking-wide text-slate-400">Contrasena temporal</span>
+                  <span className="text-xs uppercase tracking-wide text-slate-400">
+                    {form.id ? 'Nueva contrasena (opcional)' : 'Contrasena temporal'}
+                  </span>
                   <div className="flex items-center gap-2">
                     <input
                       id="tempPassword"
@@ -442,35 +521,44 @@ export default function MonitoreoUsuarios() {
                     Debe incluir mayuscula, minuscula, numero y simbolo (9 caracteres).
                   </span>
                 </label>
-              ) : null}
 
-              <Select
-                id="status"
-                label="Estado"
-                value={form.status}
-                onChange={(event) => setForm((prev) => ({ ...prev, status: event.target.value }))}
-              >
-                <option value="active">Activo</option>
-                <option value="disabled">Desactivado</option>
-              </Select>
-
-              <div className="flex flex-wrap items-end gap-3">
-                <button
-                  type="submit"
-                  className="inline-flex items-center justify-center rounded-xl bg-slate-100 px-6 py-3 text-sm font-semibold text-slate-900 transition hover:bg-white"
+                <Select
+                  id="status"
+                  label="Estado"
+                  value={form.status}
+                  onChange={(event) => setForm((prev) => ({ ...prev, status: event.target.value }))}
                 >
-                  {form.id ? 'Actualizar usuario' : 'Crear usuario'}
-                </button>
-                {form.id ? (
+                  <option value="active">Activo</option>
+                  <option value="disabled">Desactivado</option>
+                </Select>
+
+                <div className="flex flex-wrap items-end gap-3">
                   <button
-                    type="button"
-                    onClick={resetForm}
-                    className="inline-flex items-center justify-center rounded-xl border border-slate-700/60 px-6 py-3 text-sm font-semibold text-slate-200"
+                    type="submit"
+                    className="inline-flex items-center justify-center gap-2 rounded-xl bg-slate-100 px-6 py-3 text-sm font-semibold text-slate-900 transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-70"
+                    disabled={isSubmitting}
                   >
-                    Cancelar edicion
+                    {isSubmitting ? <Loader2 size={16} className="animate-spin" /> : null}
+                    {isSubmitting
+                      ? form.id
+                        ? 'Actualizando...'
+                        : 'Guardando...'
+                      : form.id
+                        ? 'Actualizar usuario'
+                        : 'Crear usuario'}
                   </button>
-                ) : null}
-              </div>
+                  {form.id ? (
+                    <button
+                      type="button"
+                      onClick={resetForm}
+                      className="inline-flex items-center justify-center rounded-xl border border-slate-700/60 px-6 py-3 text-sm font-semibold text-slate-200 disabled:cursor-not-allowed disabled:opacity-60"
+                      disabled={isSubmitting}
+                    >
+                      Cancelar edicion
+                    </button>
+                  ) : null}
+                </div>
+              </fieldset>
             </form>
 
             {error ? <p className="text-sm text-rose-400">{error}</p> : null}
@@ -549,6 +637,19 @@ export default function MonitoreoUsuarios() {
                         className="inline-flex items-center gap-2 rounded-full border border-slate-700/60 px-4 py-2 text-xs font-semibold text-slate-300 transition hover:border-slate-500"
                       >
                         Editar
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleResetAndCopyPassword(user)}
+                        disabled={passwordActionId === user.id}
+                        className="inline-flex items-center gap-2 rounded-full border border-cyan-500/30 px-4 py-2 text-xs font-semibold text-cyan-200 transition hover:border-cyan-400/60 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {passwordActionId === user.id ? (
+                          <Loader2 size={14} className="animate-spin" />
+                        ) : (
+                          <KeyRound size={14} />
+                        )}
+                        Copiar contrasena
                       </button>
                       {user.status === 'active' ? (
                         <button

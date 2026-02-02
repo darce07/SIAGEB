@@ -164,6 +164,7 @@ Deno.serve(async (req) => {
     if (payload.status !== undefined) updates.status = String(payload.status || 'active');
     if (payload.doc_type !== undefined) updates.doc_type = String(payload.doc_type || '');
     if (payload.doc_number !== undefined) updates.doc_number = String(payload.doc_number || '');
+    const nextPassword = payload.password !== undefined ? String(payload.password || '') : '';
 
     const { error } = await adminClient.from('profiles').update(updates).eq('id', id);
     if (error) return jsonResponse(500, { error: error.message });
@@ -172,6 +173,13 @@ Deno.serve(async (req) => {
       await adminClient.auth.admin.updateUserById(id, {
         app_metadata: { role: updates.role },
       });
+    }
+
+    if (nextPassword) {
+      const { error: passwordError } = await adminClient.auth.admin.updateUserById(id, {
+        password: nextPassword,
+      });
+      if (passwordError) return jsonResponse(500, { error: passwordError.message });
     }
 
     if (payload.status !== undefined) {
