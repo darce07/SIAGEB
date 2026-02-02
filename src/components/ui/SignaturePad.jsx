@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 
-export default function SignaturePad({ label, value, onChange }) {
+export default function SignaturePad({ label, value, onChange, disabled = false }) {
   const canvasRef = useRef(null);
   const [isDrawing, setIsDrawing] = useState(false);
 
@@ -35,6 +35,7 @@ export default function SignaturePad({ label, value, onChange }) {
   };
 
   const startDrawing = (event) => {
+    if (disabled) return;
     event.preventDefault();
     const ctx = canvasRef.current.getContext('2d');
     const { x, y } = getPoint(event);
@@ -44,6 +45,7 @@ export default function SignaturePad({ label, value, onChange }) {
   };
 
   const draw = (event) => {
+    if (disabled) return;
     if (!isDrawing) return;
     event.preventDefault();
     const ctx = canvasRef.current.getContext('2d');
@@ -53,6 +55,7 @@ export default function SignaturePad({ label, value, onChange }) {
   };
 
   const endDrawing = () => {
+    if (disabled) return;
     if (!isDrawing) return;
     setIsDrawing(false);
     const canvas = canvasRef.current;
@@ -61,6 +64,7 @@ export default function SignaturePad({ label, value, onChange }) {
   };
 
   const clear = () => {
+    if (disabled) return;
     const canvas = canvasRef.current;
     const ctx = canvas.getContext('2d');
     ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -74,7 +78,8 @@ export default function SignaturePad({ label, value, onChange }) {
         <button
           type="button"
           onClick={clear}
-          className="text-xs text-slate-400 hover:text-slate-200"
+          disabled={disabled}
+          className={`text-xs ${disabled ? 'text-slate-500' : 'text-slate-400 hover:text-slate-200'}`}
         >
           Limpiar
         </button>
@@ -82,7 +87,7 @@ export default function SignaturePad({ label, value, onChange }) {
       <div className="rounded-xl border border-dashed border-slate-600/60 bg-slate-900/60">
         <canvas
           ref={canvasRef}
-          className="h-32 w-full cursor-crosshair"
+          className={`h-32 w-full ${disabled ? 'cursor-not-allowed' : 'cursor-crosshair'}`}
           onPointerDown={startDrawing}
           onPointerMove={draw}
           onPointerUp={endDrawing}

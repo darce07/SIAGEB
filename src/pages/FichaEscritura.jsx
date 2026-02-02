@@ -1,5 +1,6 @@
 import { useContext, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { CheckCircle2, RefreshCw, Save } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import Card from '../components/ui/Card.jsx';
 import Input from '../components/ui/Input.jsx';
 import Select from '../components/ui/Select.jsx';
@@ -12,11 +13,48 @@ import SignaturePad from '../components/ui/SignaturePad.jsx';
 import Toast from '../components/ui/Toast.jsx';
 import { SidebarContext } from '../routes/MonitoreoLayout.jsx';
 import { FORM_TITLE, LEVEL_INFO, QUESTION_SECTIONS } from '../data/fichaEscritura.js';
+import { supabase } from '../lib/supabase.js';
 
-const STORAGE_KEY = 'monitoreoFichaEscritura';
+const INSTANCE_ACTIVE_KEY = 'monitoreoInstanceActive';
 
-const buildQuestionsState = () =>
-  QUESTION_SECTIONS.flatMap((section) => section.questions).reduce((acc, question) => {
+const TEMPLATE_KEY = 'monitoreoTemplateSelected';
+const loadSelectedTemplate = async (selectedId) => {
+  try {
+    if (!selectedId) return { template: null, error: null };
+    const { data, error } = await supabase
+      .from('monitoring_templates')
+      .select('*')
+      .eq('id', selectedId)
+      .single();
+    if (error) return { template: null, error };
+    return {
+      template: {
+        ...data,
+        levelsConfig: data.levels_config,
+        availability: data.availability,
+      },
+      error: null,
+    };
+  } catch {
+    return { template: null, error: new Error('No se pudo cargar la plantilla') };
+  }
+};
+
+const getTemplateStatus = (template) => {
+  const status = template?.availability ? template.availability.status || 'scheduled' : 'active';
+  const startAt = template?.availability?.startAt ? new Date(template.availability.startAt) : null;
+  const endAt = template?.availability?.endAt ? new Date(template.availability.endAt) : null;
+  const now = new Date();
+  if (status === 'closed') return 'closed';
+  if (status === 'scheduled') return 'scheduled';
+  if (startAt && now < startAt) return 'scheduled';
+  if (endAt && now > endAt) return 'closed';
+  if (status === 'active') return 'active';
+  return startAt || endAt ? 'scheduled' : 'active';
+};
+
+const buildQuestionsState = (sections) =>
+  sections.flatMap((section) => section.questions || []).reduce((acc, question) => {
     acc[question.id] = { answer: null, level: null, obs: '' };
     return acc;
   }, {});
@@ -27,7 +65,7 @@ const generateSessionId = () => {
   return `#MN-${year}-${random}`;
 };
 
-const createInitialState = () => ({
+const createInitialState = (sections) => ({
   meta: {
     sessionId: generateSessionId(),
     saved: true,
@@ -41,7 +79,7 @@ const createInitialState = () => ({
     condicion: '',
     area: '',
   },
-  questions: buildQuestionsState(),
+  questions: buildQuestionsState(sections),
   general: {
     observacion: '',
     compromiso: '',
@@ -126,7 +164,7 @@ const reducer = (state, action) => {
         meta: { ...state.meta, saved: action.value, lastSavedAt: action.lastSavedAt },
       };
     case 'RESET':
-      return createInitialState();
+      return createInitialState(action.sections || QUESTION_SECTIONS);
     default:
       return state;
   }
@@ -137,28 +175,213 @@ const serializeState = (state) => {
   return rest;
 };
 
+const mergeLoadedState = (loaded, sections) => {
+  const base = createInitialState(sections);
+  const mergedQuestions = {
+    ...base.questions,
+    ...(loaded?.questions || {}),
+  };
+  return {
+    ...base,
+    ...loaded,
+    questions: mergedQuestions,
+    errors: {},
+  };
+};
+
+const getCurrentUserId = () => {
+  try {
+    const auth = JSON.parse(localStorage.getItem('monitoreoAuth'));
+    return auth?.email || auth?.docNumber || '';
+  } catch {
+    return '';
+  }
+};
+
+const findInProgressInstance = async (templateId) => {
+  const userId = getCurrentUserId();
+  if (!templateId || !userId) return null;
+  const { data, error } = await supabase
+    .from('monitoring_instances')
+    .select('*')
+    .eq('template_id', templateId)
+    .eq('created_by', userId)
+    .eq('status', 'in_progress')
+    .order('updated_at', { ascending: false })
+    .limit(1);
+  if (error) return null;
+  return data?.[0] || null;
+};
+
+const getActiveInstance = async () => {
+  const activeId = localStorage.getItem(INSTANCE_ACTIVE_KEY);
+  if (!activeId) return null;
+  const { data, error } = await supabase
+    .from('monitoring_instances')
+    .select('*')
+    .eq('id', activeId)
+    .single();
+  if (error) return null;
+  return data;
+};
+
+const upsertInstance = async (instance) => {
+  await supabase.from('monitoring_instances').upsert(instance, { onConflict: 'id' });
+};
+
+const createInstance = async (templateId, templateStatus) => {
+  try {
+    if (templateStatus !== 'active') return null;
+    const userId = getCurrentUserId();
+    if (!userId) return null;
+    const now = new Date().toISOString();
+    const instance = {
+      id: crypto.randomUUID(),
+      template_id: templateId || null,
+      created_by: userId,
+      created_at: now,
+      updated_at: now,
+      status: 'in_progress',
+      data: null,
+    };
+    await upsertInstance(instance);
+    localStorage.setItem(INSTANCE_ACTIVE_KEY, instance.id);
+    return instance;
+  } catch {
+    return null;
+  }
+};
+
 export default function FichaEscritura() {
   const { setActiveSection } = useContext(SidebarContext);
-  const [state, dispatch] = useReducer(reducer, undefined, createInitialState);
+  const [selectedTemplate, setSelectedTemplate] = useState(null);
+  const [templateError, setTemplateError] = useState('');
+  const [isTemplateLoading, setIsTemplateLoading] = useState(true);
+  const [templateId, setTemplateId] = useState(() => localStorage.getItem(TEMPLATE_KEY) || '');
+  const [activeInstance, setActiveInstance] = useState(null);
+  const [state, dispatch] = useReducer(reducer, undefined, () =>
+    createInitialState(QUESTION_SECTIONS),
+  );
+  useEffect(() => {
+    let active = true;
+    const hydrate = async () => {
+      setIsTemplateLoading(true);
+      // 1) Recuperar instancia activa si existe
+      const existing = await getActiveInstance();
+      if (!active) return;
+      if (existing) {
+        setActiveInstance(existing);
+        if (existing.template_id && existing.template_id !== templateId) {
+          localStorage.setItem(TEMPLATE_KEY, existing.template_id);
+          setTemplateId(existing.template_id);
+        }
+      }
+
+      let reusedInstance = null;
+      if (!existing && templateId) {
+        reusedInstance = await findInProgressInstance(templateId);
+        if (!active) return;
+        if (reusedInstance) {
+          setActiveInstance(reusedInstance);
+          localStorage.setItem(INSTANCE_ACTIVE_KEY, reusedInstance.id);
+          if (reusedInstance.template_id && reusedInstance.template_id !== templateId) {
+            localStorage.setItem(TEMPLATE_KEY, reusedInstance.template_id);
+            setTemplateId(reusedInstance.template_id);
+          }
+        }
+      }
+
+      // 2) Cargar plantilla por templateId
+      const idToLoad = existing?.template_id || reusedInstance?.template_id || templateId;
+      if (!idToLoad) {
+        setTemplateError('No se encontró la plantilla seleccionada.');
+        setSelectedTemplate(null);
+        setIsTemplateLoading(false);
+        return;
+      }
+      const result = await loadSelectedTemplate(idToLoad);
+      if (!active) return;
+      if (result.error) {
+        console.error(result.error);
+        setTemplateError('No se pudo cargar la plantilla.');
+        setSelectedTemplate(null);
+      } else {
+        setSelectedTemplate(result.template);
+        setTemplateError('');
+      }
+      setIsTemplateLoading(false);
+    };
+    hydrate();
+    return () => {
+      active = false;
+    };
+  }, [templateId]);
+  const templateStatus = useMemo(() => getTemplateStatus(selectedTemplate), [selectedTemplate]);
+  const templateSections = useMemo(
+    () => selectedTemplate?.sections || QUESTION_SECTIONS,
+    [selectedTemplate],
+  );
+  const formTitle = selectedTemplate?.title || FORM_TITLE;
+  const defaultLevels = useMemo(
+    () =>
+      LEVEL_INFO.map((level, index) => ({
+        key: `L${index + 1}`,
+        label: `Nivel ${index + 1}`,
+        description: level.text,
+      })),
+    [],
+  );
+  const templateLevels = useMemo(() => {
+    const levels = selectedTemplate?.levelsConfig?.levels;
+    if (Array.isArray(levels) && levels.length >= 3) {
+      return levels;
+    }
+    return defaultLevels;
+  }, [defaultLevels, selectedTemplate]);
+  const isReadOnly = templateStatus !== 'active';
   const [toast, setToast] = useState('');
   const prevDocenteRef = useRef('');
   const prevMonitorRef = useRef('');
 
   const allQuestions = useMemo(
-    () => QUESTION_SECTIONS.flatMap((section) => section.questions),
-    [],
+    () => templateSections.flatMap((section) => section.questions || []),
+    [templateSections],
   );
 
   useEffect(() => {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    if (stored) {
-      dispatch({ type: 'LOAD', payload: JSON.parse(stored) });
-    }
-  }, []);
+    let active = true;
+    const hydrateInstance = async () => {
+      if (!activeInstance) return;
+      if (activeInstance?.data) {
+        dispatch({
+          type: 'LOAD',
+          payload: mergeLoadedState(activeInstance.data, templateSections),
+        });
+      }
+    };
+    hydrateInstance();
+    return () => {
+      active = false;
+    };
+  }, [activeInstance, templateSections]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(serializeState(state)));
-  }, [state]);
+    if (!activeInstance || !activeInstance.data) {
+      dispatch({ type: 'RESET', sections: templateSections });
+    }
+  }, [activeInstance, templateSections]);
+
+  useEffect(() => {
+    if (!activeInstance || isReadOnly) return;
+    const now = new Date().toISOString();
+    const payload = {
+      ...activeInstance,
+      updated_at: now,
+      status: activeInstance.status || 'in_progress',
+      data: serializeState(state),
+    };
+    upsertInstance(payload);
+  }, [activeInstance, isReadOnly, state]);
 
   useEffect(() => {
     if (
@@ -191,7 +414,7 @@ export default function FichaEscritura() {
   }, [state.header.director, state.firmas.monitor.nombre]);
 
   useEffect(() => {
-    const sections = ['datos', 'planificacion', 'textualizacion', 'evaluacion', 'cierre'];
+    const sections = ['datos', ...templateSections.map((section) => section.id), 'cierre'];
     const observer = new IntersectionObserver(
       (entries) => {
         entries.forEach((entry) => {
@@ -209,9 +432,9 @@ export default function FichaEscritura() {
     });
 
     return () => observer.disconnect();
-  }, [setActiveSection]);
+  }, [setActiveSection, templateSections]);
 
-  const handleSave = () => {
+  const handleSave = async () => {
     const errors = {};
     const headerErrors = {};
 
@@ -247,6 +470,22 @@ export default function FichaEscritura() {
       return;
     }
 
+    let instanceToSave = activeInstance;
+    if (!instanceToSave && !isReadOnly) {
+      const reused = await findInProgressInstance(selectedTemplate?.id);
+      if (reused) {
+        instanceToSave = reused;
+        setActiveInstance(reused);
+        localStorage.setItem(INSTANCE_ACTIVE_KEY, reused.id);
+      } else {
+        const created = await createInstance(selectedTemplate?.id, templateStatus);
+        if (created) {
+          instanceToSave = created;
+          setActiveInstance(created);
+        }
+      }
+    }
+
     dispatch({
       type: 'MARK_SAVED',
       value: true,
@@ -254,14 +493,57 @@ export default function FichaEscritura() {
     });
     dispatch({ type: 'SET_ERRORS', payload: {} });
     setToast('Cambios guardados correctamente.');
+    if (instanceToSave && !isReadOnly) {
+      const now = new Date().toISOString();
+      upsertInstance({
+        ...instanceToSave,
+        updated_at: now,
+        status: instanceToSave.status || 'in_progress',
+        data: serializeState(state),
+      });
+    }
   };
 
   const handleReset = () => {
     if (window.confirm('¿Seguro que deseas limpiar el formulario?')) {
-      localStorage.removeItem(STORAGE_KEY);
-      dispatch({ type: 'RESET' });
+      if (activeInstance) {
+        upsertInstance({
+          ...activeInstance,
+          updated_at: new Date().toISOString(),
+          status: 'in_progress',
+          data: serializeState(createInitialState(templateSections)),
+        });
+      }
+      dispatch({ type: 'RESET', sections: templateSections });
     }
   };
+
+  if (isTemplateLoading) {
+    return (
+      <div className="flex flex-col gap-6">
+        <Card>
+          <SectionHeader eyebrow="Formulario" title="Cargando formulario..." />
+        </Card>
+      </div>
+    );
+  }
+
+  if (templateError) {
+    return (
+      <div className="flex flex-col gap-6">
+        <Card className="flex flex-col gap-3">
+          <SectionHeader eyebrow="Error" title="No se pudo cargar el formulario" />
+          <p className="text-sm text-slate-400">{templateError}</p>
+          <Link
+            to="/monitoreo"
+            className="inline-flex items-center gap-2 self-start rounded-full border border-slate-700/60 px-4 py-2 text-xs font-semibold text-slate-300 transition hover:border-slate-500"
+          >
+            Volver a monitoreos
+          </Link>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col gap-8">
@@ -277,33 +559,48 @@ export default function FichaEscritura() {
             ) : null}
           </div>
           <div className="flex flex-wrap items-center gap-3">
+            <Link
+              to="/monitoreo"
+              className="inline-flex items-center gap-2 rounded-full border border-slate-700/60 px-4 py-2 text-xs font-semibold text-slate-300 transition hover:border-slate-500"
+            >
+              Volver
+            </Link>
             <Badge
               label={state.meta.saved ? 'Guardado' : 'Pendiente'}
               tone={state.meta.saved ? 'success' : 'warning'}
             />
-            <button
-              type="button"
-              onClick={handleSave}
-              className="inline-flex items-center gap-2 rounded-full border border-emerald-500/40 bg-emerald-500/20 px-4 py-2 text-xs font-semibold text-emerald-100 transition hover:border-emerald-400/70"
-            >
-              <Save size={14} />
-              Guardar cambios
-            </button>
-            <button
-              type="button"
-              onClick={handleReset}
-              className="inline-flex items-center gap-2 rounded-full border border-slate-700/60 px-4 py-2 text-xs font-semibold text-slate-300 transition hover:border-slate-500"
-            >
-              <RefreshCw size={14} />
-              Reset
-            </button>
+            {!isReadOnly ? (
+              <>
+                <button
+                  type="button"
+                  onClick={handleSave}
+                  className="inline-flex items-center gap-2 rounded-full border border-emerald-500/40 bg-emerald-500/20 px-4 py-2 text-xs font-semibold text-emerald-100 transition hover:border-emerald-400/70"
+                >
+                  <Save size={14} />
+                  Guardar cambios
+                </button>
+                <button
+                  type="button"
+                  onClick={handleReset}
+                  className="inline-flex items-center gap-2 rounded-full border border-slate-700/60 px-4 py-2 text-xs font-semibold text-slate-300 transition hover:border-slate-500"
+                >
+                  <RefreshCw size={14} />
+                  Reset
+                </button>
+              </>
+            ) : (
+              <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-3 py-1 text-xs text-amber-200">
+                Monitoreo no disponible. Solo lectura.
+              </span>
+            )}
           </div>
         </div>
       </div>
 
-      <Card>
-        <SectionHeader eyebrow="Formulario" title={FORM_TITLE} />
-      </Card>
+      <fieldset disabled={isReadOnly} className={isReadOnly ? 'opacity-90' : ''}>
+        <Card>
+          <SectionHeader eyebrow="Formulario" title={formTitle} />
+        </Card>
 
       <section id="datos" className="scroll-mt-28">
         <Card className="flex flex-col gap-6">
@@ -322,6 +619,7 @@ export default function FichaEscritura() {
               }
               error={state.errors?.header?.institucion}
               placeholder="Nombre de la I.E."
+              disabled={isReadOnly}
             />
             <Input
               id="lugarIe"
@@ -332,6 +630,7 @@ export default function FichaEscritura() {
               }
               error={state.errors?.header?.lugarIe}
               placeholder="Distrito / Provincia"
+              disabled={isReadOnly}
             />
             <Input
               id="director"
@@ -391,20 +690,24 @@ export default function FichaEscritura() {
           description="Estos niveles se mantienen visibles como referencia para cada ítem."
         />
         <div className="mt-4 flex flex-wrap gap-3">
-          {LEVEL_INFO.map((item) => (
-            <Badge key={item.level} label={`${item.level} - ${item.text}`} tone={item.tone} />
+          {templateLevels.map((item, index) => (
+            <Badge
+              key={item.key || item.label || index}
+              label={`${item.label} - ${item.description}`}
+              tone={index === 0 ? 'warning' : index === 1 ? 'blue' : index === 2 ? 'success' : 'info'}
+            />
           ))}
         </div>
       </Card>
 
-      {QUESTION_SECTIONS.map((section) => (
+      {templateSections.map((section, index) => (
         <section key={section.id} id={section.id} className="scroll-mt-28">
           <Card className="flex flex-col gap-6">
             <SectionHeader eyebrow={`Sección ${section.id.toUpperCase()}`} title={section.title} />
             <div className="flex flex-col gap-4">
               {section.questions.map((question) => {
-                const data = state.questions[question.id];
-                const isNo = data.answer === 'NO';
+                const data = state.questions[question.id] || { answer: null, level: null, obs: '' };
+                const isDisabled = data.answer !== 'SI';
                 return (
                   <div key={question.id} className="rounded-2xl border border-slate-800/70 bg-slate-950/40 p-5">
                     <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
@@ -420,12 +723,21 @@ export default function FichaEscritura() {
                           dispatch({
                             type: 'UPDATE_QUESTION',
                             id: question.id,
-                            payload: { answer: value, level: value === 'NO' ? null : data.level },
+                            payload: {
+                              answer: value,
+                              level: value === 'NO' ? null : data.level,
+                              obs: value === 'NO' ? '' : data.obs,
+                            },
                           })
                         }
                       />
                     </div>
-                    <div className={`mt-4 flex flex-col gap-4 ${isNo ? 'opacity-50' : ''}`}>
+                    <div className={`mt-4 flex flex-col gap-4 ${isDisabled ? 'opacity-50' : ''}`}>
+                      {data.answer === 'NO' ? (
+                        <p className="text-xs text-slate-400">
+                          Selecciona �S� para registrar nivel de logro y observaci�n.
+                        </p>
+                      ) : null}
                       <div className="flex flex-col gap-2">
                         <span className="text-xs uppercase tracking-wide text-slate-400">
                           Nivel de logro
@@ -439,7 +751,8 @@ export default function FichaEscritura() {
                               payload: { level: value },
                             })
                           }
-                          disabled={isNo}
+                          disabled={isDisabled}
+                          levels={templateLevels}
                         />
                       </div>
                       <Textarea
@@ -453,7 +766,7 @@ export default function FichaEscritura() {
                             payload: { obs: event.target.value },
                           })
                         }
-                        disabled={isNo}
+                        disabled={isDisabled}
                         placeholder="Registrar observaciones..."
                       />
                     </div>
@@ -531,6 +844,7 @@ export default function FichaEscritura() {
                   onChange={(value) =>
                     dispatch({ type: 'UPDATE_FIRMA', role: 'docente', field: 'firma', value })
                   }
+                  disabled={isReadOnly}
                 />
                 <Input
                   id="docente-nombre"
@@ -568,6 +882,7 @@ export default function FichaEscritura() {
                   onChange={(value) =>
                     dispatch({ type: 'UPDATE_FIRMA', role: 'monitor', field: 'firma', value })
                   }
+                  disabled={isReadOnly}
                 />
                 <Input
                   id="monitor-nombre"
@@ -603,10 +918,12 @@ export default function FichaEscritura() {
         </div>
       </section>
 
+      </fieldset>
+
       <div className="glass-panel flex items-center justify-between rounded-2xl px-6 py-4 text-sm text-slate-300">
         <div className="flex items-center gap-2">
           <CheckCircle2 size={18} className="text-emerald-300" />
-          <span>Auto guardado activo en localStorage.</span>
+          <span>Auto guardado activo en Supabase.</span>
         </div>
         <span className="text-xs text-slate-500">Listo para conectarse a API.</span>
       </div>
@@ -615,3 +932,10 @@ export default function FichaEscritura() {
     </div>
   );
 }
+
+
+
+
+
+
+

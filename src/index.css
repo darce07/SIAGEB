@@ -4,6 +4,25 @@
 
 :root {
   color-scheme: dark;
+  --font-scale: 1;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+html {
+  font-size: calc(16px * var(--font-scale));
+}
+
+html[data-font-size='large'] {
+  --font-scale: 1.125;
+}
+
+html[data-font-size='xlarge'] {
+  --font-scale: 1.25;
 }
 
 body {
@@ -12,6 +31,174 @@ body {
     radial-gradient(circle at top right, rgba(34, 197, 94, 0.12), transparent 40%),
     #020617;
   min-height: 100vh;
+  overscroll-behavior: none;
+  overflow: hidden;
+  overflow-x: hidden;
+}
+
+.content-glow {
+  background:
+    radial-gradient(1200px 700px at 15% 0%, rgba(59, 130, 246, 0.18), transparent 60%),
+    radial-gradient(1100px 600px at 85% -10%, rgba(34, 197, 94, 0.16), transparent 55%),
+    radial-gradient(900px 500px at 50% 20%, rgba(56, 189, 248, 0.08), transparent 60%),
+    transparent;
+}
+
+.login-glow {
+  background:
+    radial-gradient(900px 520px at 50% 15%, rgba(59, 130, 246, 0.18), transparent 60%),
+    radial-gradient(700px 420px at 80% 35%, rgba(34, 197, 94, 0.08), transparent 65%),
+    radial-gradient(900px 620px at 20% 60%, rgba(15, 23, 42, 0.35), transparent 70%),
+    linear-gradient(160deg, rgba(2, 6, 23, 0.98) 0%, rgba(2, 6, 23, 0.92) 45%, rgba(2, 6, 23, 1) 100%);
+  position: relative;
+  overflow: hidden;
+}
+
+.login-glow::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140' viewBox='0 0 140 140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
+  opacity: 0.2;
+  mix-blend-mode: soft-light;
+  pointer-events: none;
+}
+
+html[data-theme='light'] {
+  color-scheme: light;
+}
+
+html[data-theme='light'] body {
+  background:
+    radial-gradient(1100px 700px at 15% 0%, rgba(59, 130, 246, 0.12), transparent 65%),
+    radial-gradient(900px 600px at 85% -10%, rgba(34, 197, 94, 0.08), transparent 70%),
+    #f3f4f6;
+}
+
+html[data-theme='light'] .login-glow,
+html[data-theme='light'] .content-glow {
+  background:
+    radial-gradient(900px 520px at 50% 15%, rgba(59, 130, 246, 0.12), transparent 65%),
+    radial-gradient(700px 420px at 80% 35%, rgba(34, 197, 94, 0.06), transparent 70%),
+    linear-gradient(160deg, rgba(243, 244, 246, 0.98) 0%, rgba(248, 250, 252, 0.95) 45%, rgba(240, 242, 246, 1) 100%);
+}
+
+html[data-theme='light'] .glass-panel {
+  background: rgba(248, 250, 252, 0.9);
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.06);
+}
+
+html[data-theme='light'] .glass-card {
+  background: rgba(251, 252, 253, 0.95);
+  border: 1px solid rgba(148, 163, 184, 0.3);
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.05);
+}
+
+html[data-theme='light'] input,
+html[data-theme='light'] select,
+html[data-theme='light'] textarea {
+  background: rgba(246, 247, 249, 0.95) !important;
+  color: #111827 !important;
+  border-color: rgba(148, 163, 184, 0.55) !important;
+}
+
+html[data-theme='light'] input::placeholder,
+html[data-theme='light'] textarea::placeholder {
+  color: rgba(51, 65, 85, 0.7);
+}
+
+html[data-theme='light'] .text-slate-100,
+html[data-theme='light'] .text-slate-200,
+html[data-theme='light'] .text-slate-300 {
+  color: #111827 !important;
+}
+
+html[data-theme='light'] .text-slate-400 {
+  color: #4b5563 !important;
+}
+
+html[data-theme='light'] .text-slate-500 {
+  color: #6b7280 !important;
+}
+
+html[data-theme='light'] .border-slate-800\/70,
+html[data-theme='light'] .border-slate-700\/60 {
+  border-color: rgba(148, 163, 184, 0.6) !important;
+}
+
+html[data-theme='light'] .bg-slate-950\/80,
+html[data-theme='light'] .bg-slate-950\/90,
+html[data-theme='light'] .bg-slate-950\/50,
+html[data-theme='light'] .bg-slate-900\/60,
+html[data-theme='light'] .bg-slate-900\/50,
+html[data-theme='light'] .bg-slate-900\/70,
+html[data-theme='light'] .bg-slate-800\/40,
+html[data-theme='light'] .bg-slate-800 {
+  background-color: rgba(248, 249, 251, 0.92) !important;
+}
+
+html[data-theme='light'] .border-amber-500\/30 {
+  border-color: rgba(217, 119, 6, 0.35) !important;
+}
+
+html[data-theme='light'] .text-amber-200 {
+  color: #92400e !important;
+}
+
+html[data-theme='light'] .text-amber-100 {
+  color: #78350f !important;
+}
+
+html[data-theme='light'] .bg-emerald-500\/20 {
+  background-color: rgba(16, 185, 129, 0.16) !important;
+}
+
+html[data-theme='light'] .border-emerald-500\/40 {
+  border-color: rgba(16, 185, 129, 0.55) !important;
+}
+
+html[data-theme='light'] .text-emerald-200,
+html[data-theme='light'] .text-emerald-100,
+html[data-theme='light'] .text-emerald-300 {
+  color: #065f46 !important;
+}
+
+html[data-theme='light'] .bg-sky-500\/20,
+html[data-theme='light'] .bg-sky-500\/10 {
+  background-color: rgba(14, 116, 144, 0.12) !important;
+}
+
+html[data-theme='light'] .border-sky-500\/40,
+html[data-theme='light'] .border-sky-500\/30 {
+  border-color: rgba(14, 116, 144, 0.45) !important;
+}
+
+html[data-theme='light'] .text-sky-200,
+html[data-theme='light'] .text-sky-300 {
+  color: #0e7490 !important;
+}
+
+html[data-theme='light'] .bg-rose-500\/20 {
+  background-color: rgba(225, 29, 72, 0.1) !important;
+}
+
+html[data-theme='light'] .border-rose-500\/40 {
+  border-color: rgba(225, 29, 72, 0.45) !important;
+}
+
+html[data-theme='light'] .text-rose-200,
+html[data-theme='light'] .text-rose-300,
+html[data-theme='light'] .text-rose-400 {
+  color: #9f1239 !important;
+}
+
+html[data-theme='light'] .bg-amber-500\/20 {
+  background-color: rgba(245, 158, 11, 0.16) !important;
+}
+
+html[data-theme='light'] .border-amber-500\/40 {
+  border-color: rgba(245, 158, 11, 0.55) !important;
 }
 
 .glass-panel {
