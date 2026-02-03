@@ -138,6 +138,7 @@ Deno.serve(async (req) => {
       status,
       doc_type: docType || null,
       doc_number: docNumber || null,
+      temp_credential: password,
       updated_at: new Date().toISOString(),
     };
 
@@ -164,7 +165,9 @@ Deno.serve(async (req) => {
     if (payload.status !== undefined) updates.status = String(payload.status || 'active');
     if (payload.doc_type !== undefined) updates.doc_type = String(payload.doc_type || '');
     if (payload.doc_number !== undefined) updates.doc_number = String(payload.doc_number || '');
+    if (payload.email !== undefined) updates.email = String(payload.email || '').trim().toLowerCase();
     const nextPassword = payload.password !== undefined ? String(payload.password || '') : '';
+    if (nextPassword) updates.temp_credential = nextPassword;
 
     const { error } = await adminClient.from('profiles').update(updates).eq('id', id);
     if (error) return jsonResponse(500, { error: error.message });
@@ -173,6 +176,15 @@ Deno.serve(async (req) => {
       await adminClient.auth.admin.updateUserById(id, {
         app_metadata: { role: updates.role },
       });
+    }
+
+    if (payload.email !== undefined) {
+      const nextEmail = String(payload.email || '').trim().toLowerCase();
+      if (!nextEmail) return jsonResponse(400, { error: 'Correo invalido.' });
+      const { error: emailError } = await adminClient.auth.admin.updateUserById(id, {
+        email: nextEmail,
+      });
+      if (emailError) return jsonResponse(500, { error: emailError.message });
     }
 
     if (nextPassword) {
@@ -205,6 +217,34 @@ Deno.serve(async (req) => {
     if (error) return jsonResponse(500, { error: error.message });
 
     await adminClient.auth.admin.updateUserById(id, { ban_duration: '87600h' });
+    return jsonResponse(200, { success: true });
+  }
+
+  if (action === 'activate') {
+    const id = String(payload.id || '').trim();
+    if (!id) return jsonResponse(400, { error: 'ID requerido.' });
+
+    const { error } = await adminClient
+      .from('profiles')
+      .update({ status: 'active', updated_at: new Date().toISOString() })
+      .eq('id', id);
+
+    if (error) return jsonResponse(500, { error: error.message });
+
+    await adminClient.auth.admin.updateUserById(id, { ban_duration: 'none' });
+    return jsonResponse(200, { success: true });
+  }
+
+  if (action === 'delete') {
+    const id = String(payload.id || '').trim();
+    if (!id) return jsonResponse(400, { error: 'ID requerido.' });
+    if (id === adminCheck.userId) return jsonResponse(400, { error: 'No puedes eliminar tu propia cuenta.' });
+
+    const { error: authDeleteError } = await adminClient.auth.admin.deleteUser(id);
+    if (authDeleteError) return jsonResponse(500, { error: authDeleteError.message });
+
+    // Fallback cleanup in case cascade did not run.
+    await adminClient.from('profiles').delete().eq('id', id);
     return jsonResponse(200, { success: true });
   }
 

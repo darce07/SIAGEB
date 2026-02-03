@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import Card from '../components/ui/Card.jsx';
 import Input from '../components/ui/Input.jsx';
 import Select from '../components/ui/Select.jsx';
-import { supabase } from '../lib/supabase.js';
+import { isSupabaseConfigured, supabase } from '../lib/supabase.js';
 
 const AUTH_KEY = 'monitoreoAuth';
 
@@ -40,32 +40,52 @@ export default function Login() {
     }
   }, [navigate]);
 
+  const resolveLoginEmail = async () => {
+    const loginInput = form.docType === 'CORREO' ? form.email.trim() : form.docNumber.trim();
+
+    if (!loginInput) {
+      return { email: '', error: 'Completa el dato de acceso.' };
+    }
+
+    if (form.docType === 'CORREO') {
+      return { email: loginInput.toLowerCase(), error: '' };
+    }
+
+    if (form.docType === 'DNI' && !/^\d{8}$/.test(loginInput)) {
+      return { email: '', error: 'El DNI debe tener 8 digitos.' };
+    }
+
+    const { data: lookupData, error: lookupError } = await supabase.functions.invoke('auth-lookup', {
+      body: { doc_type: form.docType, doc_number: loginInput },
+    });
+
+    if (lookupError) {
+      return { email: '', error: 'No se pudo validar el documento. Intenta nuevamente.' };
+    }
+
+    if (!lookupData?.email) {
+      return { email: '', error: 'No existe un usuario activo con ese documento.' };
+    }
+
+    return { email: lookupData.email, error: '' };
+  };
+
   const handleSubmit = async (event) => {
     event.preventDefault();
     setError('');
-    let email = form.email.trim();
-    if (isAdmin) {
-      const adminInput = form.docType === 'CORREO' ? form.email.trim() : form.docNumber.trim();
-      if (adminInput.includes('@')) {
-        email = adminInput;
-      } else {
-        const { data: lookupData, error: lookupError } = await supabase.functions.invoke('auth-lookup', {
-          body: { doc_type: form.docType, doc_number: adminInput },
-        });
-        if (lookupError) {
-          setError('No se pudo validar el documento. Intenta nuevamente.');
-          return;
-        }
-        if (lookupData?.email) {
-          email = lookupData.email;
-        } else {
-          email = `${adminInput}@admin.local`;
-        }
-      }
+    if (!isSupabaseConfigured) {
+      setError('Falta configurar Supabase en este entorno. Revisa variables de Vercel.');
+      return;
+    }
+
+    const { email, error: lookupMessage } = await resolveLoginEmail();
+    if (lookupMessage) {
+      setError(lookupMessage);
+      return;
     }
 
     if (!email || !form.password.trim()) {
-      setError('Completa los datos para iniciar sesión.');
+      setError('Completa los datos para iniciar sesion.');
       return;
     }
 
@@ -170,55 +190,40 @@ export default function Login() {
           </div>
 
           <form onSubmit={handleSubmit} className="mt-8 flex flex-col gap-5">
-            {isAdmin ? (
-              <>
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <Select
-                    id="docType"
-                    label="Tipo"
-                    value={form.docType}
-                    onChange={(event) => setForm((prev) => ({ ...prev, docType: event.target.value }))}
-                  >
-                    <option value="DNI">DNI</option>
-                    <option value="CE">CE</option>
-                    <option value="CORREO">CORREO</option>
-                  </Select>
-                  {form.docType === 'CORREO' ? (
-                    <Input
-                      id="adminEmail"
-                      label="Correo institucional"
-                      placeholder="admin@ugel.gob.pe"
-                      value={form.email}
-                      onChange={(event) =>
-                        setForm((prev) => ({ ...prev, email: event.target.value }))
-                      }
-                    />
-                  ) : (
-                    <Input
-                      id="docNumber"
-                      label="Número de documento"
-                      placeholder="11111111"
-                      value={form.docNumber}
-                      onChange={(event) =>
-                        setForm((prev) => ({ ...prev, docNumber: event.target.value }))
-                      }
-                    />
-                  )}
-                </div>
-                <p className="text-xs text-slate-500">
-                  Puedes ingresar con DNI/CE (8 dígitos) o con correo.
-                </p>
-              </>
-            ) : (
-              <Input
-                id="email"
-                label="Correo institucional"
-                type="email"
-                placeholder="usuario@ugel.gob.pe"
-                value={form.email}
-                onChange={(event) => setForm((prev) => ({ ...prev, email: event.target.value }))}
-              />
-            )}
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Select
+                id="docType"
+                label="Tipo"
+                value={form.docType}
+                onChange={(event) => setForm((prev) => ({ ...prev, docType: event.target.value }))}
+              >
+                <option value="DNI">DNI</option>
+                <option value="CE">CE</option>
+                <option value="CORREO">CORREO</option>
+              </Select>
+              {form.docType === 'CORREO' ? (
+                <Input
+                  id="loginEmail"
+                  label="Correo institucional"
+                  type="email"
+                  autoComplete="username"
+                  placeholder="usuario@ugel.gob.pe"
+                  value={form.email}
+                  onChange={(event) => setForm((prev) => ({ ...prev, email: event.target.value }))}
+                />
+              ) : (
+                <Input
+                  id="docNumber"
+                  label="Numero de documento"
+                  placeholder="11111111"
+                  value={form.docNumber}
+                  onChange={(event) => setForm((prev) => ({ ...prev, docNumber: event.target.value }))}
+                />
+              )}
+            </div>
+            <p className="text-xs text-slate-500">
+              Puedes ingresar con DNI/CE o con correo institucional.
+            </p>
 
             <label className="flex flex-col gap-2 text-sm text-slate-200" htmlFor="password">
               <span className="text-xs uppercase tracking-wide text-slate-400">Contrasena</span>
@@ -226,6 +231,7 @@ export default function Login() {
                 <input
                   id="password"
                   type={showPassword ? 'text' : 'password'}
+                  autoComplete="current-password"
                   value={form.password}
                   onChange={(event) => setForm((prev) => ({ ...prev, password: event.target.value }))}
                   className="w-full rounded-xl border border-slate-700/60 bg-slate-900/70 px-4 py-2 pr-12 text-sm text-slate-100 placeholder:text-slate-500 focus:border-cyan-400 focus:outline-none focus:ring-2 focus:ring-cyan-500/30"
@@ -243,10 +249,16 @@ export default function Login() {
 
             <button
               type="submit"
+              disabled={!isSupabaseConfigured}
               className="mt-2 w-full rounded-xl bg-slate-100 py-3 text-sm font-semibold text-slate-900 transition hover:bg-white"
             >
               Entrar
             </button>
+            {!isSupabaseConfigured ? (
+              <p className="text-xs text-amber-300">
+                Configura en Vercel: `VITE_SUPABASE_URL` y `VITE_SUPABASE_ANON_KEY`.
+              </p>
+            ) : null}
             {error ? <p className="text-sm text-rose-400">{error}</p> : null}
           </form>
         </Card>
