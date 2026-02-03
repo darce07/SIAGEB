@@ -63,10 +63,13 @@ create table if not exists public.profiles (
   status text default 'active' check (status in ('active', 'disabled')),
   doc_type text,
   doc_number text,
+  temp_credential text,
   avatar_url text,
   created_at timestamptz default now(),
   updated_at timestamptz default now()
 );
+
+alter table public.profiles add column if not exists temp_credential text;
 
 alter table public.profiles enable row level security;
 

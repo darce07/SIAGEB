@@ -4,6 +4,7 @@ import { BarChart3, ClipboardList, LayoutDashboard, LogOut, Plus, Settings, X } 
 import { SIDEBAR_SECTIONS } from '../data/fichaEscritura.js';
 import { supabase } from '../lib/supabase.js';
 import ErrorBoundary from '../components/ErrorBoundary.jsx';
+import ConfirmModal from '../components/ui/ConfirmModal.jsx';
 
 export const SidebarContext = createContext({
   activeSection: 'datos',
@@ -15,6 +16,8 @@ export default function MonitoreoLayout() {
   const navigate = useNavigate();
   const [activeSection, setActiveSection] = useState('datos');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isLogoutOpen, setIsLogoutOpen] = useState(false);
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
   const [fontSize, setFontSize] = useState(() => localStorage.getItem('monitoreoFontSize') || 'normal');
   const [theme, setTheme] = useState(() => localStorage.getItem('monitoreoTheme') || 'dark');
   const [selectedTemplateSections, setSelectedTemplateSections] = useState(null);
@@ -112,10 +115,16 @@ export default function MonitoreoLayout() {
   }, [isSettingsOpen]);
 
   const handleLogout = async () => {
-    localStorage.removeItem('monitoreoAuth');
-    localStorage.removeItem('monitoreoProfile');
-    await supabase.auth.signOut();
-    navigate('/login');
+    setIsLoggingOut(true);
+    try {
+      localStorage.removeItem('monitoreoAuth');
+      localStorage.removeItem('monitoreoProfile');
+      await supabase.auth.signOut();
+      navigate('/login');
+    } finally {
+      setIsLoggingOut(false);
+      setIsLogoutOpen(false);
+    }
   };
 
   const handleResetSettings = () => {
@@ -276,11 +285,7 @@ export default function MonitoreoLayout() {
             </button>
             <button
               type="button"
-              onClick={() => {
-                if (window.confirm('¿Seguro que deseas cerrar sesión?')) {
-                  handleLogout();
-                }
-              }}
+              onClick={() => setIsLogoutOpen(true)}
               className="inline-flex items-center gap-3 rounded-xl border border-amber-500/30 px-4 py-2 text-xs font-semibold text-amber-200 transition hover:border-amber-400/60 hover:text-amber-100"
             >
               <LogOut size={14} />
@@ -320,7 +325,7 @@ export default function MonitoreoLayout() {
                 </button>
                 <button
                   type="button"
-                  onClick={handleLogout}
+                  onClick={() => setIsLogoutOpen(true)}
                   className="rounded-full border border-slate-700/60 px-3 py-1 text-xs text-slate-300"
                 >
                   Salir
@@ -429,6 +434,18 @@ export default function MonitoreoLayout() {
           </div>
         </div>
       ) : null}
+      <ConfirmModal
+        open={isLogoutOpen}
+        tone="warning"
+        title="Cerrar sesion"
+        description="¿Seguro que deseas cerrar sesion?"
+        details="Tendras que iniciar sesion nuevamente para continuar."
+        confirmText={isLoggingOut ? 'Cerrando sesion...' : 'Si, cerrar sesion'}
+        cancelText="Cancelar"
+        onCancel={() => setIsLogoutOpen(false)}
+        onConfirm={handleLogout}
+        loading={isLoggingOut}
+      />
     </SidebarContext.Provider>
   );
 }

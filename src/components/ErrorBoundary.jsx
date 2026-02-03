@@ -19,9 +19,9 @@ export default class ErrorBoundary extends Component {
     if (!hasError) return this.props.children;
     return (
       <div className="flex flex-col gap-4 rounded-2xl border border-slate-800/70 bg-slate-900/50 p-6 text-sm text-slate-200">
-        <p className="text-sm font-semibold text-slate-100">Ocurrió un error al cargar la pantalla.</p>
+        <p className="text-sm font-semibold text-slate-100">Ocurrio un error al cargar la pantalla.</p>
         <p className="text-xs text-slate-400">
-          {error?.message || 'Error inesperado. Revisa la consola para más detalle.'}
+          {error?.message || 'Error inesperado. Revisa la consola para mas detalle.'}
         </p>
         <button
           type="button"
