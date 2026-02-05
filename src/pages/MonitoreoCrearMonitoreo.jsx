@@ -49,6 +49,12 @@ const hydrateOrders = (sections) =>
     })),
   }));
 
+const mapAvailabilityToEventStatus = (status) => {
+  if (status === 'closed') return 'closed';
+  if (status === 'hidden') return 'hidden';
+  return 'active';
+};
+
 export default function MonitoreoCrearMonitoreo() {
   const navigate = useNavigate();
   const { templateId } = useParams();
@@ -274,6 +280,7 @@ export default function MonitoreoCrearMonitoreo() {
   const persistTemplate = async (status) => {
     const now = new Date().toISOString();
     const auth = JSON.parse(localStorage.getItem('monitoreoAuth') || '{}');
+    const profile = JSON.parse(localStorage.getItem('monitoreoProfile') || '{}');
     const payload = {
       id: editingTemplate?.id || crypto.randomUUID(),
       title: title.trim(),
@@ -302,6 +309,28 @@ export default function MonitoreoCrearMonitoreo() {
       alert('No se pudo guardar la plantilla.');
       return;
     }
+
+    if (startAt && endAt) {
+      const eventPayload = {
+        id: payload.id,
+        title: payload.title,
+        description: payload.description || null,
+        event_type: 'monitoring',
+        start_at: new Date(startAt).toISOString(),
+        end_at: new Date(endAt).toISOString(),
+        status: mapAvailabilityToEventStatus(availabilityStatus),
+        created_by: profile?.id || null,
+        updated_at: now,
+      };
+      const { error: eventError } = await supabase
+        .from('monitoring_events')
+        .upsert(eventPayload, { onConflict: 'id' });
+      if (eventError) {
+        console.error(eventError);
+        alert('Plantilla guardada, pero no se pudo sincronizar con Seguimiento.');
+      }
+    }
+
     navigate('/monitoreo');
   };
 

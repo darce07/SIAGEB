@@ -533,7 +533,7 @@ export default function MonitoreoUsuarios() {
       `Correo: ${detailsTarget.email || ''}`,
       `Tipo documento: ${detailsTarget.doc_type || ''}`,
       `Documento: ${detailsTarget.doc_number || ''}`,
-      `Rol: ${detailsTarget.role === 'admin' ? 'Administrador' : 'Usuario'}`,
+      `Rol: ${detailsTarget.role === 'admin' ? 'Administrador' : 'Especialista'}`,
       `Estado: ${detailsTarget.status === 'active' ? 'Activo' : 'Desactivado'}`,
       `Creado: ${detailsTarget.created_at ? new Date(detailsTarget.created_at).toLocaleString() : '-'}`,
       `Actualizado: ${detailsTarget.updated_at ? new Date(detailsTarget.updated_at).toLocaleString() : '-'}`,
@@ -648,7 +648,7 @@ export default function MonitoreoUsuarios() {
                 <Input id="firstName" label="Nombres" value={form.firstName} onChange={(event) => setForm((prev) => ({ ...prev, firstName: event.target.value }))} placeholder="Nombres" />
                 <Input id="lastName" label="Apellidos" value={form.lastName} onChange={(event) => setForm((prev) => ({ ...prev, lastName: event.target.value }))} placeholder="Apellidos" />
                 <Select id="role" label="Rol" value={form.role} onChange={(event) => setForm((prev) => ({ ...prev, role: event.target.value }))}>
-                  <option value="user">Usuario</option>
+                  <option value="user">Especialista</option>
                   <option value="admin">Administrador</option>
                 </Select>
                 <Input id="email" label="Correo institucional" value={form.email} onChange={(event) => setForm((prev) => ({ ...prev, email: event.target.value }))} placeholder="usuario@ugel.gob.pe" />
@@ -710,7 +710,7 @@ export default function MonitoreoUsuarios() {
               <Input id="search" label="Buscar" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Nombre o correo" />
               <Select id="roleFilter" label="Rol" value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)}>
                 <option value="all">Todos</option>
-                <option value="user">Usuario</option>
+                <option value="user">Especialista</option>
                 <option value="admin">Administrador</option>
               </Select>
               <Select id="statusFilter" label="Estado" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
@@ -736,7 +736,7 @@ export default function MonitoreoUsuarios() {
                         <p className="text-xs text-slate-500">Creado: {user.created_at ? new Date(user.created_at).toLocaleDateString() : '-'}</p>
                       </div>
                       <div className="flex flex-wrap items-center gap-2">
-                        <span className="rounded-full border border-slate-700/60 bg-slate-900/60 px-3 py-1 text-xs text-slate-300">{user.role === 'admin' ? 'Administrador' : 'Usuario'}</span>
+                        <span className="rounded-full border border-slate-700/60 bg-slate-900/60 px-3 py-1 text-xs text-slate-300">{user.role === 'admin' ? 'Administrador' : 'Especialista'}</span>
                         <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${user.status === 'active' ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200' : 'border-amber-500/40 bg-amber-500/10 text-amber-200'}`}>{user.status === 'active' ? 'Activo' : 'Desactivado'}</span>
                         <button type="button" onClick={() => handleEdit(user)} className="inline-flex items-center gap-2 rounded-full border border-slate-700/60 px-4 py-2 text-xs font-semibold text-slate-300 transition hover:border-slate-500" title="Editar usuario"><Pencil size={14} />Editar</button>
                         <button type="button" onClick={() => openDetailsModal(user)} className="inline-flex items-center gap-2 rounded-full border border-slate-700/60 px-4 py-2 text-xs font-semibold text-slate-200 transition hover:border-slate-500" title="Ver detalles"><Eye size={14} />Ver</button>
@@ -812,7 +812,7 @@ export default function MonitoreoUsuarios() {
                     <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">Acceso y estado</p>
                     <div className="mt-3 grid gap-3 md:grid-cols-2">
                       {[
-                        ['Rol', detailsTarget.role === 'admin' ? 'Administrador' : 'Usuario'],
+                        ['Rol', detailsTarget.role === 'admin' ? 'Administrador' : 'Especialista'],
                         ['Estado', detailsTarget.status === 'active' ? 'Activo' : 'Desactivado'],
                       ].map(([label, value]) => (
                         <button key={label} type="button" onClick={() => copyField(value, label)} className="flex min-h-14 items-center justify-between rounded-xl border border-slate-800/70 bg-slate-900/60 px-4 py-3 text-left transition hover:border-slate-600/70">

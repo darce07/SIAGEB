@@ -6,6 +6,7 @@ import MonitoreoCrearMonitoreo from './pages/MonitoreoCrearMonitoreo.jsx';
 import MonitoreoInicio from './pages/MonitoreoInicio.jsx';
 import MonitoreoPerfil from './pages/MonitoreoPerfil.jsx';
 import MonitoreoReportes from './pages/MonitoreoReportes.jsx';
+import MonitoreoSeguimiento from './pages/MonitoreoSeguimiento.jsx';
 import MonitoreoSelect from './pages/MonitoreoSelect.jsx';
 import FichaEscritura from './pages/FichaEscritura.jsx';
 import MonitoreoUsuarios from './pages/MonitoreoUsuarios.jsx';
@@ -29,6 +30,17 @@ function RequireAuth({ children }) {
   return children;
 }
 
+function RequireAdmin({ children }) {
+  const location = useLocation();
+  try {
+    const auth = JSON.parse(localStorage.getItem(AUTH_KEY));
+    if (auth?.role === 'admin') return children;
+  } catch {
+    // noop
+  }
+  return <Navigate to="/monitoreo/inicio" replace state={{ denied: true, from: location.pathname }} />;
+}
+
 export default function App() {
   useEffect(() => {
     const theme = localStorage.getItem('monitoreoTheme') || 'dark';
@@ -50,12 +62,34 @@ export default function App() {
         }
       >
         <Route index element={<MonitoreoSelect />} />
-        <Route path="plantillas/nueva" element={<MonitoreoCrearMonitoreo />} />
-        <Route path="plantillas/:templateId" element={<MonitoreoCrearMonitoreo />} />
+        <Route
+          path="plantillas/nueva"
+          element={(
+            <RequireAdmin>
+              <MonitoreoCrearMonitoreo />
+            </RequireAdmin>
+          )}
+        />
+        <Route
+          path="plantillas/:templateId"
+          element={(
+            <RequireAdmin>
+              <MonitoreoCrearMonitoreo />
+            </RequireAdmin>
+          )}
+        />
         <Route path="inicio" element={<MonitoreoInicio />} />
+        <Route path="seguimiento" element={<MonitoreoSeguimiento />} />
         <Route path="perfil" element={<MonitoreoPerfil />} />
         <Route path="reportes" element={<MonitoreoReportes />} />
-        <Route path="usuarios" element={<MonitoreoUsuarios />} />
+        <Route
+          path="usuarios"
+          element={(
+            <RequireAdmin>
+              <MonitoreoUsuarios />
+            </RequireAdmin>
+          )}
+        />
         <Route path="ficha-escritura" element={<FichaEscritura />} />
       </Route>
       <Route path="*" element={<Navigate to="/monitoreo" replace />} />

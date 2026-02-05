@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import Card from '../components/ui/Card.jsx';
 import SectionHeader from '../components/ui/SectionHeader.jsx';
 import { supabase } from '../lib/supabase.js';
@@ -19,6 +20,8 @@ const getTemplateStatus = (template) => {
 };
 
 export default function MonitoreoInicio() {
+  const location = useLocation();
+  const navigate = useNavigate();
   const auth = useMemo(() => {
     try {
       return JSON.parse(localStorage.getItem(AUTH_KEY));
@@ -31,6 +34,14 @@ export default function MonitoreoInicio() {
 
   const [templates, setTemplates] = useState([]);
   const [instances, setInstances] = useState([]);
+  const [showDenied, setShowDenied] = useState(Boolean(location.state?.denied));
+
+  useEffect(() => {
+    if (!location.state?.denied) return;
+    const timeoutId = setTimeout(() => setShowDenied(false), 3200);
+    navigate('/monitoreo/inicio', { replace: true, state: null });
+    return () => clearTimeout(timeoutId);
+  }, [location.state, navigate]);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -64,6 +75,11 @@ export default function MonitoreoInicio() {
 
   return (
     <div className="flex flex-col gap-8">
+      {showDenied ? (
+        <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
+          No tienes permisos para acceder.
+        </div>
+      ) : null}
       <Card className="flex flex-col gap-6">
         <SectionHeader
           eyebrow="Inicio"
