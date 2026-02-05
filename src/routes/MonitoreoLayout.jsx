@@ -1,6 +1,17 @@
 import { createContext, useEffect, useMemo, useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { BarChart3, ClipboardList, LayoutDashboard, LogOut, Plus, Settings, X } from 'lucide-react';
+import {
+  BarChart3,
+  CalendarRange,
+  ClipboardList,
+  LayoutDashboard,
+  LogOut,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Plus,
+  Settings,
+  X,
+} from 'lucide-react';
 import { SIDEBAR_SECTIONS } from '../data/fichaEscritura.js';
 import { supabase } from '../lib/supabase.js';
 import ErrorBoundary from '../components/ErrorBoundary.jsx';
@@ -18,6 +29,9 @@ export default function MonitoreoLayout() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isLogoutOpen, setIsLogoutOpen] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(
+    () => localStorage.getItem('monitoreoSidebarCollapsed') === 'true',
+  );
   const [fontSize, setFontSize] = useState(() => localStorage.getItem('monitoreoFontSize') || 'normal');
   const [theme, setTheme] = useState(() => localStorage.getItem('monitoreoTheme') || 'dark');
   const [selectedTemplateSections, setSelectedTemplateSections] = useState(null);
@@ -37,17 +51,22 @@ export default function MonitoreoLayout() {
   });
 
   const isAdmin = auth?.role === 'admin';
+  const avatarUrl = profile?.avatarUrl || profile?.avatar_url || '';
   const displayName = useMemo(() => {
     if (profile?.fullName) return profile.fullName;
+    if (profile?.full_name) return profile.full_name;
     if (profile?.firstName || profile?.lastName) {
       return `${profile?.firstName || ''} ${profile?.lastName || ''}`.trim();
+    }
+    if (profile?.first_name || profile?.last_name) {
+      return `${profile?.first_name || ''} ${profile?.last_name || ''}`.trim();
     }
     if (auth?.name) return auth.name;
     if (auth?.email) return auth.email.split('@')[0];
     if (auth?.docNumber) return auth.docNumber;
     return 'Cargando...';
   }, [auth, profile]);
-  const roleLabel = auth?.role === 'admin' ? 'Administrador' : 'Usuario';
+  const roleLabel = auth?.role === 'admin' ? 'Administrador' : 'Especialista';
   const initials = displayName
     .split(' ')
     .filter(Boolean)
@@ -66,6 +85,10 @@ export default function MonitoreoLayout() {
   useEffect(() => {
     applyPreferences(theme, fontSize);
   }, [theme, fontSize]);
+
+  useEffect(() => {
+    localStorage.setItem('monitoreoSidebarCollapsed', String(isSidebarCollapsed));
+  }, [isSidebarCollapsed]);
 
   useEffect(() => {
     let active = true;
@@ -186,6 +209,13 @@ export default function MonitoreoLayout() {
           path: '/monitoreo/reportes',
           action: () => navigate('/monitoreo/reportes'),
         },
+        {
+          id: 'seguimiento',
+          label: 'Seguimiento monitoreos',
+          icon: CalendarRange,
+          path: '/monitoreo/seguimiento',
+          action: () => navigate('/monitoreo/seguimiento'),
+        },
         ...(isAdmin
           ? [
               {
@@ -227,31 +257,52 @@ export default function MonitoreoLayout() {
   return (
     <SidebarContext.Provider value={{ activeSection, setActiveSection }}>
       <div className="flex h-screen overflow-hidden bg-transparent">
-        <aside className="hidden w-72 flex-col border-r border-slate-800/70 bg-slate-950/80 p-6 lg:sticky lg:top-0 lg:flex lg:h-screen lg:overflow-y-auto lg:overscroll-contain">
-          <div className="flex items-center gap-3">
+        <aside
+          className={`hidden flex-col border-r border-slate-800/70 bg-slate-950/80 p-4 transition-all duration-200 lg:sticky lg:top-0 lg:flex lg:h-screen lg:overflow-y-auto lg:overscroll-contain ${
+            isSidebarCollapsed ? 'w-[72px]' : 'w-[280px]'
+          }`}
+        >
+          <div className={`flex ${isSidebarCollapsed ? 'justify-center' : 'items-center gap-3'}`}>
             <div className="flex h-12 w-12 items-center justify-center overflow-hidden rounded-2xl bg-slate-800 text-sm font-semibold text-slate-200">
-              {profile?.avatarUrl ? (
-                <img src={profile.avatarUrl} alt="Avatar" className="h-full w-full object-cover" />
+              {avatarUrl ? (
+                <img src={avatarUrl} alt="Avatar" className="h-full w-full object-cover" />
               ) : (
                 <span>{initials || 'U'}</span>
               )}
             </div>
-            <div className="min-w-0">
-              <p className="truncate text-sm font-semibold text-slate-100">{displayName || 'Cargando...'}</p>
-              <p className="text-xs text-slate-500">{roleLabel}</p>
+            <div
+              className={`min-w-0 overflow-hidden transition-all duration-200 ${
+                isSidebarCollapsed ? 'w-0 opacity-0' : 'w-auto opacity-100'
+              }`}
+            >
+              {!isSidebarCollapsed ? (
+                <p className="truncate text-sm font-semibold text-slate-100">{displayName || 'Cargando...'}</p>
+              ) : null}
+              {!isSidebarCollapsed ? <p className="text-xs text-slate-500">{roleLabel}</p> : null}
             </div>
           </div>
+          <button
+            type="button"
+            onClick={() => setIsSidebarCollapsed((current) => !current)}
+            className="mt-4 inline-flex h-9 w-9 items-center justify-center self-end rounded-lg border border-slate-800/70 text-slate-300 transition hover:border-slate-600/70 hover:text-slate-100"
+            title={isSidebarCollapsed ? 'Expandir barra lateral' : 'Colapsar barra lateral'}
+          >
+            {isSidebarCollapsed ? <PanelLeftOpen size={15} /> : <PanelLeftClose size={15} />}
+          </button>
           {isAdmin ? (
             <button
               type="button"
               onClick={() => navigate('/monitoreo/plantillas/nueva')}
-              className="mt-6 inline-flex items-center justify-center gap-2 rounded-xl border border-emerald-500/40 bg-emerald-500/20 px-4 py-2 text-xs font-semibold text-emerald-100 transition hover:border-emerald-400/70"
+              className={`mt-6 inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-emerald-500/40 bg-emerald-500/20 px-4 text-sm font-medium text-emerald-100 transition hover:border-emerald-400/70 ${
+                isSidebarCollapsed ? 'w-10 self-center px-0' : ''
+              }`}
+              title="Crear nuevo monitoreo"
             >
               <Plus size={14} />
-              Crear nuevo monitoreo
+              {!isSidebarCollapsed ? 'Crear nuevo monitoreo' : null}
             </button>
           ) : null}
-          <nav className="mt-10 flex flex-1 flex-col gap-2">
+          <nav className="mt-8 flex flex-1 flex-col space-y-1">
             {sidebarItems.map((item) => {
               const isActive = isFicha
                 ? activeSection === item.id
@@ -262,40 +313,55 @@ export default function MonitoreoLayout() {
                   key={item.id}
                   type="button"
                   onClick={item.action}
-                  className={`flex items-center gap-3 rounded-xl px-4 py-3 text-sm font-medium transition ${
+                  title={item.label}
+                  className={`flex h-10 items-center rounded-xl px-3 text-sm font-medium transition ${
                     isActive
-                      ? 'bg-slate-800/70 text-slate-100'
+                      ? 'border border-white/10 bg-slate-800/70 text-slate-100'
                       : 'text-slate-400 hover:bg-slate-900/60 hover:text-slate-200'
                   }`}
                 >
-                  <Icon size={18} />
-                  {item.label}
+                  <Icon size={17} className={isSidebarCollapsed ? 'mx-auto' : ''} />
+                  <span
+                    className={`truncate transition-all duration-200 ${
+                      isSidebarCollapsed ? 'w-0 opacity-0' : 'ml-3 w-auto opacity-100'
+                    }`}
+                  >
+                    {item.label}
+                  </span>
                 </button>
               );
             })}
           </nav>
-          <div className="mt-6 flex flex-col gap-3">
+          <div className="mt-6 flex flex-col gap-2">
             <button
               type="button"
               onClick={() => setIsSettingsOpen(true)}
-              className="inline-flex items-center gap-3 rounded-xl border border-slate-800/70 px-4 py-2 text-xs font-semibold text-slate-300 transition hover:border-slate-600/70 hover:text-slate-100"
+              title="Ajustes"
+              className={`inline-flex h-10 items-center rounded-xl border border-slate-800/70 px-3 text-sm font-medium text-slate-300 transition hover:border-slate-600/70 hover:text-slate-100 ${
+                isSidebarCollapsed ? 'justify-center' : 'gap-3'
+              }`}
             >
               <Settings size={14} />
-              Ajustes
+              {!isSidebarCollapsed ? 'Ajustes' : null}
             </button>
             <button
               type="button"
               onClick={() => setIsLogoutOpen(true)}
-              className="inline-flex items-center gap-3 rounded-xl border border-amber-500/30 px-4 py-2 text-xs font-semibold text-amber-200 transition hover:border-amber-400/60 hover:text-amber-100"
+              title="Cerrar sesión"
+              className={`inline-flex h-10 items-center rounded-xl border border-amber-500/30 px-3 text-sm font-medium text-amber-200 transition hover:border-amber-400/60 hover:text-amber-100 ${
+                isSidebarCollapsed ? 'justify-center' : 'gap-3'
+              }`}
             >
               <LogOut size={14} />
-              Cerrar sesión
+              {!isSidebarCollapsed ? 'Cerrar sesión' : null}
             </button>
           </div>
-          <div className="mt-3 rounded-xl border border-slate-800/60 bg-slate-900/40 p-4 text-xs text-slate-400">
-            <p className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Sistema</p>
-            <p className="mt-2">Tus avances se guardan automáticamente.</p>
-          </div>
+          {!isSidebarCollapsed ? (
+            <div className="mt-3 rounded-xl border border-slate-800/60 bg-slate-900/40 p-4 text-xs text-slate-400">
+              <p className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Sistema</p>
+              <p className="mt-2">Tus avances se guardan automáticamente.</p>
+            </div>
+          ) : null}
         </aside>
         <div className="login-glow flex flex-1 flex-col overflow-hidden">
           <div className="lg:hidden">
@@ -333,9 +399,11 @@ export default function MonitoreoLayout() {
               </div>
             </div>
           </div>
-          <main className="flex-1 overflow-y-auto overscroll-contain px-4 pb-16 pt-6 scrollbar-thin lg:px-10">
+          <main className="flex-1 overflow-y-auto overscroll-contain scrollbar-thin">
             <ErrorBoundary>
-              <Outlet />
+              <div className="mx-auto w-full max-w-[1400px] px-4 py-4 md:px-6 md:py-6">
+                <Outlet />
+              </div>
             </ErrorBoundary>
           </main>
         </div>

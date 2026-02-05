@@ -17,7 +17,7 @@ const getStoredAuth = () => {
 
 export default function Login() {
   const navigate = useNavigate();
-  const [role, setRole] = useState('usuario');
+  const [role, setRole] = useState('especialista');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [form, setForm] = useState({
@@ -30,7 +30,7 @@ export default function Login() {
   const isAdmin = role === 'admin';
 
   const subtitle = useMemo(() => {
-    return isAdmin ? 'Ingreso de Administrador' : 'Ingreso de Usuario';
+    return isAdmin ? 'Ingreso de Administrador' : 'Ingreso de Especialista';
   }, [isAdmin]);
 
   useEffect(() => {
@@ -170,12 +170,12 @@ export default function Login() {
             <div className="flex rounded-full border border-slate-800/70 bg-slate-900/80 p-1">
               <button
                 type="button"
-                onClick={() => setRole('usuario')}
+                onClick={() => setRole('especialista')}
                 className={`rounded-full px-4 py-1 text-xs font-semibold transition ${
-                  role === 'usuario' ? 'bg-slate-100 text-slate-900' : 'text-slate-300'
+                  role === 'especialista' ? 'bg-slate-100 text-slate-900' : 'text-slate-300'
                 }`}
               >
-                Usuario
+                Especialista
               </button>
               <button
                 type="button"

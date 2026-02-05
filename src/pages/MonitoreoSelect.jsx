@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Copy, MoveRight, Plus, Share2 } from 'lucide-react';
+import { Copy, MoveRight, Plus, Share2, Trash2 } from 'lucide-react';
 import Card from '../components/ui/Card.jsx';
+import ConfirmModal from '../components/ui/ConfirmModal.jsx';
 import { supabase } from '../lib/supabase.js';
 
 const AUTH_KEY = 'monitoreoAuth';
@@ -36,10 +37,19 @@ const selectTemplate = (templateId) => {
 const countQuestions = (sections = []) =>
   sections.reduce((total, section) => total + (section.questions?.length || 0), 0);
 
+const mapEventStatusToAvailabilityStatus = (status) => {
+  if (status === 'closed') return 'closed';
+  if (status === 'hidden') return 'hidden';
+  return 'active';
+};
+
 export default function MonitoreoSelect() {
   const navigate = useNavigate();
   const [templates, setTemplates] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [showDrafts, setShowDrafts] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const isAdmin = useMemo(() => {
     try {
@@ -62,11 +72,57 @@ export default function MonitoreoSelect() {
         console.error(error);
         if (active) setTemplates([]);
       } else if (active) {
-        const mapped = (data || []).map((row) => ({
+        let mapped = (data || []).map((row) => ({
           ...row,
           levelsConfig: row.levels_config,
           availability: row.availability,
         }));
+
+        // Ensure monitoring events created from Seguimiento also exist as draft templates.
+        const { data: monitoringEvents, error: eventsError } = await supabase
+          .from('monitoring_events')
+          .select('id,title,description,start_at,end_at,status,created_by,created_at,updated_at,event_type')
+          .eq('event_type', 'monitoring')
+          .order('updated_at', { ascending: false });
+
+        if (!eventsError) {
+          const templateIds = new Set(mapped.map((item) => item.id));
+          const missingTemplates = (monitoringEvents || [])
+            .filter((event) => !templateIds.has(event.id))
+            .map((event) => ({
+              id: event.id,
+              title: event.title || 'Monitoreo sin titulo',
+              description: event.description || null,
+              status: 'draft',
+              levels_config: { type: 'standard', levels: [] },
+              sections: [],
+              availability: {
+                status: mapEventStatusToAvailabilityStatus(event.status),
+                startAt: event.start_at,
+                endAt: event.end_at,
+              },
+              created_by: event.created_by || null,
+              created_at: event.created_at || new Date().toISOString(),
+              updated_at: event.updated_at || new Date().toISOString(),
+            }));
+
+          if (missingTemplates.length) {
+            const { data: insertedTemplates, error: insertMissingError } = await supabase
+              .from('monitoring_templates')
+              .upsert(missingTemplates, { onConflict: 'id' })
+              .select('*');
+
+            if (!insertMissingError) {
+              const insertedMapped = (insertedTemplates || []).map((row) => ({
+                ...row,
+                levelsConfig: row.levels_config,
+                availability: row.availability,
+              }));
+              mapped = [...insertedMapped, ...mapped];
+            }
+          }
+        }
+
         setTemplates(mapped);
       }
       if (active) setIsLoading(false);
@@ -77,10 +133,11 @@ export default function MonitoreoSelect() {
     };
   }, []);
 
-  const visibleTemplates = useMemo(
-    () => (isAdmin ? templates : templates.filter((item) => item.status === 'published')),
-    [isAdmin, templates],
-  );
+  const visibleTemplates = useMemo(() => {
+    const published = templates.filter((item) => item.status === 'published');
+    if (!isAdmin) return published;
+    return showDrafts ? templates : published;
+  }, [isAdmin, showDrafts, templates]);
 
   const createInstanceForTemplate = async (template) => {
     if (template.status !== 'published') {
@@ -190,6 +247,24 @@ export default function MonitoreoSelect() {
     );
   };
 
+  const handleDeleteTemplate = async () => {
+    if (!deleteTarget) return;
+    setIsDeleting(true);
+    const { error } = await supabase
+      .from('monitoring_templates')
+      .delete()
+      .eq('id', deleteTarget.id);
+    if (error) {
+      console.error(error);
+      alert('No se pudo eliminar el monitoreo.');
+      setIsDeleting(false);
+      return;
+    }
+    setTemplates((prev) => prev.filter((item) => item.id !== deleteTarget.id));
+    setDeleteTarget(null);
+    setIsDeleting(false);
+  };
+
   return (
     <div className="flex flex-col gap-8">
       <div className="flex flex-wrap items-start justify-between gap-4">
@@ -201,13 +276,24 @@ export default function MonitoreoSelect() {
           </p>
         </div>
         {isAdmin ? (
-          <Link
-            to="/monitoreo/plantillas/nueva"
-            className="inline-flex items-center gap-2 rounded-full border border-emerald-500/40 bg-emerald-500/20 px-4 py-2 text-xs font-semibold text-emerald-100 transition hover:border-emerald-400/70"
-          >
-            <Plus size={14} />
-            Crear nuevo monitoreo
-          </Link>
+          <div className="flex flex-wrap items-center gap-3">
+            <label className="inline-flex items-center gap-2 rounded-full border border-slate-700/60 px-3 py-2 text-xs text-slate-300">
+              <input
+                type="checkbox"
+                checked={showDrafts}
+                onChange={(event) => setShowDrafts(event.target.checked)}
+                className="h-4 w-4 rounded border-slate-500 bg-slate-900"
+              />
+              Ver borradores
+            </label>
+            <Link
+              to="/monitoreo/plantillas/nueva"
+              className="inline-flex items-center gap-2 rounded-full border border-emerald-500/40 bg-emerald-500/20 px-4 py-2 text-xs font-semibold text-emerald-100 transition hover:border-emerald-400/70"
+            >
+              <Plus size={14} />
+              Crear nuevo monitoreo
+            </Link>
+          </div>
         ) : null}
       </div>
 
@@ -242,7 +328,11 @@ export default function MonitoreoSelect() {
                         : 'border-slate-700/60 bg-slate-900/60 text-slate-400'
                     }`}
                   >
-                    {template.status !== 'published' ? 'Borrador' : statusLabel(status)}
+                    {template.status !== 'published'
+                      ? status === 'active'
+                        ? 'Borrador activo'
+                        : 'Borrador'
+                      : statusLabel(status)}
                   </span>
                 </div>
                 {template.description ? (
@@ -285,6 +375,14 @@ export default function MonitoreoSelect() {
                       <Share2 size={14} />
                       {template.status === 'published' ? 'Despublicar' : 'Publicar'}
                     </button>
+                    <button
+                      type="button"
+                      onClick={() => setDeleteTarget(template)}
+                      className="inline-flex items-center gap-2 rounded-full border border-rose-500/40 px-4 py-2 text-xs font-semibold text-rose-200 transition hover:border-rose-400/70"
+                    >
+                      <Trash2 size={14} />
+                      Eliminar
+                    </button>
                   </>
                 ) : null}
                 {isActive ? (
@@ -322,6 +420,17 @@ export default function MonitoreoSelect() {
         </div>
       )}
 
+      <ConfirmModal
+        open={Boolean(deleteTarget)}
+        tone="danger"
+        title="Eliminar monitoreo"
+        description="Esta accion es irreversible. Se eliminara el borrador o plantilla."
+        details={deleteTarget?.title || ''}
+        confirmText={isDeleting ? 'Eliminando...' : 'Si, eliminar'}
+        onCancel={() => setDeleteTarget(null)}
+        onConfirm={handleDeleteTemplate}
+        loading={isDeleting}
+      />
     </div>
   );
 }
