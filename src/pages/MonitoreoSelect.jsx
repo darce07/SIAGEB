@@ -43,11 +43,19 @@ const mapEventStatusToAvailabilityStatus = (status) => {
   return 'active';
 };
 
+const truncateLabel = (value, maxChars = 70) => {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  if (text.length <= maxChars) return text;
+  return `${text.slice(0, Math.max(1, maxChars - 1)).trimEnd()}...`;
+};
+
 export default function MonitoreoSelect() {
   const navigate = useNavigate();
   const [templates, setTemplates] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [showDrafts, setShowDrafts] = useState(false);
+  const [expandedDescriptions, setExpandedDescriptions] = useState({});
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [isDeleting, setIsDeleting] = useState(false);
 
@@ -91,7 +99,7 @@ export default function MonitoreoSelect() {
             .filter((event) => !templateIds.has(event.id))
             .map((event) => ({
               id: event.id,
-              title: event.title || 'Monitoreo sin titulo',
+              title: event.title || 'Monitoreo sin título',
               description: event.description || null,
               status: 'draft',
               levels_config: { type: 'standard', levels: [] },
@@ -250,19 +258,39 @@ export default function MonitoreoSelect() {
   const handleDeleteTemplate = async () => {
     if (!deleteTarget) return;
     setIsDeleting(true);
-    const { error } = await supabase
-      .from('monitoring_templates')
-      .delete()
-      .eq('id', deleteTarget.id);
-    if (error) {
+    try {
+      const targetId = deleteTarget.id;
+
+      // Remove event children first to avoid FK issues on schemas without cascade.
+      const relationTables = ['monitoring_event_responsibles', 'monitoring_event_objectives'];
+      for (const tableName of relationTables) {
+        const { error: relationError } = await supabase
+          .from(tableName)
+          .delete()
+          .eq('event_id', targetId);
+        if (relationError) throw relationError;
+      }
+
+      const { error: deleteEventError } = await supabase
+        .from('monitoring_events')
+        .delete()
+        .eq('id', targetId);
+      if (deleteEventError) throw deleteEventError;
+
+      const { error: deleteTemplateError } = await supabase
+        .from('monitoring_templates')
+        .delete()
+        .eq('id', targetId);
+      if (deleteTemplateError) throw deleteTemplateError;
+
+      setTemplates((prev) => prev.filter((item) => item.id !== targetId));
+      setDeleteTarget(null);
+    } catch (error) {
       console.error(error);
-      alert('No se pudo eliminar el monitoreo.');
+      alert(`No se pudo eliminar el monitoreo de forma permanente.\n${error.message}`);
+    } finally {
       setIsDeleting(false);
-      return;
     }
-    setTemplates((prev) => prev.filter((item) => item.id !== deleteTarget.id));
-    setDeleteTarget(null);
-    setIsDeleting(false);
   };
 
   return (
@@ -270,9 +298,14 @@ export default function MonitoreoSelect() {
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="flex flex-col gap-3">
           <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Monitoreos</p>
-          <h1 className="text-3xl font-semibold text-slate-100">Elegir monitoreo</h1>
-          <p className="text-sm text-slate-400">
-            Revisa los monitoreos disponibles y gestiona las plantillas si tienes permisos.
+          <h1 title="Monitoreos" className="max-w-[70ch] truncate text-3xl font-semibold text-slate-100">
+            Monitoreos
+          </h1>
+          <p
+            title="Gestiona plantillas y monitoreos"
+            className="max-w-[70ch] truncate text-sm text-slate-400/90"
+          >
+            Gestiona plantillas y monitoreos
           </p>
         </div>
         {isAdmin ? (
@@ -304,7 +337,7 @@ export default function MonitoreoSelect() {
       ) : visibleTemplates.length === 0 ? (
         <Card className="flex flex-col gap-3">
           <p className="text-sm text-slate-400">
-            Aun no existen plantillas de monitoreo. Contacta a un administrador.
+            Aún no existen plantillas de monitoreo. Contacta a un administrador.
           </p>
         </Card>
       ) : (
@@ -312,11 +345,18 @@ export default function MonitoreoSelect() {
           {visibleTemplates.map((template) => {
             const status = getTemplateStatus(template);
             const isActive = status === 'active';
+            const templateTitle = String(template.title || 'Monitoreo').trim();
+            const titleDisplay = truncateLabel(templateTitle, 70);
+            const templateDescription = String(template.description || '').trim();
+            const isDescriptionExpanded = Boolean(expandedDescriptions[template.id]);
+            const shouldShowDescriptionToggle = templateDescription.length > 150;
             return (
             <Card key={template.id} className="flex flex-wrap items-start justify-between gap-6">
               <div className="min-w-[220px] flex-1 space-y-2">
                 <div className="flex flex-wrap items-center gap-2">
-                  <p className="text-sm font-semibold text-slate-100">{template.title}</p>
+                  <p title={templateTitle} className="max-w-[70ch] truncate text-sm font-semibold text-slate-100">
+                    {titleDisplay}
+                  </p>
                   <span
                     className={`rounded-full border px-3 py-1 text-xs font-semibold ${
                       template.status !== 'published'
@@ -335,12 +375,42 @@ export default function MonitoreoSelect() {
                       : statusLabel(status)}
                   </span>
                 </div>
-                {template.description ? (
-                  <p className="text-sm text-slate-400">{template.description}</p>
+                {templateDescription ? (
+                  <div className="space-y-1">
+                    <p
+                      title={templateDescription}
+                      className={`text-sm text-slate-400 ${isDescriptionExpanded ? '' : 'overflow-hidden'}`}
+                      style={
+                        isDescriptionExpanded
+                          ? undefined
+                          : {
+                              display: '-webkit-box',
+                              WebkitLineClamp: 2,
+                              WebkitBoxOrient: 'vertical',
+                            }
+                      }
+                    >
+                      {templateDescription}
+                    </p>
+                    {shouldShowDescriptionToggle ? (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setExpandedDescriptions((prev) => ({
+                            ...prev,
+                            [template.id]: !prev[template.id],
+                          }))
+                        }
+                        className="text-xs font-semibold text-cyan-200 underline decoration-cyan-400/70 underline-offset-4"
+                      >
+                        {isDescriptionExpanded ? 'Ver menos' : 'Ver más'}
+                      </button>
+                    ) : null}
+                  </div>
                 ) : null}
                 {status === 'closed' ? (
-                  <p className="text-xs text-amber-200">
-                    Monitoreo cerrado: no se pueden agregar ni editar formularios.
+                  <p title="Monitoreo cerrado: no se pueden agregar ni editar formularios." className="truncate text-xs text-amber-200">
+                    Monitoreo cerrado: sin edicion ni nuevos formularios.
                   </p>
                 ) : null}
                 <div className="flex flex-wrap gap-4 text-xs text-slate-500">
@@ -424,9 +494,9 @@ export default function MonitoreoSelect() {
         open={Boolean(deleteTarget)}
         tone="danger"
         title="Eliminar monitoreo"
-        description="Esta accion es irreversible. Se eliminara el borrador o plantilla."
+        description="Esta acción es irreversible. Se eliminará el borrador o plantilla."
         details={deleteTarget?.title || ''}
-        confirmText={isDeleting ? 'Eliminando...' : 'Si, eliminar'}
+        confirmText={isDeleting ? 'Eliminando...' : 'Sí, eliminar'}
         onCancel={() => setDeleteTarget(null)}
         onConfirm={handleDeleteTemplate}
         loading={isDeleting}

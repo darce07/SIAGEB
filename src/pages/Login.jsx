@@ -26,6 +26,21 @@ export default function Login() {
     docType: 'DNI',
     docNumber: '',
   });
+  const [isRecoveryOpen, setIsRecoveryOpen] = useState(false);
+  const [isRecoveryStatusLoading, setIsRecoveryStatusLoading] = useState(false);
+  const [isRecoverySubmitting, setIsRecoverySubmitting] = useState(false);
+  const [recoveryStatus, setRecoveryStatus] = useState({
+    activeAdmins: null,
+    loginCapableAdmins: null,
+    recoverable: false,
+  });
+  const [recoveryError, setRecoveryError] = useState('');
+  const [recoverySuccess, setRecoverySuccess] = useState('');
+  const [recoveryForm, setRecoveryForm] = useState({
+    email: '',
+    password: '',
+    code: '',
+  });
 
   const isAdmin = role === 'admin';
 
@@ -52,7 +67,7 @@ export default function Login() {
     }
 
     if (form.docType === 'DNI' && !/^\d{8}$/.test(loginInput)) {
-      return { email: '', error: 'El DNI debe tener 8 digitos.' };
+      return { email: '', error: 'El DNI debe tener 8 dígitos.' };
     }
 
     const { data: lookupData, error: lookupError } = await supabase.functions.invoke('auth-lookup', {
@@ -70,6 +85,111 @@ export default function Login() {
     return { email: lookupData.email, error: '' };
   };
 
+  const loadRecoveryStatus = async () => {
+    if (!isSupabaseConfigured) {
+      setRecoveryError('Supabase no esta configurado en este entorno.');
+      return;
+    }
+
+    setRecoveryError('');
+    setRecoverySuccess('');
+    setIsRecoveryStatusLoading(true);
+    try {
+      const { data, error: fnError } = await supabase.functions.invoke('admin-recovery', {
+        body: { action: 'status' },
+      });
+      if (fnError) {
+        setRecoveryError('No se pudo validar el estado de recuperacion.');
+        return;
+      }
+      const activeAdmins = Number(data?.activeAdmins || 0);
+      const loginCapableAdmins = Number(
+        data?.loginCapableAdmins !== undefined ? data?.loginCapableAdmins : data?.activeAdmins || 0,
+      );
+      setRecoveryStatus({
+        activeAdmins,
+        loginCapableAdmins,
+        recoverable: Boolean(data?.recoverable),
+      });
+    } finally {
+      setIsRecoveryStatusLoading(false);
+    }
+  };
+
+  const openRecoveryModal = async () => {
+    setIsRecoveryOpen(true);
+    setRecoveryError('');
+    setRecoverySuccess('');
+    await loadRecoveryStatus();
+  };
+
+  const closeRecoveryModal = () => {
+    setIsRecoveryOpen(false);
+    setRecoveryError('');
+    setRecoverySuccess('');
+    setRecoveryForm({ email: '', password: '', code: '' });
+  };
+
+  const handleRecoverySubmit = async (event) => {
+    event.preventDefault();
+    setRecoveryError('');
+    setRecoverySuccess('');
+
+    if (!recoveryStatus.recoverable) {
+      setRecoveryError('La recuperacion solo se habilita cuando no hay administradores con acceso.');
+      return;
+    }
+
+    const email = recoveryForm.email.trim().toLowerCase();
+    const password = recoveryForm.password;
+    const code = recoveryForm.code.trim();
+
+    if (!email || !email.includes('@')) {
+      setRecoveryError('Ingresa un correo válido.');
+      return;
+    }
+    if (!password || password.length < 6) {
+      setRecoveryError('La contraseña debe tener al menos 6 caracteres.');
+      return;
+    }
+    if (!code) {
+      setRecoveryError('Ingresa el código de recuperación.');
+      return;
+    }
+
+    setIsRecoverySubmitting(true);
+    try {
+      const { data, error: fnError } = await supabase.functions.invoke('admin-recovery', {
+        body: {
+          action: 'recover',
+          email,
+          password,
+          code,
+        },
+      });
+
+      if (fnError || !data?.success) {
+        const message = data?.error || 'No se pudo recuperar el acceso admin.';
+        setRecoveryError(message);
+        await loadRecoveryStatus();
+        return;
+      }
+
+      setRecoverySuccess('Acceso admin recuperado. Ahora inicia sesión con el correo recuperado.');
+      setRole('admin');
+      setForm((prev) => ({
+        ...prev,
+        docType: 'CORREO',
+        email,
+        password,
+        docNumber: '',
+      }));
+      await loadRecoveryStatus();
+    } finally {
+      setIsRecoverySubmitting(false);
+    }
+  };
+
   const handleSubmit = async (event) => {
     event.preventDefault();
     setError('');
@@ -85,7 +205,7 @@ export default function Login() {
     }
 
     if (!email || !form.password.trim()) {
-      setError('Completa los datos para iniciar sesion.');
+      setError('Completa los datos para iniciar sesión.');
       return;
     }
 
@@ -214,7 +334,7 @@ export default function Login() {
               ) : (
                 <Input
                   id="docNumber"
-                  label="Numero de documento"
+                  label="Número de documento"
                   placeholder="11111111"
                   value={form.docNumber}
                   onChange={(event) => setForm((prev) => ({ ...prev, docNumber: event.target.value }))}
@@ -226,7 +346,7 @@ export default function Login() {
             </p>
 
             <label className="flex flex-col gap-2 text-sm text-slate-200" htmlFor="password">
-              <span className="text-xs uppercase tracking-wide text-slate-400">Contrasena</span>
+              <span className="text-xs uppercase tracking-wide text-slate-400">Contraseña</span>
               <div className="relative">
                 <input
                   id="password"
@@ -254,6 +374,13 @@ export default function Login() {
             >
               Entrar
             </button>
+            <button
+              type="button"
+              onClick={openRecoveryModal}
+              className="w-full rounded-xl border border-amber-500/35 bg-amber-500/10 py-2 text-xs font-semibold text-amber-200 transition hover:border-amber-400/60"
+            >
+              Recuperar acceso admin
+            </button>
             {!isSupabaseConfigured ? (
               <p className="text-xs text-amber-300">
                 Configura en Vercel: `VITE_SUPABASE_URL` y `VITE_SUPABASE_ANON_KEY`.
@@ -263,6 +390,99 @@ export default function Login() {
           </form>
         </Card>
       </div>
+
+      {isRecoveryOpen ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4 backdrop-blur-sm"
+          onClick={closeRecoveryModal}
+        >
+          <div
+            className="w-full max-w-md rounded-2xl border border-slate-700/70 bg-slate-900 p-5 shadow-2xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-sm font-semibold text-slate-100">Recuperar acceso admin</p>
+              <button
+                type="button"
+                onClick={closeRecoveryModal}
+                className="rounded-lg border border-slate-700/60 px-2 py-1 text-xs text-slate-300"
+              >
+                Cerrar
+              </button>
+            </div>
+
+            {isRecoveryStatusLoading ? (
+              <p className="mt-4 text-sm text-slate-400">Validando estado...</p>
+            ) : (
+              <div className="mt-4 rounded-xl border border-slate-700/70 bg-slate-950/60 px-3 py-2">
+                <p className="text-xs text-slate-300">
+                  Admins en perfil (activos): {recoveryStatus.activeAdmins ?? '-'}
+                </p>
+                <p className="mt-1 text-xs text-slate-300">
+                  Admins con acceso (login): {recoveryStatus.loginCapableAdmins ?? '-'}
+                </p>
+                <p className="mt-1 text-xs text-slate-500">
+                  {recoveryStatus.recoverable
+                    ? 'Recuperacion habilitada: no hay administradores con acceso.'
+                    : 'Recuperacion bloqueada: existe al menos un administrador con acceso.'}
+                </p>
+              </div>
+            )}
+
+            <form onSubmit={handleRecoverySubmit} className="mt-4 space-y-3">
+              <label className="flex flex-col gap-1 text-xs text-slate-300">
+                Correo admin
+                <input
+                  type="email"
+                  value={recoveryForm.email}
+                  onChange={(event) =>
+                    setRecoveryForm((prev) => ({ ...prev, email: event.target.value }))
+                  }
+                  className="h-10 rounded-xl border border-slate-700/60 bg-slate-900/70 px-3 text-sm text-slate-100 placeholder:text-slate-500"
+                  placeholder="admin@dominio.com"
+                />
+              </label>
+
+              <label className="flex flex-col gap-1 text-xs text-slate-300">
+                Nueva contraseña
+                <input
+                  type="password"
+                  value={recoveryForm.password}
+                  onChange={(event) =>
+                    setRecoveryForm((prev) => ({ ...prev, password: event.target.value }))
+                  }
+                  className="h-10 rounded-xl border border-slate-700/60 bg-slate-900/70 px-3 text-sm text-slate-100 placeholder:text-slate-500"
+                  placeholder="Min. 6 caracteres"
+                />
+              </label>
+
+              <label className="flex flex-col gap-1 text-xs text-slate-300">
+                Codigo de recuperacion
+                <input
+                  type="password"
+                  value={recoveryForm.code}
+                  onChange={(event) =>
+                    setRecoveryForm((prev) => ({ ...prev, code: event.target.value }))
+                  }
+                  className="h-10 rounded-xl border border-slate-700/60 bg-slate-900/70 px-3 text-sm text-slate-100 placeholder:text-slate-500"
+                  placeholder="Codigo secreto"
+                />
+              </label>
+
+              <button
+                type="submit"
+                disabled={isRecoverySubmitting || isRecoveryStatusLoading || !recoveryStatus.recoverable}
+                className="w-full rounded-xl bg-slate-100 py-2 text-sm font-semibold text-slate-900 transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {isRecoverySubmitting ? 'Recuperando...' : 'Recuperar admin'}
+              </button>
+            </form>
+
+            {recoveryError ? <p className="mt-3 text-xs text-rose-400">{recoveryError}</p> : null}
+            {recoverySuccess ? <p className="mt-3 text-xs text-emerald-300">{recoverySuccess}</p> : null}
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

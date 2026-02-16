@@ -32,6 +32,8 @@ const emptyForm = {
 };
 
 const PASSWORD_LENGTH = 9;
+const SUPABASE_FUNCTIONS_BASE_URL = import.meta.env.VITE_SUPABASE_URL || '';
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
 
 const buildFullName = (firstName, lastName) => `${firstName || ''} ${lastName || ''}`.trim();
 const pickRandom = (chars) => chars[Math.floor(Math.random() * chars.length)];
@@ -55,6 +57,13 @@ const buildTempPassword = () => {
 };
 
 const hasMinPasswordLength = (value) => Boolean(value) && value.length >= 6;
+const sanitizeJwt = (token) =>
+  String(token || '')
+    .trim()
+    .replace(/^"+|"+$/g, '')
+    .split(',')[0]
+    .trim();
+const isJwtLike = (token) => sanitizeJwt(token).split('.').length === 3;
 
 export default function MonitoreoUsuarios() {
   const isAdmin = useMemo(() => {
@@ -114,43 +123,180 @@ export default function MonitoreoUsuarios() {
 
   const readFunctionError = async (fnError) => {
     try {
-      const body = await fnError?.context?.json();
-      return body?.error || null;
+      const context = fnError?.context;
+      const status = typeof context?.status === 'number' ? context.status : null;
+      const statusText = context?.statusText ? String(context.statusText) : '';
+
+      // Supabase gateway errors often look like: { code, message }
+      // Our edge functions return: { error }
+      if (context && typeof context?.clone === 'function') {
+        const cloned = context.clone();
+        try {
+          const body = await cloned.json();
+          const message = body?.error || body?.message || null;
+          if (message) return status ? `[${status}] ${message}` : message;
+          return null;
+        } catch {
+          // Fall through to text parsing below.
+        }
+      }
+
+      const body = await context?.json?.();
+      const message = body?.error || body?.message || null;
+      if (message) return status ? `[${status}] ${message}` : message;
+
+      if (status) return `[${status}] ${statusText || 'Error en Edge Function.'}`.trim();
+      return null;
     } catch {
       try {
-        const text = await fnError?.context?.text();
-        return text || null;
+        const context = fnError?.context;
+        const status = typeof context?.status === 'number' ? context.status : null;
+
+        if (context && typeof context?.clone === 'function') {
+          const cloned = context.clone();
+          const text = await cloned.text();
+          return text ? (status ? `[${status}] ${text}` : text) : null;
+        }
+
+        const text = await context?.text?.();
+        return text ? (status ? `[${status}] ${text}` : text) : null;
       } catch {
         return null;
       }
     }
   };
 
-  const getAuthHeaders = async () => {
-    const refreshed = await supabase.auth.refreshSession();
-    let session = refreshed.data?.session;
-    if (!session) {
-      const { data } = await supabase.auth.getSession();
-      session = data?.session || null;
-    }
-
-    const token = session?.access_token;
-    const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
-
-    if (!token) {
-      console.error('Admin-users: sesion sin token.');
-      return null;
-    }
-    if (!anonKey) {
-      console.error('Admin-users: falta VITE_SUPABASE_ANON_KEY.');
-      return null;
-    }
-
-    return {
-      Authorization: `Bearer ${token}`,
-      apikey: anonKey,
-      'Content-Type': 'application/json',
+  const getValidAccessToken = async ({ forceRefresh = false } = {}) => {
+    const readSessionToken = async () => {
+      const { data, error } = await supabase.auth.getSession();
+      if (error) {
+        console.error('Admin-users: getSession error', error);
+        return '';
+      }
+      return sanitizeJwt(data?.session?.access_token);
     };
+
+    const refreshToken = async () => {
+      const refreshed = await supabase.auth.refreshSession();
+      if (refreshed.error) {
+        console.error('Admin-users: refreshSession error', refreshed.error);
+        return '';
+      }
+      return sanitizeJwt(refreshed.data?.session?.access_token);
+    };
+
+    const verifyTokenUser = async (token) => {
+      if (!token || !isJwtLike(token)) return false;
+      const { data, error } = await supabase.auth.getUser(token);
+      return !error && Boolean(data?.user?.id);
+    };
+
+    let token = forceRefresh ? await refreshToken() : await readSessionToken();
+    if (!isJwtLike(token)) token = await refreshToken();
+    if (!isJwtLike(token)) return '';
+
+    let isValid = await verifyTokenUser(token);
+    if (!isValid) {
+      token = await refreshToken();
+      if (!isJwtLike(token)) return '';
+      isValid = await verifyTokenUser(token);
+    }
+
+    return isValid ? token : '';
+  };
+
+  const ensureAuthSession = async () => {
+    const token = await getValidAccessToken();
+    if (!token) {
+      console.error('Admin-users: no se pudo obtener un JWT válido.');
+      return false;
+    }
+    return true;
+  };
+
+  const isFunctionsUnauthorizedError = (fnError) =>
+    fnError?.context?.status === 401 ||
+    /401|invalid jwt|jwt|unauthorized|authorization/i.test(String(fnError?.message || ''));
+
+  const invokeAdminUsers = async (body) => {
+    const token = await getValidAccessToken();
+    if (!token) {
+      return {
+        data: null,
+        error: {
+          message: 'No hay una sesión válida para invocar la función.',
+          context: { status: 401, statusText: 'Invalid JWT' },
+        },
+      };
+    }
+
+    if (!SUPABASE_FUNCTIONS_BASE_URL || !SUPABASE_ANON_KEY) {
+      return {
+        data: null,
+        error: {
+          message: 'Falta configurar VITE_SUPABASE_URL o VITE_SUPABASE_ANON_KEY.',
+          context: { status: 500, statusText: 'Env missing' },
+        },
+      };
+    }
+
+    const invokeWithToken = async (accessToken) => {
+      try {
+        const response = await fetch(`${SUPABASE_FUNCTIONS_BASE_URL}/functions/v1/admin-users`, {
+          method: 'POST',
+          headers: {
+            'x-client-authorization': `Bearer ${sanitizeJwt(accessToken)}`,
+            apikey: SUPABASE_ANON_KEY,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(body || {}),
+        });
+
+        let payload = null;
+        try {
+          payload = await response.json();
+        } catch {
+          payload = null;
+        }
+
+        if (!response.ok) {
+          return {
+            data: payload,
+            error: {
+              message: payload?.error || payload?.message || response.statusText || 'Error en Edge Function.',
+              context: {
+                status: response.status,
+                statusText: response.statusText,
+                body: payload,
+              },
+            },
+          };
+        }
+
+        return { data: payload, error: null };
+      } catch (networkError) {
+        return {
+          data: null,
+          error: {
+            message: networkError?.message || 'No se pudo conectar con Edge Function.',
+            context: { status: 0, statusText: 'Network error' },
+          },
+        };
+      }
+    };
+
+    let response = await invokeWithToken(token);
+    if (!response.error || !isFunctionsUnauthorizedError(response.error)) {
+      return response;
+    }
+
+    const refreshedToken = await getValidAccessToken({ forceRefresh: true });
+    if (!refreshedToken) {
+      return response;
+    }
+
+    response = await invokeWithToken(refreshedToken);
+    return response;
   };
 
   const showToast = (message, tone = 'success') => {
@@ -172,22 +318,35 @@ export default function MonitoreoUsuarios() {
     setLoading(true);
     setError('');
 
-    const headers = await getAuthHeaders();
-    if (!headers) {
-      setError('Sesion invalida. Vuelve a iniciar sesion.');
+    const sessionReady = await ensureAuthSession();
+    if (!sessionReady) {
+      const message = 'Sesión inválida. Vuelve a iniciar sesión.';
+      setError(message);
+      showToast(message, 'error');
       setUsers([]);
       setLoading(false);
       return;
     }
 
-    const { data, error: fnError } = await supabase.functions.invoke('admin-users', {
-      body: { action: 'list' },
-      headers,
-    });
+    const { data, error: fnError } = await invokeAdminUsers({ action: 'list' });
 
     if (fnError) {
+      if (isFunctionsUnauthorizedError(fnError)) {
+        const message = 'No se pudo validar tu sesión para cargar Equipo. Vuelve a intentar o cierra sesión manualmente.';
+        console.error('Usuarios list unauthorized', fnError);
+        setError(message);
+        showToast(message, 'error');
+        setUsers([]);
+        setLoading(false);
+        return;
+      }
       const details = await readFunctionError(fnError);
-      const message = details || fnError.message || 'No se pudieron cargar los usuarios.';
+      const message =
+        details ||
+        data?.error ||
+        data?.message ||
+        fnError.message ||
+        'No se pudieron cargar los usuarios.';
       console.error('Usuarios list error', fnError, details);
       setError(message);
       showToast(message, 'error');
@@ -204,7 +363,7 @@ export default function MonitoreoUsuarios() {
       loadUsers();
     } else {
       setLoading(false);
-      setError('No tienes permisos para acceder a este modulo.');
+      setError('No tienes permisos para acceder a este módulo.');
     }
   }, [isAdmin]);
 
@@ -236,6 +395,21 @@ export default function MonitoreoUsuarios() {
       return matchesSearch && matchesRole && matchesStatus;
     });
   }, [users, search, roleFilter, statusFilter]);
+
+  const activeAdminCount = useMemo(
+    () => users.filter((user) => user.role === 'admin' && user.status === 'active').length,
+    [users],
+  );
+
+  const isUserProtectedLastAdmin = (user) =>
+    Boolean(user?.role === 'admin' && user?.status === 'active' && activeAdminCount <= 1);
+
+  const editingUser = useMemo(
+    () => users.find((user) => (user.id || user.user_id) === form.id) || null,
+    [users, form.id],
+  );
+
+  const isEditingLastActiveAdmin = Boolean(editingUser && isUserProtectedLastAdmin(editingUser));
 
   const resetForm = () => {
     setForm(emptyForm);
@@ -280,6 +454,15 @@ export default function MonitoreoUsuarios() {
       password: form.password.trim() || undefined,
     };
 
+    if (form.id && isEditingLastActiveAdmin) {
+      const nextRole = String(payload.role || 'user');
+      const nextStatus = String(payload.status || 'disabled');
+      if (nextRole !== 'admin' || nextStatus !== 'active') {
+        setError('No puedes quitar o desactivar al último administrador activo.');
+        return;
+      }
+    }
+
     if (!payload.first_name || !payload.last_name) {
       setError('Nombres y apellidos son obligatorios.');
       return;
@@ -293,30 +476,27 @@ export default function MonitoreoUsuarios() {
       return;
     }
     if (form.docType === 'DNI' && !/^\d{8}$/.test(String(payload.doc_number))) {
-      setError('El DNI debe tener 8 digitos.');
+      setError('El DNI debe tener 8 dígitos.');
       return;
     }
     if (!form.id && !payload.password) {
-      setError('La contrasena temporal es obligatoria.');
+      setError('La contraseña temporal es obligatoria.');
       return;
     }
     if (payload.password && !hasMinPasswordLength(payload.password)) {
-      setError('La contrasena debe tener al menos 6 caracteres.');
+      setError('La contraseña debe tener al menos 6 caracteres.');
       return;
     }
 
-    const headers = await getAuthHeaders();
-    if (!headers) {
-      setError('Sesion invalida. Vuelve a iniciar sesion.');
+    const sessionReady = await ensureAuthSession();
+    if (!sessionReady) {
+      setError('Sesión inválida. Vuelve a iniciar sesión.');
       return;
     }
 
     setIsSubmitting(true);
     try {
-      const { data, error: fnError } = await supabase.functions.invoke('admin-users', {
-        body: payload,
-        headers,
-      });
+      const { data, error: fnError } = await invokeAdminUsers(payload);
 
       if (fnError) {
         const details = await readFunctionError(fnError);
@@ -327,7 +507,7 @@ export default function MonitoreoUsuarios() {
         return;
       }
 
-      const successMessage = form.id ? 'Usuario actualizado con exito' : 'Usuario creado con exito';
+      const successMessage = form.id ? 'Usuario actualizado con éxito' : 'Usuario creado con éxito';
       setSuccess(form.id ? 'Usuario actualizado.' : 'Usuario creado correctamente.');
       if (!form.id) setTempPassword(form.password.trim());
       showToast(successMessage, 'success');
@@ -357,22 +537,23 @@ export default function MonitoreoUsuarios() {
   const handleDisable = async (user) => {
     const userId = user?.id || user?.user_id;
     if (!userId) {
-      showToast('No se encontro el identificador del usuario.', 'error');
+      showToast('No se encontró el identificador del usuario.', 'error');
+      return;
+    }
+    if (isUserProtectedLastAdmin(user)) {
+      showToast('No puedes desactivar al último administrador activo.', 'error');
       return;
     }
 
-    const headers = await getAuthHeaders();
-    if (!headers) {
-      setError('Sesion invalida. Vuelve a iniciar sesion.');
+    const sessionReady = await ensureAuthSession();
+    if (!sessionReady) {
+      setError('Sesión inválida. Vuelve a iniciar sesión.');
       return;
     }
 
     setIsSubmitting(true);
     try {
-      const { error: fnError } = await supabase.functions.invoke('admin-users', {
-        body: { action: 'disable', id: userId },
-        headers,
-      });
+      const { error: fnError } = await invokeAdminUsers({ action: 'disable', id: userId });
 
       if (fnError) {
         const details = await readFunctionError(fnError);
@@ -382,7 +563,7 @@ export default function MonitoreoUsuarios() {
         return;
       }
 
-      showToast('Usuario desactivado con exito', 'success');
+      showToast('Usuario desactivado con éxito', 'success');
       await loadUsers();
     } finally {
       setIsSubmitting(false);
@@ -392,21 +573,18 @@ export default function MonitoreoUsuarios() {
   const handleActivate = async (user) => {
     const userId = user?.id || user?.user_id;
     if (!userId) {
-      showToast('No se encontro el identificador del usuario.', 'error');
+      showToast('No se encontró el identificador del usuario.', 'error');
       return;
     }
-    const headers = await getAuthHeaders();
-    if (!headers) {
-      setError('Sesion invalida. Vuelve a iniciar sesion.');
+    const sessionReady = await ensureAuthSession();
+    if (!sessionReady) {
+      setError('Sesión inválida. Vuelve a iniciar sesión.');
       return;
     }
 
     setIsSubmitting(true);
     try {
-      const { error: fnError } = await supabase.functions.invoke('admin-users', {
-        body: { action: 'activate', id: userId },
-        headers,
-      });
+      const { error: fnError } = await invokeAdminUsers({ action: 'activate', id: userId });
 
       if (fnError) {
         const details = await readFunctionError(fnError);
@@ -416,7 +594,7 @@ export default function MonitoreoUsuarios() {
         return;
       }
 
-      showToast('Usuario activado con exito', 'success');
+      showToast('Usuario activado con éxito', 'success');
       await loadUsers();
     } finally {
       setIsSubmitting(false);
@@ -425,7 +603,7 @@ export default function MonitoreoUsuarios() {
 
   const openVerifyForCopy = (credential) => {
     if (!credential) {
-      showToast("No disponible. Usa 'Restablecer contrasena' para generar una nueva.", 'error');
+      showToast("No disponible. Usa 'Restablecer contraseña' para generar una nueva.", 'error');
       return;
     }
     setVerifyContext({ mode: 'copy', credential });
@@ -435,7 +613,7 @@ export default function MonitoreoUsuarios() {
 
   const openVerifyForReveal = (credential) => {
     if (!credential) {
-      showToast("No disponible. Usa 'Restablecer contrasena' para generar una nueva.", 'error');
+      showToast("No disponible. Usa 'Restablecer contraseña' para generar una nueva.", 'error');
       return;
     }
     setVerifyContext({ mode: 'reveal', credential });
@@ -446,27 +624,28 @@ export default function MonitoreoUsuarios() {
   const handleResetPassword = async (user) => {
     const userId = user?.id || user?.user_id;
     if (!userId) {
-      showToast('No se encontro el identificador del usuario.', 'error');
+      showToast('No se encontró el identificador del usuario.', 'error');
       return;
     }
 
-    const headers = await getAuthHeaders();
-    if (!headers) {
-      setError('Sesion invalida. Vuelve a iniciar sesion.');
+    const sessionReady = await ensureAuthSession();
+    if (!sessionReady) {
+      setError('Sesión inválida. Vuelve a iniciar sesión.');
       return;
     }
 
     const newPassword = buildTempPassword();
     setPasswordActionId(userId);
     try {
-      const { data, error: fnError } = await supabase.functions.invoke('admin-users', {
-        body: { action: 'update', id: userId, password: newPassword },
-        headers,
+      const { data, error: fnError } = await invokeAdminUsers({
+        action: 'update',
+        id: userId,
+        password: newPassword,
       });
 
       if (fnError) {
         const details = await readFunctionError(fnError);
-        const message = details || data?.error || 'No se pudo generar la nueva contrasena.';
+        const message = details || data?.error || 'No se pudo generar la nueva contraseña.';
         setError(message);
         showToast(message, 'error');
         return;
@@ -481,10 +660,10 @@ export default function MonitoreoUsuarios() {
       setRevealedSecret(newPassword);
       if (revealTimerRef.current) clearTimeout(revealTimerRef.current);
       revealTimerRef.current = setTimeout(() => setRevealedSecret(''), 15000);
-      showToast('Contrasena temporal generada', 'success');
+      showToast('Contraseña temporal generada', 'success');
       await loadUsers();
     } catch {
-      showToast('No se pudo restablecer la contrasena.', 'error');
+      showToast('No se pudo restablecer la contraseña.', 'error');
     } finally {
       setPasswordActionId('');
     }
@@ -494,6 +673,10 @@ export default function MonitoreoUsuarios() {
     const userId = user?.id || user?.user_id;
     if (currentProfile?.id === userId) {
       showToast('No puedes eliminar tu propia cuenta.', 'error');
+      return;
+    }
+    if (isUserProtectedLastAdmin(user)) {
+      showToast('No puedes eliminar al último administrador activo.', 'error');
       return;
     }
     setDeleteTarget({ ...user, id: userId });
@@ -546,11 +729,11 @@ export default function MonitoreoUsuarios() {
     if (!verifyContext?.credential) return;
     const adminEmail = currentProfile?.email || currentAuth?.email;
     if (!adminEmail) {
-      setVerifyError('No se encontro correo del administrador actual.');
+      setVerifyError('No se encontró correo del administrador actual.');
       return;
     }
     if (!adminPassword.trim()) {
-      setVerifyError('Ingresa tu contrasena para confirmar.');
+      setVerifyError('Ingresa tu contraseña para confirmar.');
       return;
     }
 
@@ -562,14 +745,14 @@ export default function MonitoreoUsuarios() {
         password: adminPassword.trim(),
       });
       if (authError) {
-        setVerifyError('Contrasena de administrador incorrecta.');
-        showToast('Contrasena incorrecta', 'error');
+        setVerifyError('Contraseña de administrador incorrecta.');
+        showToast('Contraseña incorrecta', 'error');
         return;
       }
 
       if (verifyContext.mode === 'copy') {
         await navigator.clipboard.writeText(verifyContext.credential);
-        showToast('Contrasena copiada', 'success');
+        showToast('Contraseña copiada', 'success');
       } else {
         setRevealedSecret(verifyContext.credential);
         if (revealTimerRef.current) clearTimeout(revealTimerRef.current);
@@ -588,17 +771,17 @@ export default function MonitoreoUsuarios() {
   const handleDeleteUser = async () => {
     if (!deleteTarget?.id) return;
 
-    const headers = await getAuthHeaders();
-    if (!headers) {
-      setError('Sesion invalida. Vuelve a iniciar sesion.');
+    const sessionReady = await ensureAuthSession();
+    if (!sessionReady) {
+      setError('Sesión inválida. Vuelve a iniciar sesión.');
       return;
     }
 
     setIsDeleting(true);
     try {
-      const { data, error: fnError } = await supabase.functions.invoke('admin-users', {
-        body: { action: 'delete', id: deleteTarget.id },
-        headers,
+      const { data, error: fnError } = await invokeAdminUsers({
+        action: 'delete',
+        id: deleteTarget.id,
       });
 
       if (fnError) {
@@ -610,7 +793,7 @@ export default function MonitoreoUsuarios() {
       }
 
       setDeleteTarget(null);
-      showToast('Usuario eliminado con exito', 'success');
+      showToast('Usuario eliminado con éxito', 'success');
       await loadUsers();
     } finally {
       setIsDeleting(false);
@@ -631,12 +814,26 @@ export default function MonitoreoUsuarios() {
       {!isAdmin ? (
         <Card className="flex flex-col gap-3">
           <SectionHeader eyebrow="Acceso restringido" title="No autorizado" />
-          <p className="text-sm text-slate-400">Este modulo esta disponible solo para administradores.</p>
+          <p className="text-sm text-slate-400">Este módulo está disponible solo para administradores.</p>
         </Card>
       ) : (
         <>
           <Card className="flex flex-col gap-6">
-            <SectionHeader eyebrow="Administracion" title="Usuarios" description="Crea y administra cuentas del sistema." />
+            <SectionHeader eyebrow="Equipo" title="Equipo" description="Administra especialistas y roles." size="page" />
+            <div
+              className={`rounded-xl border px-4 py-3 text-sm ${
+                activeAdminCount <= 1
+                  ? 'border-amber-500/35 bg-amber-500/10 text-amber-200'
+                  : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200'
+              }`}
+            >
+              <p className="font-semibold">Admins activos: {activeAdminCount}</p>
+              <p className="mt-1 text-xs">
+                {activeAdminCount <= 1
+                  ? 'Protección activa: no se puede eliminar, desactivar o degradar al último admin.'
+                  : 'Estado saludable: hay más de un administrador activo.'}
+              </p>
+            </div>
             {isSubmitting ? (
               <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-800/60">
                 <div className="h-full w-1/3 animate-pulse rounded-full bg-cyan-400/70" />
@@ -647,7 +844,13 @@ export default function MonitoreoUsuarios() {
               <fieldset disabled={isSubmitting} className="grid gap-4 md:grid-cols-2 disabled:opacity-80">
                 <Input id="firstName" label="Nombres" value={form.firstName} onChange={(event) => setForm((prev) => ({ ...prev, firstName: event.target.value }))} placeholder="Nombres" />
                 <Input id="lastName" label="Apellidos" value={form.lastName} onChange={(event) => setForm((prev) => ({ ...prev, lastName: event.target.value }))} placeholder="Apellidos" />
-                <Select id="role" label="Rol" value={form.role} onChange={(event) => setForm((prev) => ({ ...prev, role: event.target.value }))}>
+                <Select
+                  id="role"
+                  label="Rol"
+                  value={form.role}
+                  onChange={(event) => setForm((prev) => ({ ...prev, role: event.target.value }))}
+                  disabled={isEditingLastActiveAdmin}
+                >
                   <option value="user">Especialista</option>
                   <option value="admin">Administrador</option>
                 </Select>
@@ -658,27 +861,39 @@ export default function MonitoreoUsuarios() {
                     <option value="DNI">DNI</option>
                     <option value="CE">CE</option>
                   </Select>
-                  <Input id="docNumber" label="Documento" value={form.docNumber} onChange={(event) => setForm((prev) => ({ ...prev, docNumber: event.target.value }))} placeholder={form.docType === 'DNI' ? '8 digitos' : 'Documento'} />
+                  <Input id="docNumber" label="Documento" value={form.docNumber} onChange={(event) => setForm((prev) => ({ ...prev, docNumber: event.target.value }))} placeholder={form.docType === 'DNI' ? '8 dígitos' : 'Documento'} />
                 </div>
 
                 <label className="flex flex-col gap-2 text-sm text-slate-200">
-                  <span className="text-xs uppercase tracking-wide text-slate-400">{form.id ? 'Nueva contrasena (opcional)' : 'Contrasena temporal'}</span>
+                  <span className="text-xs uppercase tracking-wide text-slate-400">{form.id ? 'Nueva contraseña (opcional)' : 'Contraseña temporal'}</span>
                   <div className="flex items-center gap-2">
                     <input id="tempPassword" value={form.password} onChange={(event) => setForm((prev) => ({ ...prev, password: event.target.value }))} placeholder="Min. 6 caracteres" className="w-full rounded-xl border border-slate-700/60 bg-slate-900/70 px-4 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus:border-cyan-400 focus:outline-none focus:ring-2 focus:ring-cyan-500/30" />
-                    <button type="button" onClick={handleGeneratePassword} className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-700/60 text-slate-200 transition hover:border-cyan-400/60 hover:text-cyan-200" title="Generar contrasena">
+                    <button type="button" onClick={handleGeneratePassword} className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-700/60 text-slate-200 transition hover:border-cyan-400/60 hover:text-cyan-200" title="Generar contraseña">
                       <RefreshCw size={16} />
                     </button>
-                    <button type="button" onClick={handleCopyPassword} disabled={!form.password} className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-700/60 text-slate-200 transition hover:border-cyan-400/60 hover:text-cyan-200 disabled:cursor-not-allowed disabled:opacity-40" title="Copiar contrasena">
+                    <button type="button" onClick={handleCopyPassword} disabled={!form.password} className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-700/60 text-slate-200 transition hover:border-cyan-400/60 hover:text-cyan-200 disabled:cursor-not-allowed disabled:opacity-40" title="Copiar contraseña">
                       <Copy size={16} />
                     </button>
                   </div>
                   <span className="text-xs text-slate-400">Minimo 6 caracteres. El boton generar crea una clave robusta de 9 caracteres.</span>
                 </label>
 
-                <Select id="status" label="Estado" value={form.status} onChange={(event) => setForm((prev) => ({ ...prev, status: event.target.value }))}>
+                <Select
+                  id="status"
+                  label="Estado"
+                  value={form.status}
+                  onChange={(event) => setForm((prev) => ({ ...prev, status: event.target.value }))}
+                  disabled={isEditingLastActiveAdmin}
+                >
                   <option value="active">Activo</option>
                   <option value="disabled">Desactivado</option>
                 </Select>
+
+                {isEditingLastActiveAdmin ? (
+                  <p className="text-xs text-amber-300">
+                    Este usuario es el último administrador activo. El rol y estado están protegidos.
+                  </p>
+                ) : null}
 
                 <div className="flex flex-wrap items-end gap-3">
                   <button type="submit" className="inline-flex items-center justify-center gap-2 rounded-xl bg-slate-100 px-6 py-3 text-sm font-semibold text-slate-900 transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-70" disabled={isSubmitting}>
@@ -698,14 +913,14 @@ export default function MonitoreoUsuarios() {
             {success ? <p className="text-sm text-emerald-300">{success}</p> : null}
             {tempPassword ? (
               <p className="text-xs text-amber-200">
-                Contrasena temporal asignada: <span className="font-semibold">{tempPassword}</span>
+                Contraseña temporal asignada: <span className="font-semibold">{tempPassword}</span>
                 {copied ? <span className="ml-2 text-emerald-300">Copiada</span> : null}
               </p>
             ) : null}
           </Card>
 
           <Card className="flex flex-col gap-6">
-            <SectionHeader eyebrow="Listado" title="Usuarios registrados" />
+            <SectionHeader eyebrow="Listado" title="Miembros" description="Gestión de usuarios activos y roles." />
             <div className="grid gap-3 md:grid-cols-3">
               <Input id="search" label="Buscar" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Nombre o correo" />
               <Select id="roleFilter" label="Rol" value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)}>
@@ -728,11 +943,20 @@ export default function MonitoreoUsuarios() {
               <div className="space-y-3">
                 {filteredUsers.map((user) => {
                   const rowId = user.id || user.user_id;
+                  const isProtectedAdmin = isUserProtectedLastAdmin(user);
+                  const isOwnAccount = currentProfile?.id === rowId;
                   return (
                     <div key={rowId} className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-slate-800/70 bg-slate-950/40 p-4 text-sm">
                       <div className="space-y-1">
-                        <p className="text-sm font-semibold text-slate-100">{user.full_name || `${user.first_name || ''} ${user.last_name || ''}`.trim()}</p>
-                        <p className="text-xs text-slate-400">{user.email || 'Sin correo'}</p>
+                        <p
+                          title={user.full_name || `${user.first_name || ''} ${user.last_name || ''}`.trim()}
+                          className="max-w-[48ch] truncate text-sm font-semibold text-slate-100"
+                        >
+                          {user.full_name || `${user.first_name || ''} ${user.last_name || ''}`.trim()}
+                        </p>
+                        <p title={user.email || 'Sin correo'} className="max-w-[48ch] truncate text-xs text-slate-400">
+                          {user.email || 'Sin correo'}
+                        </p>
                         <p className="text-xs text-slate-500">Creado: {user.created_at ? new Date(user.created_at).toLocaleDateString() : '-'}</p>
                       </div>
                       <div className="flex flex-wrap items-center gap-2">
@@ -741,11 +965,35 @@ export default function MonitoreoUsuarios() {
                         <button type="button" onClick={() => handleEdit(user)} className="inline-flex items-center gap-2 rounded-full border border-slate-700/60 px-4 py-2 text-xs font-semibold text-slate-300 transition hover:border-slate-500" title="Editar usuario"><Pencil size={14} />Editar</button>
                         <button type="button" onClick={() => openDetailsModal(user)} className="inline-flex items-center gap-2 rounded-full border border-slate-700/60 px-4 py-2 text-xs font-semibold text-slate-200 transition hover:border-slate-500" title="Ver detalles"><Eye size={14} />Ver</button>
                         {user.status === 'active' ? (
-                          <button type="button" onClick={() => setDisableTarget({ ...user, id: rowId })} className="inline-flex items-center gap-2 rounded-full border border-amber-500/30 px-4 py-2 text-xs font-semibold text-amber-200 transition hover:border-amber-400/60" title="Desactivar usuario"><UserX size={14} />Desactivar</button>
+                          <button
+                            type="button"
+                            onClick={() => setDisableTarget({ ...user, id: rowId })}
+                            disabled={isProtectedAdmin}
+                            className="inline-flex items-center gap-2 rounded-full border border-amber-500/30 px-4 py-2 text-xs font-semibold text-amber-200 transition hover:border-amber-400/60 disabled:cursor-not-allowed disabled:opacity-50"
+                            title={isProtectedAdmin ? 'No puedes desactivar al último administrador activo' : 'Desactivar usuario'}
+                          >
+                            <UserX size={14} />
+                            Desactivar
+                          </button>
                         ) : (
                           <button type="button" onClick={() => handleActivate(user)} className="inline-flex items-center gap-2 rounded-full border border-emerald-500/30 px-4 py-2 text-xs font-semibold text-emerald-200 transition hover:border-emerald-400/60" title="Activar usuario"><UserCheck size={14} />Activar</button>
                         )}
-                        <button type="button" onClick={() => openDeleteModal(user)} disabled={currentProfile?.id === rowId} className="inline-flex items-center gap-2 rounded-full border border-rose-500/35 px-4 py-2 text-xs font-semibold text-rose-200 transition hover:border-rose-400/60 disabled:cursor-not-allowed disabled:opacity-50" title={currentProfile?.id === rowId ? 'No puedes eliminar tu propia cuenta' : 'Eliminar usuario'}><Trash2 size={14} />Eliminar</button>
+                        <button
+                          type="button"
+                          onClick={() => openDeleteModal(user)}
+                          disabled={isOwnAccount || isProtectedAdmin}
+                          className="inline-flex items-center gap-2 rounded-full border border-rose-500/35 px-4 py-2 text-xs font-semibold text-rose-200 transition hover:border-rose-400/60 disabled:cursor-not-allowed disabled:opacity-50"
+                          title={
+                            isOwnAccount
+                              ? 'No puedes eliminar tu propia cuenta'
+                              : isProtectedAdmin
+                                ? 'No puedes eliminar al último administrador activo'
+                                : 'Eliminar usuario'
+                          }
+                        >
+                          <Trash2 size={14} />
+                          Eliminar
+                        </button>
                       </div>
                     </div>
                   );
@@ -758,9 +1006,9 @@ export default function MonitoreoUsuarios() {
             open={Boolean(deleteTarget)}
             tone="danger"
             title="Eliminar usuario"
-            description="Esta accion es irreversible. Se eliminara el acceso y podria afectar el historial."
+            description="Esta acción es irreversible. Se eliminará el acceso y podría afectar el historial."
             details={deleteTarget ? deleteTarget.full_name || `${deleteTarget.first_name || ''} ${deleteTarget.last_name || ''}`.trim() : ''}
-            confirmText="Si, eliminar"
+            confirmText="Sí, eliminar"
             onCancel={() => setDeleteTarget(null)}
             onConfirm={handleDeleteUser}
             loading={isDeleting}
@@ -770,9 +1018,9 @@ export default function MonitoreoUsuarios() {
             open={Boolean(disableTarget)}
             tone="warning"
             title="Desactivar usuario"
-            description="El usuario no podra iniciar sesion hasta volver a activarlo."
+            description="El usuario no podrá iniciar sesión hasta volver a activarlo."
             details={disableTarget ? disableTarget.full_name || `${disableTarget.first_name || ''} ${disableTarget.last_name || ''}`.trim() : ''}
-            confirmText="Si, desactivar"
+            confirmText="Sí, desactivar"
             onCancel={() => setDisableTarget(null)}
             onConfirm={async () => {
               await handleDisable(disableTarget);
@@ -841,7 +1089,7 @@ export default function MonitoreoUsuarios() {
                 </div>
 
                 <div className="mt-5 rounded-xl border border-slate-800/70 bg-slate-950/40 p-4 md:p-5">
-                  <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">Contrasena</p>
+                  <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">Contraseña</p>
                   <div className="mt-2 flex items-center justify-between gap-3">
                     <span className="rounded-full border border-slate-700/70 bg-slate-900/70 px-4 py-2 text-sm font-semibold text-slate-200">
                       {detailsTarget?.temp_credential ? (revealedSecret || '•••••••••') : 'No disponible'}
@@ -857,7 +1105,7 @@ export default function MonitoreoUsuarios() {
                           openVerifyForReveal(detailsTarget?.temp_credential);
                         }}
                         disabled={!detailsTarget?.temp_credential}
-                        title={!detailsTarget?.temp_credential ? 'No disponible. Usa Restablecer contrasena.' : 'Ver contrasena temporal'}
+                        title={!detailsTarget?.temp_credential ? 'No disponible. Usa Restablecer contraseña.' : 'Ver contraseña temporal'}
                         className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-slate-700/60 px-3 py-2 text-xs text-slate-200 transition hover:border-slate-500 disabled:cursor-not-allowed disabled:opacity-40"
                       >
                         {revealedSecret ? <EyeOff size={13} /> : <Eye size={13} />}
@@ -867,7 +1115,7 @@ export default function MonitoreoUsuarios() {
                         type="button"
                         onClick={() => openVerifyForCopy(detailsTarget?.temp_credential)}
                         disabled={!detailsTarget?.temp_credential}
-                        title={!detailsTarget?.temp_credential ? 'No disponible. Usa Restablecer contrasena.' : 'Copiar contrasena temporal'}
+                        title={!detailsTarget?.temp_credential ? 'No disponible. Usa Restablecer contraseña.' : 'Copiar contraseña temporal'}
                         className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-cyan-500/35 px-3 py-2 text-xs text-cyan-200 transition hover:border-cyan-400/60 disabled:cursor-not-allowed disabled:opacity-40"
                       >
                         <Copy size={13} />
@@ -890,7 +1138,7 @@ export default function MonitoreoUsuarios() {
                   </div>
                   {!detailsTarget?.temp_credential ? (
                     <p className="mt-2 text-xs text-slate-400">
-                      No disponible. Usa "Restablecer" para generar una nueva contrasena temporal.
+                      No disponible. Usa "Restablecer" para generar una nueva contraseña temporal.
                     </p>
                   ) : null}
                 </div>
@@ -911,8 +1159,8 @@ export default function MonitoreoUsuarios() {
             title="Confirmar identidad de administrador"
             description={
               verifyContext?.mode === 'copy'
-                ? 'Ingresa tu contrasena de administrador para copiar la credencial temporal.'
-                : 'Ingresa tu contrasena de administrador para ver la credencial temporal.'
+                ? 'Ingresa tu contraseña de administrador para copiar la credencial temporal.'
+                : 'Ingresa tu contraseña de administrador para ver la credencial temporal.'
             }
             confirmText={isVerifying ? 'Verificando...' : 'Confirmar'}
             onCancel={() => {
@@ -929,7 +1177,7 @@ export default function MonitoreoUsuarios() {
                   type="password"
                   value={adminPassword}
                   onChange={(event) => setAdminPassword(event.target.value)}
-                  placeholder="Contrasena de administrador"
+                  placeholder="Contraseña de administrador"
                   className="w-full rounded-xl border border-slate-700/60 bg-slate-900/80 px-3 py-2 text-sm text-slate-100"
                 />
                 {verifyError ? <p className="mt-2 text-xs text-rose-300">{verifyError}</p> : null}
@@ -941,3 +1189,5 @@ export default function MonitoreoUsuarios() {
     </div>
   );
 }
+
+

@@ -12,6 +12,9 @@ import FichaEscritura from './pages/FichaEscritura.jsx';
 import MonitoreoUsuarios from './pages/MonitoreoUsuarios.jsx';
 
 const AUTH_KEY = 'monitoreoAuth';
+const DENSITY_KEY = 'monitoreoDensity';
+const DENSITY_COMPACT = 'compact';
+const DENSITY_COMFORT = 'comfort';
 
 const hasAuth = () => {
   try {
@@ -20,6 +23,19 @@ const hasAuth = () => {
   } catch {
     return false;
   }
+};
+
+const resolveInitialDensity = () => {
+  try {
+    const storedDensity = localStorage.getItem(DENSITY_KEY);
+    if ([DENSITY_COMPACT, DENSITY_COMFORT].includes(storedDensity)) return storedDensity;
+  } catch {
+    // noop
+  }
+  if (typeof window !== 'undefined' && window.matchMedia('(min-width: 1024px)').matches) {
+    return DENSITY_COMPACT;
+  }
+  return DENSITY_COMFORT;
 };
 
 function RequireAuth({ children }) {
@@ -45,8 +61,11 @@ export default function App() {
   useEffect(() => {
     const theme = localStorage.getItem('monitoreoTheme') || 'dark';
     const fontSize = localStorage.getItem('monitoreoFontSize') || 'normal';
+    const density = resolveInitialDensity();
     document.documentElement.dataset.theme = theme;
     document.documentElement.dataset.fontSize = fontSize;
+    document.documentElement.dataset.density = density;
+    localStorage.setItem(DENSITY_KEY, density);
   }, []);
 
   return (

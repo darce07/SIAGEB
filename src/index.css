@@ -5,6 +5,7 @@
 :root {
   color-scheme: dark;
   --font-scale: 1;
+  --density-scale: 1;
 }
 
 html,
@@ -14,7 +15,21 @@ body,
 }
 
 html {
-  font-size: calc(16px * var(--font-scale));
+  font-size: calc(16px * var(--font-scale) * var(--density-scale));
+}
+
+@media (min-width: 1024px) {
+  html:not([data-density]) {
+    --density-scale: 0.8;
+  }
+}
+
+html[data-density='comfort'] {
+  --density-scale: 1;
+}
+
+html[data-density='compact'] {
+  --density-scale: 0.8;
 }
 
 html[data-font-size='large'] {

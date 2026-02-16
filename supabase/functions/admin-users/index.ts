@@ -2,7 +2,7 @@
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Headers': 'authorization, x-client-authorization, x-client-info, apikey, content-type',
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
 };
 
@@ -22,19 +22,70 @@ const getEnv = () => {
 };
 
 const getBearerToken = (req: Request) => {
-  const raw = req.headers.get('Authorization') || req.headers.get('authorization') || '';
+  const raw =
+    req.headers.get('x-client-authorization') ||
+    req.headers.get('X-Client-Authorization') ||
+    req.headers.get('Authorization') ||
+    req.headers.get('authorization') ||
+    '';
+  if (!raw) return '';
+
+  const values = raw
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean);
+
+  for (const value of values) {
+    if (!value.toLowerCase().startsWith('bearer ')) continue;
+    const token = value.slice(7).trim().replace(/^"+|"+$/g, '');
+    if (token.split('.').length === 3) return token;
+  }
+
   if (!raw.toLowerCase().startsWith('bearer ')) return '';
-  return raw.slice(7).trim();
+  const fallback = raw.slice(7).trim().replace(/^"+|"+$/g, '');
+  return fallback.split(',')[0]?.trim() || '';
+};
+
+const isActiveAdminProfile = (profile: { role?: string | null; status?: string | null } | null | undefined) =>
+  profile?.role === 'admin' && profile?.status === 'active';
+
+const countActiveAdmins = async (adminClient: ReturnType<typeof createClient>) => {
+  const { data, error } = await adminClient
+    .from('profiles')
+    .select('id')
+    .eq('role', 'admin')
+    .eq('status', 'active');
+
+  if (error) return { count: 0, error };
+  return { count: (data || []).length, error: null };
+};
+
+const getProfileById = async (adminClient: ReturnType<typeof createClient>, id: string) => {
+  const { data, error } = await adminClient
+    .from('profiles')
+    .select('id,role,status')
+    .eq('id', id)
+    .maybeSingle();
+
+  return { data, error };
 };
 
 const ensureAdmin = async (
   req: Request,
   adminClient: ReturnType<typeof createClient>,
+  authClient: ReturnType<typeof createClient>,
 ) => {
   const token = getBearerToken(req);
   if (!token) return { ok: false, status: 401, error: 'Falta token de sesion.' };
 
-  const { data: userData, error: userError } = await adminClient.auth.getUser(token);
+  let { data: userData, error: userError } = await authClient.auth.getUser(token);
+  if (userError || !userData?.user?.id) {
+    // Fallback for environments where anon key validation path fails unexpectedly.
+    const fallback = await adminClient.auth.getUser(token);
+    userData = fallback.data;
+    userError = fallback.error;
+  }
+
   if (userError || !userData?.user?.id) {
     return { ok: false, status: 401, error: 'Token invalido o vencido.' };
   }
@@ -65,14 +116,17 @@ Deno.serve(async (req) => {
     return jsonResponse(405, { error: 'Metodo no permitido.' });
   }
 
-  const { url, serviceRoleKey } = getEnv();
-  if (!url || !serviceRoleKey) {
-    return jsonResponse(500, { error: 'Faltan variables SUPABASE_URL o SUPABASE_SERVICE_ROLE_KEY.' });
+  const { url, anonKey, serviceRoleKey } = getEnv();
+  if (!url || !anonKey || !serviceRoleKey) {
+    return jsonResponse(500, {
+      error: 'Faltan variables SUPABASE_URL, SUPABASE_ANON_KEY o SUPABASE_SERVICE_ROLE_KEY.',
+    });
   }
 
   const adminClient = createClient(url, serviceRoleKey);
+  const authClient = createClient(url, anonKey);
 
-  const adminCheck = await ensureAdmin(req, adminClient);
+  const adminCheck = await ensureAdmin(req, adminClient, authClient);
   if (!adminCheck.ok) {
     return jsonResponse(adminCheck.status, { error: adminCheck.error });
   }
@@ -157,6 +211,21 @@ Deno.serve(async (req) => {
     const id = String(payload.id || '').trim();
     if (!id) return jsonResponse(400, { error: 'ID requerido.' });
 
+    const { data: currentProfile, error: currentProfileError } = await getProfileById(adminClient, id);
+    if (currentProfileError) return jsonResponse(500, { error: currentProfileError.message });
+    if (!currentProfile) return jsonResponse(404, { error: 'Usuario no encontrado.' });
+
+    const nextRole = payload.role !== undefined ? String(payload.role || 'user').trim() : currentProfile.role || 'user';
+    const nextStatus = payload.status !== undefined ? String(payload.status || 'active').trim() : currentProfile.status || 'active';
+    const willRemainActiveAdmin = nextRole === 'admin' && nextStatus === 'active';
+    if (isActiveAdminProfile(currentProfile) && !willRemainActiveAdmin) {
+      const { count, error: countError } = await countActiveAdmins(adminClient);
+      if (countError) return jsonResponse(500, { error: countError.message });
+      if (count <= 1) {
+        return jsonResponse(400, { error: 'No puedes quitar o desactivar al ultimo administrador activo.' });
+      }
+    }
+
     const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
     if (payload.first_name !== undefined) updates.first_name = String(payload.first_name || '');
     if (payload.last_name !== undefined) updates.last_name = String(payload.last_name || '');
@@ -209,6 +278,18 @@ Deno.serve(async (req) => {
     const id = String(payload.id || '').trim();
     if (!id) return jsonResponse(400, { error: 'ID requerido.' });
 
+    const { data: currentProfile, error: currentProfileError } = await getProfileById(adminClient, id);
+    if (currentProfileError) return jsonResponse(500, { error: currentProfileError.message });
+    if (!currentProfile) return jsonResponse(404, { error: 'Usuario no encontrado.' });
+
+    if (isActiveAdminProfile(currentProfile)) {
+      const { count, error: countError } = await countActiveAdmins(adminClient);
+      if (countError) return jsonResponse(500, { error: countError.message });
+      if (count <= 1) {
+        return jsonResponse(400, { error: 'No puedes desactivar al ultimo administrador activo.' });
+      }
+    }
+
     const { error } = await adminClient
       .from('profiles')
       .update({ status: 'disabled', updated_at: new Date().toISOString() })
@@ -239,6 +320,18 @@ Deno.serve(async (req) => {
     const id = String(payload.id || '').trim();
     if (!id) return jsonResponse(400, { error: 'ID requerido.' });
     if (id === adminCheck.userId) return jsonResponse(400, { error: 'No puedes eliminar tu propia cuenta.' });
+
+    const { data: currentProfile, error: currentProfileError } = await getProfileById(adminClient, id);
+    if (currentProfileError) return jsonResponse(500, { error: currentProfileError.message });
+    if (!currentProfile) return jsonResponse(404, { error: 'Usuario no encontrado.' });
+
+    if (isActiveAdminProfile(currentProfile)) {
+      const { count, error: countError } = await countActiveAdmins(adminClient);
+      if (countError) return jsonResponse(500, { error: countError.message });
+      if (count <= 1) {
+        return jsonResponse(400, { error: 'No puedes eliminar al ultimo administrador activo.' });
+      }
+    }
 
     const { error: authDeleteError } = await adminClient.auth.admin.deleteUser(id);
     if (authDeleteError) return jsonResponse(500, { error: authDeleteError.message });
