@@ -192,7 +192,7 @@ export default function MonitoreoPerfil() {
       return;
     }
     if (file.size > 3 * 1024 * 1024) {
-      setProfileError('La imagen supera 3MB. Sube una foto mas ligera.');
+      setProfileError('La imagen supera 3MB. Sube una foto más ligera.');
       return;
     }
 
@@ -294,21 +294,21 @@ export default function MonitoreoPerfil() {
     setPasswordSuccess('');
 
     if (!form.currentPassword.trim()) {
-      setPasswordError('Ingresa tu contrasena actual.');
+      setPasswordError('Ingresa tu contraseña actual.');
       return;
     }
     if (form.newPassword.length < 6) {
-      setPasswordError('La nueva contrasena debe tener al menos 6 caracteres.');
+      setPasswordError('La nueva contraseña debe tener al menos 6 caracteres.');
       return;
     }
     if (form.newPassword !== form.confirmPassword) {
-      setPasswordError('Las contrasenas no coinciden.');
+      setPasswordError('Las contraseñas no coinciden.');
       return;
     }
 
     const loginEmail = profile.email || auth?.email;
     if (!loginEmail) {
-      setPasswordError('No se encontro el correo de la cuenta actual.');
+      setPasswordError('No se encontró el correo de la cuenta actual.');
       return;
     }
 
@@ -319,7 +319,7 @@ export default function MonitoreoPerfil() {
         password: form.currentPassword.trim(),
       });
       if (signInError) {
-        setPasswordError('La contrasena actual es incorrecta.');
+        setPasswordError('La contraseña actual es incorrecta.');
         return;
       }
 
@@ -327,11 +327,11 @@ export default function MonitoreoPerfil() {
         password: form.newPassword,
       });
       if (updateError) {
-        setPasswordError(`No se pudo actualizar la contrasena: ${updateError.message}`);
+        setPasswordError(`No se pudo actualizar la contraseña: ${updateError.message}`);
         return;
       }
 
-      setPasswordSuccess('Contrasena actualizada correctamente.');
+      setPasswordSuccess('Contraseña actualizada correctamente.');
       setForm({ currentPassword: '', newPassword: '', confirmPassword: '' });
     } finally {
       setIsSavingPassword(false);
@@ -417,7 +417,7 @@ export default function MonitoreoPerfil() {
                 </button>
               ) : null}
             </div>
-            <p className="text-xs text-slate-400">Formatos: JPG, PNG o WEBP. Maximo 3MB.</p>
+            <p className="text-xs text-slate-400">Formatos: JPG, PNG o WEBP. Máximo 3MB.</p>
           </div>
         </div>
       </Card>
@@ -425,13 +425,13 @@ export default function MonitoreoPerfil() {
       <Card className="flex flex-col gap-6">
         <SectionHeader
           eyebrow="Seguridad"
-          title="Cambiar contrasena"
+          title="Cambiar contraseña"
           description="Solo el propietario de la cuenta puede actualizarla."
         />
         <form onSubmit={handlePasswordSubmit} className="flex flex-col gap-4">
           <Input
             id="currentPassword"
-            label="Contrasena actual"
+            label="Contraseña actual"
             type="password"
             autoComplete="current-password"
             value={form.currentPassword}
@@ -442,7 +442,7 @@ export default function MonitoreoPerfil() {
           />
           <Input
             id="newPassword"
-            label="Nueva contrasena"
+            label="Nueva contraseña"
             type="password"
             value={form.newPassword}
             onChange={(event) => setForm((prev) => ({ ...prev, newPassword: event.target.value }))}
@@ -450,7 +450,7 @@ export default function MonitoreoPerfil() {
           />
           <Input
             id="confirmPassword"
-            label="Confirmar nueva contrasena"
+            label="Confirmar nueva contraseña"
             type="password"
             value={form.confirmPassword}
             onChange={(event) =>
@@ -466,7 +466,7 @@ export default function MonitoreoPerfil() {
             className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-slate-100 py-3 text-sm font-semibold text-slate-900 transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-70 md:w-auto md:px-6"
           >
             {isSavingPassword ? <Loader2 size={16} className="animate-spin" /> : null}
-            {isSavingPassword ? 'Actualizando...' : 'Actualizar contrasena'}
+            {isSavingPassword ? 'Actualizando...' : 'Actualizar contraseña'}
           </button>
         </form>
       </Card>

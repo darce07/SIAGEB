@@ -181,6 +181,13 @@ const CATEGORY_EVENT_CARD_STYLES = {
   },
 };
 
+const truncateLabel = (value, maxChars = 70) => {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  if (text.length <= maxChars) return text;
+  return `${text.slice(0, Math.max(1, maxChars - 1)).trimEnd()}...`;
+};
+
 const normalizeTitle = (value) => String(value || '').trim().toLowerCase();
 
 const startOfMonth = (date) => {
@@ -592,7 +599,7 @@ export default function MonitoreoSeguimiento() {
     setError('');
     setSuccess('');
     if (!eventForm.title.trim()) {
-      setError('El titulo es obligatorio.');
+      setError('El título es obligatorio.');
       return;
     }
     if (!eventForm.startAt || !eventForm.endAt) {
@@ -602,7 +609,7 @@ export default function MonitoreoSeguimiento() {
     const startAt = toIsoDate(eventForm.startAt);
     const endAt = toIsoDate(eventForm.endAt);
     if (!startAt || !endAt || new Date(endAt) < new Date(startAt)) {
-      setError('Las fechas del evento no son validas.');
+      setError('Las fechas del evento no son válidas.');
       return;
     }
     if (!eventForm.responsibles.length) {
@@ -814,14 +821,33 @@ export default function MonitoreoSeguimiento() {
     if (!deleteTarget) return;
     setIsDeleting(true);
     try {
+      const targetId = deleteTarget.id;
+
+      // Keep monitoring list and calendar in sync by removing linked rows.
+      const relationTables = ['monitoring_event_responsibles', 'monitoring_event_objectives'];
+      for (const tableName of relationTables) {
+        const { error: relationError } = await supabase
+          .from(tableName)
+          .delete()
+          .eq('event_id', targetId);
+        if (relationError) throw relationError;
+      }
+
       const { error: deleteError } = await supabase
         .from('monitoring_events')
         .delete()
-        .eq('id', deleteTarget.id);
+        .eq('id', targetId);
       if (deleteError) throw deleteError;
+
+      const { error: deleteTemplateError } = await supabase
+        .from('monitoring_templates')
+        .delete()
+        .eq('id', targetId);
+      if (deleteTemplateError) throw deleteTemplateError;
+
       setDeleteTarget(null);
       setSuccess('Evento eliminado correctamente.');
-      if (selectedEventId === deleteTarget.id) setSelectedEventId('');
+      if (selectedEventId === targetId) setSelectedEventId('');
       await loadData();
     } catch (deleteError) {
       setError(`No se pudo eliminar: ${deleteError.message}`);
@@ -879,8 +905,9 @@ export default function MonitoreoSeguimiento() {
         <div className="flex flex-wrap items-center justify-between gap-3">
           <SectionHeader
             eyebrow="Seguimiento"
-            title="Seguimiento monitoreos"
-            description="Calendario visual de monitoreos y actividades."
+            title="Seguimiento"
+            description="Visualiza actividades y vencimientos."
+            size="page"
           />
           {isAdmin ? (
             <button
@@ -1095,7 +1122,9 @@ export default function MonitoreoSeguimiento() {
                           isSelectedEvent ? palette.selected : palette.idle
                         }`}
                       >
-                        <p className="font-semibold">{event.title}</p>
+                        <p title={event.title} className="truncate font-semibold">
+                          {truncateLabel(event.title, 70)}
+                        </p>
                         <p className="mt-1 text-[11px] opacity-70">
                           {new Date(event.start_at).toLocaleDateString()} - {new Date(event.end_at).toLocaleDateString()}
                         </p>
@@ -1116,8 +1145,10 @@ export default function MonitoreoSeguimiento() {
               <div className="rounded-xl border border-slate-800/70 bg-slate-900/40 p-3">
                 <div className="overflow-hidden rounded-lg border border-slate-800/70 bg-slate-950/35">
                   <div className="grid grid-cols-[120px_minmax(0,1fr)] border-b border-slate-800/70 px-3 py-2">
-                    <p className="text-[10px] uppercase tracking-[0.12em] text-slate-500">Titulo</p>
-                    <p className="text-sm font-semibold text-slate-100">{selectedDayEvent.title}</p>
+                    <p className="text-[10px] uppercase tracking-[0.12em] text-slate-500">Título</p>
+                    <p title={selectedDayEvent.title} className="truncate text-sm font-semibold text-slate-100">
+                      {truncateLabel(selectedDayEvent.title, 70)}
+                    </p>
                   </div>
                   <div className="grid grid-cols-[120px_minmax(0,1fr)] border-b border-slate-800/70 px-3 py-2">
                     <p className="text-[10px] uppercase tracking-[0.12em] text-slate-500">Tipo</p>
@@ -1244,7 +1275,7 @@ export default function MonitoreoSeguimiento() {
             </div>
 
             <div className="grid gap-4 md:grid-cols-2">
-              <Input id="eventTitle" label="Titulo / nombre" value={eventForm.title} onChange={(event) => setEventForm((prev) => ({ ...prev, title: event.target.value }))} placeholder="Titulo del monitoreo o actividad" />
+              <Input id="eventTitle" label="Título / nombre" value={eventForm.title} onChange={(event) => setEventForm((prev) => ({ ...prev, title: event.target.value }))} placeholder="Título del monitoreo o actividad" />
               <Select id="eventType" label="Tipo" value={eventForm.eventType} onChange={(event) => setEventForm((prev) => ({ ...prev, eventType: event.target.value }))}>
                 <option value="monitoring">Monitoreo</option>
                 <option value="activity">Actividad</option>
@@ -1258,7 +1289,7 @@ export default function MonitoreoSeguimiento() {
                 <option value="closed">Cerrado</option>
               </Select>
               <label className="flex flex-col gap-2 text-sm text-slate-200 md:col-span-2">
-                <span className="text-xs uppercase tracking-wide text-slate-400">Descripcion</span>
+                <span className="text-xs uppercase tracking-wide text-slate-400">Descripción</span>
                 <textarea
                   rows={3}
                   value={eventForm.description}
@@ -1381,9 +1412,9 @@ export default function MonitoreoSeguimiento() {
         open={Boolean(deleteTarget)}
         tone="danger"
         title="Eliminar evento"
-        description="Esta accion es irreversible. Se eliminara el monitoreo o actividad."
+        description="Esta acción es irreversible. Se eliminará el monitoreo o actividad."
         details={deleteTarget?.title || ''}
-        confirmText={isDeleting ? 'Eliminando...' : 'Si, eliminar'}
+        confirmText={isDeleting ? 'Eliminando...' : 'Sí, eliminar'}
         onCancel={() => setDeleteTarget(null)}
         onConfirm={handleDeleteEvent}
         loading={isDeleting}

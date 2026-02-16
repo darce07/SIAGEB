@@ -735,7 +735,7 @@ export default function FichaEscritura() {
                     <div className={`mt-4 flex flex-col gap-4 ${isDisabled ? 'opacity-50' : ''}`}>
                       {data.answer === 'NO' ? (
                         <p className="text-xs text-slate-400">
-                          Selecciona �S� para registrar nivel de logro y observaci�n.
+                          Selecciona "Sí" para registrar nivel de logro y observación.
                         </p>
                       ) : null}
                       <div className="flex flex-col gap-2">

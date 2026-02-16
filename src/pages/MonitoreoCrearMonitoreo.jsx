@@ -342,19 +342,19 @@ export default function MonitoreoCrearMonitoreo() {
         <SectionHeader
           eyebrow="Monitoreo"
           title={editingTemplate ? 'Editar plantilla' : 'Crear plantilla de monitoreo'}
-          description="Define el titulo y la estructura del monitoreo."
+          description="Define el título y la estructura del monitoreo."
         />
         <div className="grid gap-4 md:grid-cols-2">
           <Input
             id="tituloMonitoreo"
-            label="Titulo del monitoreo"
+            label="Título del monitoreo"
             placeholder="Ej. Lengua Materna"
             value={title}
             onChange={(event) => setTitle(event.target.value)}
           />
           <Input
             id="descripcionMonitoreo"
-            label="Descripcion (opcional)"
+            label="Descripción (opcional)"
             placeholder="Resumen corto del proposito"
             value={description}
             onChange={(event) => setDescription(event.target.value)}
@@ -456,7 +456,7 @@ export default function MonitoreoCrearMonitoreo() {
               </div>
               <Textarea
                 id={`level-${level.key}`}
-                label="Descripcion"
+                label="Descripción"
                 value={level.description}
                 onChange={(event) => handleLevelDescription(level.key, event.target.value)}
                 className="min-h-[96px]"
@@ -509,7 +509,7 @@ export default function MonitoreoCrearMonitoreo() {
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <Input
                   id={`section-${section.id}`}
-                  label={`Titulo de seccion ${sectionIndex + 1}`}
+                  label={`Título de sección ${sectionIndex + 1}`}
                   value={section.title}
                   onChange={(event) => handleSectionTitle(section.id, event.target.value)}
                 />
