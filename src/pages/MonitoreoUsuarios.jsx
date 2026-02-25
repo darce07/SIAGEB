@@ -936,7 +936,19 @@ export default function MonitoreoUsuarios() {
             </div>
 
             {loading ? (
-              <p className="text-sm text-slate-400">Cargando usuarios...</p>
+              <div className="rounded-xl border border-slate-800/70 bg-slate-900/40 px-4 py-4">
+                <div className="flex items-center gap-2 text-sm text-cyan-200">
+                  <Loader2 size={16} className="animate-spin" />
+                  <p>Cargando usuarios...</p>
+                </div>
+                <div className="mt-3 h-1.5 overflow-hidden rounded-full border border-slate-700/60 bg-slate-900/70">
+                  <span className="block h-full w-1/3 animate-pulse rounded-full bg-cyan-400/70" />
+                </div>
+                <div className="mt-3 space-y-2" aria-hidden="true">
+                  <div className="h-3 w-2/3 animate-pulse rounded-lg bg-slate-800/80" />
+                  <div className="h-3 w-1/2 animate-pulse rounded-lg bg-slate-800/65" />
+                </div>
+              </div>
             ) : filteredUsers.length === 0 ? (
               <p className="text-sm text-slate-400">No se encontraron usuarios.</p>
             ) : (

@@ -4,17 +4,24 @@ import Login from './pages/Login.jsx';
 import MonitoreoLayout from './routes/MonitoreoLayout.jsx';
 import MonitoreoCrearMonitoreo from './pages/MonitoreoCrearMonitoreo.jsx';
 import MonitoreoInicio from './pages/MonitoreoInicio.jsx';
-import MonitoreoPerfil from './pages/MonitoreoPerfil.jsx';
+import MonitoreoConfiguracion from './pages/MonitoreoConfiguracion.jsx';
 import MonitoreoReportes from './pages/MonitoreoReportes.jsx';
 import MonitoreoSeguimiento from './pages/MonitoreoSeguimiento.jsx';
 import MonitoreoSelect from './pages/MonitoreoSelect.jsx';
 import FichaEscritura from './pages/FichaEscritura.jsx';
 import MonitoreoUsuarios from './pages/MonitoreoUsuarios.jsx';
+import MonitoreoInstituciones from './pages/MonitoreoInstituciones.jsx';
+import {
+  applyVisualPreferences,
+  resolveDensityPreference,
+  resolveFontSizePreference,
+  resolveThemePreference,
+  readBooleanSetting,
+  HIGH_CONTRAST_STORAGE_KEY,
+  REDUCE_MOTION_STORAGE_KEY,
+} from './lib/settings.js';
 
 const AUTH_KEY = 'monitoreoAuth';
-const DENSITY_KEY = 'monitoreoDensity';
-const DENSITY_COMPACT = 'compact';
-const DENSITY_COMFORT = 'comfort';
 
 const hasAuth = () => {
   try {
@@ -23,19 +30,6 @@ const hasAuth = () => {
   } catch {
     return false;
   }
-};
-
-const resolveInitialDensity = () => {
-  try {
-    const storedDensity = localStorage.getItem(DENSITY_KEY);
-    if ([DENSITY_COMPACT, DENSITY_COMFORT].includes(storedDensity)) return storedDensity;
-  } catch {
-    // noop
-  }
-  if (typeof window !== 'undefined' && window.matchMedia('(min-width: 1024px)').matches) {
-    return DENSITY_COMPACT;
-  }
-  return DENSITY_COMFORT;
 };
 
 function RequireAuth({ children }) {
@@ -59,13 +53,18 @@ function RequireAdmin({ children }) {
 
 export default function App() {
   useEffect(() => {
-    const theme = localStorage.getItem('monitoreoTheme') || 'dark';
-    const fontSize = localStorage.getItem('monitoreoFontSize') || 'normal';
-    const density = resolveInitialDensity();
-    document.documentElement.dataset.theme = theme;
-    document.documentElement.dataset.fontSize = fontSize;
-    document.documentElement.dataset.density = density;
-    localStorage.setItem(DENSITY_KEY, density);
+    const themePreference = resolveThemePreference();
+    const fontSize = resolveFontSizePreference();
+    const density = resolveDensityPreference();
+    const highContrast = readBooleanSetting(HIGH_CONTRAST_STORAGE_KEY, false);
+    const reduceMotion = readBooleanSetting(REDUCE_MOTION_STORAGE_KEY, false);
+    applyVisualPreferences({
+      themePreference,
+      fontSize,
+      density,
+      highContrast,
+      reduceMotion,
+    });
   }, []);
 
   return (
@@ -99,8 +98,17 @@ export default function App() {
         />
         <Route path="inicio" element={<MonitoreoInicio />} />
         <Route path="seguimiento" element={<MonitoreoSeguimiento />} />
-        <Route path="perfil" element={<MonitoreoPerfil />} />
+        <Route path="configuracion" element={<MonitoreoConfiguracion />} />
+        <Route path="perfil" element={<Navigate to="/monitoreo/configuracion?seccion=cuenta" replace />} />
         <Route path="reportes" element={<MonitoreoReportes />} />
+        <Route
+          path="instituciones"
+          element={(
+            <RequireAdmin>
+              <MonitoreoInstituciones />
+            </RequireAdmin>
+          )}
+        />
         <Route
           path="usuarios"
           element={(

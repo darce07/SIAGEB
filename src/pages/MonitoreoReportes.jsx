@@ -17,6 +17,7 @@ import {
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import Card from '../components/ui/Card.jsx';
+import ConfirmModal from '../components/ui/ConfirmModal.jsx';
 import SectionHeader from '../components/ui/SectionHeader.jsx';
 import { supabase } from '../lib/supabase.js';
 
@@ -108,6 +109,13 @@ const getReportRowState = (template, instance) => {
   if (getTemplateStatus(template) === 'closed') return 'expired';
   if (instance.status === 'completed') return 'completed';
   if (instance.status === 'in_progress') return 'in_progress';
+  return 'active';
+};
+
+const getTemplateOnlyState = (template) => {
+  if (!template) return 'active';
+  if (template.status !== 'published') return 'draft';
+  if (getTemplateStatus(template) === 'closed') return 'expired';
   return 'active';
 };
 
@@ -561,6 +569,32 @@ export default function MonitoreoReportes() {
   const [sortBy, setSortBy] = useState('recent');
   const [selectedReportId, setSelectedReportId] = useState('');
   const [expandedGroups, setExpandedGroups] = useState({});
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [noticeModal, setNoticeModal] = useState({
+    open: false,
+    title: '',
+    description: '',
+    tone: 'warning',
+  });
+
+  const openNoticeModal = (title, description, tone = 'warning') => {
+    setNoticeModal({
+      open: true,
+      title,
+      description,
+      tone,
+    });
+  };
+
+  const closeNoticeModal = () => {
+    setNoticeModal({
+      open: false,
+      title: '',
+      description: '',
+      tone: 'warning',
+    });
+  };
 
   useEffect(() => {
     let active = true;
@@ -606,8 +640,16 @@ export default function MonitoreoReportes() {
     return map;
   }, [templates]);
 
+  const templatesForReportListing = useMemo(() => {
+    if (isAdmin) return templates;
+    const instanceTemplateIds = new Set(instances.map((item) => item.template_id).filter(Boolean));
+    return templates.filter(
+      (template) => template?.created_by === userId || instanceTemplateIds.has(template.id),
+    );
+  }, [isAdmin, instances, templates, userId]);
+
   const reportRows = useMemo(() => {
-    return instances.map((instance) => {
+    const instanceRows = instances.map((instance) => {
       const template = templatesById.get(instance.template_id);
       const templateTitle = template?.title || 'Monitoreo sin plantilla';
       const docente = instance?.data?.header?.docente || 'Sin docente';
@@ -624,17 +666,50 @@ export default function MonitoreoReportes() {
         docente,
         state,
         rangeLabel: template ? formatTemplateRangeCompact(template) : 'Sin rango definido',
+        updatedDateLabel: formatDateCompact(instance.updated_at || instance.created_at),
         updatedLabel: formatDateTimeCompact(instance.updated_at || instance.created_at),
         updatedAtTs,
         dueAtTs,
         instance,
+        hasReport: true,
       };
     });
-  }, [instances, templatesById]);
+
+    const templateIdsWithInstances = new Set(
+      instanceRows.map((row) => row.templateId).filter(Boolean),
+    );
+
+    const templateOnlyRows = templatesForReportListing
+      .filter((template) => template?.id && !templateIdsWithInstances.has(template.id))
+      .map((template) => {
+        const updatedAt = template.updated_at || template.created_at;
+        const updatedAtTs = new Date(updatedAt || 0).getTime() || 0;
+        const dueAtTs =
+          new Date(template?.availability?.endAt || 0).getTime() || Number.MAX_SAFE_INTEGER;
+
+        return {
+          id: `template-only-${template.id}`,
+          templateId: template.id,
+          template,
+          templateTitle: template?.title || 'Monitoreo sin título',
+          docente: 'Sin docente',
+          state: getTemplateOnlyState(template),
+          rangeLabel: formatTemplateRangeCompact(template),
+          updatedDateLabel: formatDateCompact(updatedAt),
+          updatedLabel: formatDateTimeCompact(updatedAt),
+          updatedAtTs,
+          dueAtTs,
+          instance: null,
+          hasReport: false,
+        };
+      });
+
+    return [...instanceRows, ...templateOnlyRows];
+  }, [instances, templatesById, templatesForReportListing]);
 
   const summary = useMemo(() => {
     const base = {
-      total: reportRows.length,
+      total: 0,
       active: 0,
       in_progress: 0,
       completed: 0,
@@ -643,6 +718,8 @@ export default function MonitoreoReportes() {
     };
 
     reportRows.forEach((row) => {
+      if (!row.hasReport) return;
+      base.total += 1;
       if (base[row.state] !== undefined) base[row.state] += 1;
     });
 
@@ -673,6 +750,11 @@ export default function MonitoreoReportes() {
     return rows;
   }, [reportRows, searchTerm, sortBy, statusFilter]);
 
+  const visibleReportCount = useMemo(
+    () => filteredRows.filter((row) => row.hasReport).length,
+    [filteredRows],
+  );
+
   const groupedReports = useMemo(() => {
     const groupsMap = new Map();
 
@@ -687,11 +769,13 @@ export default function MonitoreoReportes() {
           latestUpdatedTs: row.updatedAtTs,
           nearestDueTs: row.dueAtTs,
           reports: [],
+          reportCount: 0,
         });
       }
 
       const group = groupsMap.get(groupKey);
       group.reports.push(row);
+      if (row.hasReport) group.reportCount += 1;
       if (row.updatedAtTs > group.latestUpdatedTs) group.latestUpdatedTs = row.updatedAtTs;
       if (row.dueAtTs < group.nearestDueTs) group.nearestDueTs = row.dueAtTs;
     });
@@ -745,10 +829,6 @@ export default function MonitoreoReportes() {
         if (value && validKeys.has(key)) next[key] = true;
       });
 
-      if (!Object.keys(next).length && groupedReports.length) {
-        next[groupedReports[0].groupKey] = true;
-      }
-
       return next;
     });
   }, [groupedReports]);
@@ -783,7 +863,7 @@ export default function MonitoreoReportes() {
   ];
 
   const openPdf = async (template, instance) => {
-    if (!template) return;
+    if (!template || !instance?.id) return;
     const status = getReportStatusLabel(template);
     setPdfLoadingId(instance.id);
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -796,26 +876,114 @@ export default function MonitoreoReportes() {
     }
   };
 
-  const handleDelete = async ({ instanceId, isAdminAction }) => {
-    if (!instanceId) return;
-    const confirmMessage = isAdminAction
-      ? 'Si eliminas este formulario, ya no se podrá recuperar. ¿Deseas continuar?'
-      : '¿Deseas eliminar este formulario? Esta acción no se puede deshacer.';
+  const handleCreateFirstReport = async (template) => {
+    if (!template?.id) return;
 
-    if (!window.confirm(confirmMessage)) return;
+    const existingQuery = supabase
+      .from('monitoring_instances')
+      .select('*')
+      .eq('template_id', template.id)
+      .order('updated_at', { ascending: false })
+      .limit(1);
 
-    const { error } = await supabase.from('monitoring_instances').delete().eq('id', instanceId);
-    if (error) {
-      console.error(error);
-      alert('No se pudo eliminar el formulario. Inténtalo nuevamente.');
+    const { data: existingData, error: existingError } = isAdmin
+      ? await existingQuery
+      : await existingQuery.eq('created_by', userId);
+
+    if (existingError) {
+      console.error(existingError);
+      openNoticeModal(
+        'No se pudo continuar',
+        'No se pudieron validar los reportes existentes del monitoreo.',
+        'warning',
+      );
       return;
     }
 
-    setInstances((prev) => prev.filter((item) => item.id !== instanceId));
+    const existing = existingData?.[0];
+    if (existing?.id) {
+      localStorage.setItem('monitoreoInstanceActive', existing.id);
+      localStorage.setItem('monitoreoTemplateSelected', template.id);
+      navigate('/monitoreo/ficha-escritura');
+      return;
+    }
+
+    const now = new Date().toISOString();
+    const payload = {
+      template_id: template.id,
+      created_by: userId || null,
+      status: 'in_progress',
+      data: null,
+      created_at: now,
+      updated_at: now,
+    };
+
+    const { data, error } = await supabase
+      .from('monitoring_instances')
+      .insert([payload])
+      .select('*')
+      .single();
+
+    if (error || !data?.id) {
+      console.error(error);
+      openNoticeModal(
+        'No se pudo crear el reporte',
+        'No se pudo crear el primer reporte de este monitoreo.',
+        'danger',
+      );
+      return;
+    }
+
+    setInstances((prev) => [data, ...prev]);
+    localStorage.setItem('monitoreoInstanceActive', data.id);
+    localStorage.setItem('monitoreoTemplateSelected', template.id);
+    navigate('/monitoreo/ficha-escritura');
+  };
+
+  const handleRequestDelete = ({ instanceId, isAdminAction, details }) => {
+    if (!instanceId) return;
+    setDeleteTarget({
+      instanceId,
+      isAdminAction: Boolean(isAdminAction),
+      details: details || '',
+    });
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!deleteTarget?.instanceId || isDeleting) return;
+
+    setIsDeleting(true);
+    const { error } = await supabase
+      .from('monitoring_instances')
+      .delete()
+      .eq('id', deleteTarget.instanceId);
+
+    if (error) {
+      console.error(error);
+      setIsDeleting(false);
+      setDeleteTarget(null);
+      openNoticeModal(
+        'No se pudo eliminar',
+        'No se pudo eliminar el formulario. Intentalo nuevamente.',
+        'danger',
+      );
+      return;
+    }
+
+    setInstances((prev) => prev.filter((item) => item.id !== deleteTarget.instanceId));
+    if (selectedReportId === deleteTarget.instanceId) {
+      setSelectedReportId('');
+    }
+    setIsDeleting(false);
+    setDeleteTarget(null);
   };
 
   const openReport = (row) => {
     if (!row) return;
+    if (!row.instance?.id) {
+      handleCreateFirstReport(row.template);
+      return;
+    }
     localStorage.setItem('monitoreoInstanceActive', row.id);
     localStorage.setItem('monitoreoTemplateSelected', row.templateId || '');
     navigate('/monitoreo/ficha-escritura');
@@ -915,16 +1083,26 @@ export default function MonitoreoReportes() {
           </label>
 
           <div className="rounded-xl border border-slate-700/60 bg-slate-900/45 px-3 py-2 text-xs text-slate-300">
-            Mostrando: <span className="font-semibold text-slate-100">{filteredRows.length}</span>{' '}
-            {pluralize(filteredRows.length, 'reporte', 'reportes')} en{' '}
+            Mostrando: <span className="font-semibold text-slate-100">{visibleReportCount}</span>{' '}
+            {pluralize(visibleReportCount, 'reporte', 'reportes')} en{' '}
             <span className="font-semibold text-slate-100">{groupedReports.length}</span>{' '}
             {pluralize(groupedReports.length, 'monitoreo', 'monitoreos')}
           </div>
         </div>
 
         {isLoading ? (
-          <div className="rounded-2xl border border-slate-800/70 bg-slate-900/50 px-4 py-5 text-sm text-slate-400">
-            Cargando reportes...
+          <div className="rounded-2xl border border-slate-800/70 bg-slate-900/50 px-4 py-5">
+            <div className="flex items-center gap-2 text-sm text-cyan-200">
+              <Loader2 size={16} className="animate-spin" />
+              <p>Cargando reportes...</p>
+            </div>
+            <div className="mt-3 h-1.5 overflow-hidden rounded-full border border-slate-700/60 bg-slate-900/70">
+              <span className="block h-full w-1/3 animate-pulse rounded-full bg-cyan-400/70" />
+            </div>
+            <div className="mt-3 space-y-2" aria-hidden="true">
+              <div className="h-3 w-2/3 animate-pulse rounded-lg bg-slate-800/80" />
+              <div className="h-3 w-1/2 animate-pulse rounded-lg bg-slate-800/65" />
+            </div>
           </div>
         ) : reportRows.length === 0 ? (
           <div className="rounded-2xl border border-slate-800/70 bg-slate-900/50 px-4 py-5 text-sm text-slate-400">
@@ -952,7 +1130,10 @@ export default function MonitoreoReportes() {
                           {truncateLabel(group.templateTitle, 74)}
                         </p>
                         <p className="mt-1 text-xs text-slate-400">
-                          {group.rangeLabel} · {group.reports.length} {pluralize(group.reports.length, 'reporte', 'reportes')}
+                          {group.rangeLabel} ·{' '}
+                          {group.reportCount > 0
+                            ? `${group.reportCount} ${pluralize(group.reportCount, 'reporte', 'reportes')}`
+                            : 'Sin reportes aún'}
                         </p>
                       </div>
 
@@ -969,6 +1150,48 @@ export default function MonitoreoReportes() {
                     {isExpanded ? (
                       <div className="mt-2.5 space-y-2.5">
                         {group.reports.map((row) => {
+                          if (!row.hasReport) {
+                            return (
+                              <article
+                                key={row.id}
+                                className="rounded-xl border border-slate-800/70 bg-slate-950/30 px-3 py-3"
+                              >
+                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                  <p className="truncate text-sm font-semibold text-slate-100">
+                                    Sin formularios todavía
+                                  </p>
+                                  <span
+                                    className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${
+                                      REPORT_STATE_META[row.state]?.className ||
+                                      REPORT_STATE_META.active.className
+                                    }`}
+                                  >
+                                    {REPORT_STATE_META[row.state]?.label || 'Activo'}
+                                  </span>
+                                </div>
+                                <p className="mt-1 text-xs text-slate-400">
+                                  Este monitoreo ya está creado, pero aún no tiene reportes.
+                                </p>
+                                <div className="mt-2.5 flex flex-wrap gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleCreateFirstReport(row.template)}
+                                    className="inline-flex items-center gap-2 rounded-full border border-cyan-500/35 bg-cyan-500/10 px-3 py-1.5 text-xs font-semibold text-cyan-100 transition hover:border-cyan-400/65"
+                                  >
+                                    Crear primer reporte
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => navigate('/monitoreo')}
+                                    className="inline-flex items-center gap-2 rounded-full border border-slate-700/60 px-3 py-1.5 text-xs font-semibold text-slate-100 transition hover:border-cyan-400/60"
+                                  >
+                                    Ir a Monitoreos
+                                  </button>
+                                </div>
+                              </article>
+                            );
+                          }
+
                           const stateMeta = REPORT_STATE_META[row.state] || REPORT_STATE_META.active;
                           const isSelected = row.id === selectedReportId;
                           return (
@@ -999,7 +1222,7 @@ export default function MonitoreoReportes() {
                                 </span>
                               </div>
                               <p className="mt-1 truncate text-xs text-slate-400">
-                                Actualizado: {row.updatedLabel}
+                                Actualizado: {row.updatedDateLabel}
                               </p>
                               <p className="mt-1 text-[11px] text-slate-500">
                                 Haz clic para ver el detalle del reporte.
@@ -1083,8 +1306,8 @@ export default function MonitoreoReportes() {
                     </p>
                     <p className="text-slate-400">
                       Este monitoreo tiene{' '}
-                      <span className="font-medium text-slate-100">{selectedGroup?.reports?.length || 1}</span>{' '}
-                      {pluralize(selectedGroup?.reports?.length || 1, 'reporte', 'reportes')}.
+                      <span className="font-medium text-slate-100">{selectedGroup?.reportCount || 1}</span>{' '}
+                      {pluralize(selectedGroup?.reportCount || 1, 'reporte', 'reportes')}.
                     </p>
                   </div>
 
@@ -1115,7 +1338,13 @@ export default function MonitoreoReportes() {
                   <div className="border-t border-slate-800/70 pt-3">
                     <button
                       type="button"
-                      onClick={() => handleDelete({ instanceId: selectedRow.id, isAdminAction: isAdmin })}
+                      onClick={() =>
+                        handleRequestDelete({
+                          instanceId: selectedRow.id,
+                          isAdminAction: isAdmin,
+                          details: `${selectedRow.templateTitle} - ${selectedRow.docente}`,
+                        })
+                      }
                       disabled={!canDeleteSelected}
                       title={!canDeleteSelected ? 'Monitoreo vencido: solo administrador puede eliminar.' : undefined}
                       className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
@@ -1134,6 +1363,37 @@ export default function MonitoreoReportes() {
           </div>
         )}
       </Card>
+
+      <ConfirmModal
+        open={Boolean(deleteTarget)}
+        tone="danger"
+        title="Eliminar reporte"
+        description={
+          deleteTarget?.isAdminAction
+            ? 'Si eliminas este formulario, ya no se podra recuperar. Deseas continuar?'
+            : 'Deseas eliminar este formulario? Esta accion no se puede deshacer.'
+        }
+        details={deleteTarget?.details ? `Reporte: ${deleteTarget.details}` : ''}
+        confirmText={isDeleting ? 'Eliminando...' : 'Si, eliminar'}
+        cancelText="Cancelar"
+        loading={isDeleting}
+        onCancel={() => {
+          if (isDeleting) return;
+          setDeleteTarget(null);
+        }}
+        onConfirm={handleConfirmDelete}
+      />
+
+      <ConfirmModal
+        open={noticeModal.open}
+        tone={noticeModal.tone}
+        title={noticeModal.title || 'Aviso'}
+        description={noticeModal.description}
+        confirmText="Entendido"
+        cancelText="Cerrar"
+        onCancel={closeNoticeModal}
+        onConfirm={closeNoticeModal}
+      />
     </div>
   );
 }

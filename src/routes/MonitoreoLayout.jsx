@@ -2,6 +2,7 @@
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
   BarChart3,
+  Building2,
   CalendarRange,
   ChevronLeft,
   ChevronRight,
@@ -29,9 +30,20 @@ const ASSISTANT_SESSION_STORAGE_PREFIX = 'monitoreoAssistantSessionHistory';
 const ASSISTANT_MODE_PREFIX = 'monitoreoAssistantMode';
 const ASSISTANT_MODE_PERSISTENT = 'persistent';
 const ASSISTANT_MODE_TEMPORARY = 'temporary';
+const ASSISTANT_QUICK_ACTIONS_KEY = 'monitoreoAssistantQuickActions';
+const ASSISTANT_AUTO_CLOSE_KEY = 'monitoreoAssistantAutoClose';
+const ASSISTANT_CLEAR_ON_LOGOUT_KEY = 'monitoreoAssistantClearOnLogout';
 const DENSITY_STORAGE_KEY = 'monitoreoDensity';
 const DENSITY_COMFORT = 'comfort';
 const DENSITY_COMPACT = 'compact';
+const HIGH_CONTRAST_STORAGE_KEY = 'monitoreoHighContrast';
+const REDUCE_MOTION_STORAGE_KEY = 'monitoreoReduceMotion';
+const SETTINGS_EVENT_NAME = 'monitoreo-settings-updated';
+const SESSION_ACTIVITY_PREFIX = 'monitoreoSessionLastActivity';
+const SESSION_LOGOUT_REASON_KEY = 'monitoreoSessionLogoutReason';
+const SESSION_LOGOUT_REASON_INACTIVITY = 'inactivity';
+const SESSION_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
+const SESSION_ACTIVITY_WRITE_THROTTLE_MS = 10 * 1000;
 const ASSISTANT_WIZARD_BASE_STEPS = 7;
 const ASSISTANT_SPECIALIST_ROLES = ['user', 'especialista', 'specialist', 'admin'];
 const ASSISTANT_OBJECTIVE_TEXT_CANDIDATES = ['objective_text', 'text', 'description', 'label', 'objective'];
@@ -119,6 +131,41 @@ const resolveDensityPreference = () => {
     // noop
   }
   return getDesktopDensityDefault();
+};
+
+const resolveThemePreference = () => {
+  try {
+    const storedTheme = localStorage.getItem('monitoreoTheme');
+    if (['dark', 'light', 'system'].includes(storedTheme)) {
+      return storedTheme;
+    }
+  } catch {
+    // noop
+  }
+  return 'dark';
+};
+
+const resolveEffectiveTheme = (themePreference) => {
+  if (themePreference !== 'system') return themePreference;
+  if (typeof window !== 'undefined') {
+    try {
+      return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+    } catch {
+      // noop
+    }
+  }
+  return 'dark';
+};
+
+const readBooleanSetting = (key, fallback = false) => {
+  try {
+    const value = localStorage.getItem(key);
+    if (value === 'true') return true;
+    if (value === 'false') return false;
+  } catch {
+    // noop
+  }
+  return fallback;
 };
 
 const normalizeAssistantUserKey = (value) =>
@@ -615,10 +662,28 @@ export default function MonitoreoLayout() {
   const assistantToggleButtonRef = useRef(null);
   const mobileSidebarRef = useRef(null);
   const mobileSidebarButtonRef = useRef(null);
+  const sessionTimeoutRef = useRef(null);
+  const sessionLastWriteRef = useRef(0);
+  const sessionLogoutInProgressRef = useRef(false);
   const wasAssistantOpenRef = useRef(false);
   const [fontSize, setFontSize] = useState(() => localStorage.getItem('monitoreoFontSize') || 'normal');
-  const [theme, setTheme] = useState(() => localStorage.getItem('monitoreoTheme') || 'dark');
+  const [theme, setTheme] = useState(() => resolveThemePreference());
   const [density, setDensity] = useState(() => resolveDensityPreference());
+  const [highContrast, setHighContrast] = useState(() =>
+    readBooleanSetting(HIGH_CONTRAST_STORAGE_KEY, false),
+  );
+  const [reduceMotion, setReduceMotion] = useState(() =>
+    readBooleanSetting(REDUCE_MOTION_STORAGE_KEY, false),
+  );
+  const [assistantQuickSuggestions, setAssistantQuickSuggestions] = useState(() =>
+    readBooleanSetting(ASSISTANT_QUICK_ACTIONS_KEY, true),
+  );
+  const [assistantCloseOnOutside, setAssistantCloseOnOutside] = useState(() =>
+    readBooleanSetting(ASSISTANT_AUTO_CLOSE_KEY, true),
+  );
+  const [assistantClearOnLogout, setAssistantClearOnLogout] = useState(() =>
+    readBooleanSetting(ASSISTANT_CLEAR_ON_LOGOUT_KEY, false),
+  );
   const [selectedTemplateSections, setSelectedTemplateSections] = useState(null);
   const [auth, setAuth] = useState(() => {
     try {
@@ -682,15 +747,67 @@ export default function MonitoreoLayout() {
     () => buildStorageKey(ASSISTANT_MODE_PREFIX, assistantUserKey),
     [assistantUserKey],
   );
+  const sessionActivityKey = useMemo(
+    () => buildStorageKey(SESSION_ACTIVITY_PREFIX, assistantUserKey),
+    [assistantUserKey],
+  );
 
   const isFicha = location.pathname.includes('/monitoreo/ficha-escritura');
-  const applyPreferences = (nextTheme, nextFontSize, nextDensity) => {
-    localStorage.setItem('monitoreoTheme', nextTheme);
+  const applyPreferences = (
+    nextThemePreference,
+    nextFontSize,
+    nextDensity,
+    nextHighContrast,
+    nextReduceMotion,
+  ) => {
+    const effectiveTheme = resolveEffectiveTheme(nextThemePreference);
+    localStorage.setItem('monitoreoTheme', nextThemePreference);
     localStorage.setItem('monitoreoFontSize', nextFontSize);
     localStorage.setItem(DENSITY_STORAGE_KEY, nextDensity);
-    document.documentElement.dataset.theme = nextTheme;
+    localStorage.setItem(HIGH_CONTRAST_STORAGE_KEY, String(Boolean(nextHighContrast)));
+    localStorage.setItem(REDUCE_MOTION_STORAGE_KEY, String(Boolean(nextReduceMotion)));
+    document.documentElement.dataset.themePreference = nextThemePreference;
+    document.documentElement.dataset.theme = effectiveTheme;
     document.documentElement.dataset.fontSize = nextFontSize;
     document.documentElement.dataset.density = nextDensity;
+    document.documentElement.dataset.highContrast = String(Boolean(nextHighContrast));
+    document.documentElement.dataset.reduceMotion = String(Boolean(nextReduceMotion));
+  };
+
+  const syncSettingsFromStorage = useCallback(() => {
+    try {
+      const nextTheme = resolveThemePreference();
+      const nextFontSize = localStorage.getItem('monitoreoFontSize') || 'normal';
+      const nextDensity = resolveDensityPreference();
+      const nextHighContrast = readBooleanSetting(HIGH_CONTRAST_STORAGE_KEY, false);
+      const nextReduceMotion = readBooleanSetting(REDUCE_MOTION_STORAGE_KEY, false);
+      const nextAssistantQuickSuggestions = readBooleanSetting(ASSISTANT_QUICK_ACTIONS_KEY, true);
+      const nextAssistantCloseOnOutside = readBooleanSetting(ASSISTANT_AUTO_CLOSE_KEY, true);
+      const nextAssistantClearOnLogout = readBooleanSetting(ASSISTANT_CLEAR_ON_LOGOUT_KEY, false);
+      const nextAssistantMode = localStorage.getItem(assistantModeKey);
+
+      setTheme(nextTheme);
+      setFontSize(nextFontSize);
+      setDensity(nextDensity);
+      setHighContrast(nextHighContrast);
+      setReduceMotion(nextReduceMotion);
+      setAssistantQuickSuggestions(nextAssistantQuickSuggestions);
+      setAssistantCloseOnOutside(nextAssistantCloseOnOutside);
+      setAssistantClearOnLogout(nextAssistantClearOnLogout);
+      if (
+        nextAssistantMode === ASSISTANT_MODE_PERSISTENT ||
+        nextAssistantMode === ASSISTANT_MODE_TEMPORARY
+      ) {
+        setAssistantMode(nextAssistantMode);
+      }
+    } catch {
+      // noop
+    }
+  }, [assistantModeKey]);
+
+  const openAdvancedSettings = () => {
+    setIsSettingsOpen(false);
+    navigate('/monitoreo/configuracion');
   };
   const normalizeMessages = (messages = []) => {
     const normalized = (Array.isArray(messages) ? messages : []).map((message) => ({
@@ -1772,8 +1889,43 @@ export default function MonitoreoLayout() {
   }, []);
 
   useEffect(() => {
-    applyPreferences(theme, fontSize, density);
-  }, [theme, fontSize, density]);
+    applyPreferences(theme, fontSize, density, highContrast, reduceMotion);
+  }, [theme, fontSize, density, highContrast, reduceMotion]);
+
+  useEffect(() => {
+    if (theme !== 'system') return undefined;
+    const media = window.matchMedia('(prefers-color-scheme: light)');
+    const applyTheme = () => {
+      applyPreferences(theme, fontSize, density, highContrast, reduceMotion);
+    };
+    if (typeof media.addEventListener === 'function') {
+      media.addEventListener('change', applyTheme);
+      return () => media.removeEventListener('change', applyTheme);
+    }
+    media.addListener(applyTheme);
+    return () => media.removeListener(applyTheme);
+  }, [theme, fontSize, density, highContrast, reduceMotion]);
+
+  useEffect(() => {
+    localStorage.setItem(ASSISTANT_QUICK_ACTIONS_KEY, String(assistantQuickSuggestions));
+  }, [assistantQuickSuggestions]);
+
+  useEffect(() => {
+    localStorage.setItem(ASSISTANT_AUTO_CLOSE_KEY, String(assistantCloseOnOutside));
+  }, [assistantCloseOnOutside]);
+
+  useEffect(() => {
+    localStorage.setItem(ASSISTANT_CLEAR_ON_LOGOUT_KEY, String(assistantClearOnLogout));
+  }, [assistantClearOnLogout]);
+
+  useEffect(() => {
+    window.addEventListener(SETTINGS_EVENT_NAME, syncSettingsFromStorage);
+    window.addEventListener('storage', syncSettingsFromStorage);
+    return () => {
+      window.removeEventListener(SETTINGS_EVENT_NAME, syncSettingsFromStorage);
+      window.removeEventListener('storage', syncSettingsFromStorage);
+    };
+  }, [syncSettingsFromStorage]);
 
   useEffect(() => {
     localStorage.setItem('monitoreoSidebarCollapsed', String(isSidebarCollapsed));
@@ -1847,6 +1999,7 @@ export default function MonitoreoLayout() {
     if (!isAssistantOpen) return;
 
     const handlePointerDown = (event) => {
+      if (!assistantCloseOnOutside) return;
       const target = event.target;
       if (!(target instanceof Node)) return;
 
@@ -1862,14 +2015,18 @@ export default function MonitoreoLayout() {
       }
     };
 
-    window.addEventListener('pointerdown', handlePointerDown);
+    if (assistantCloseOnOutside) {
+      window.addEventListener('pointerdown', handlePointerDown);
+    }
     window.addEventListener('keydown', handleEscape);
 
     return () => {
-      window.removeEventListener('pointerdown', handlePointerDown);
+      if (assistantCloseOnOutside) {
+        window.removeEventListener('pointerdown', handlePointerDown);
+      }
       window.removeEventListener('keydown', handleEscape);
     };
-  }, [isAssistantOpen]);
+  }, [isAssistantOpen, assistantCloseOnOutside]);
 
   useEffect(() => {
     let resolvedMode = ASSISTANT_MODE_PERSISTENT;
@@ -1931,23 +2088,181 @@ export default function MonitoreoLayout() {
     });
   }, [assistantStorageReady, greetingName]);
 
+  const clearStoredSessionActivity = useCallback(() => {
+    try {
+      const prefix = `${SESSION_ACTIVITY_PREFIX}:`;
+      const keys = [];
+      for (let index = 0; index < window.localStorage.length; index += 1) {
+        const key = window.localStorage.key(index);
+        if (key && key.startsWith(prefix)) keys.push(key);
+      }
+      keys.forEach((key) => window.localStorage.removeItem(key));
+    } catch {
+      // noop
+    }
+  }, []);
+
+  const executeSessionLogout = useCallback(
+    async (reason = 'manual') => {
+      if (sessionLogoutInProgressRef.current) return;
+      sessionLogoutInProgressRef.current = true;
+
+      try {
+        if (sessionTimeoutRef.current) {
+          window.clearTimeout(sessionTimeoutRef.current);
+          sessionTimeoutRef.current = null;
+        }
+
+        if (reason === SESSION_LOGOUT_REASON_INACTIVITY) {
+          localStorage.setItem(SESSION_LOGOUT_REASON_KEY, SESSION_LOGOUT_REASON_INACTIVITY);
+        } else {
+          localStorage.removeItem(SESSION_LOGOUT_REASON_KEY);
+        }
+
+        if (assistantClearOnLogout) {
+          removeStoredConversation(ASSISTANT_MODE_PERSISTENT);
+          removeStoredConversation(ASSISTANT_MODE_TEMPORARY);
+        }
+        clearAllTemporaryAssistantConversations();
+        clearStoredSessionActivity();
+        localStorage.removeItem('monitoreoAuth');
+        localStorage.removeItem('monitoreoProfile');
+        setAuth(null);
+        setProfile({});
+
+        await supabase.auth.signOut();
+      } catch {
+        // noop
+      } finally {
+        navigate('/login', { replace: true });
+        sessionLogoutInProgressRef.current = false;
+      }
+    },
+    [
+      assistantClearOnLogout,
+      clearAllTemporaryAssistantConversations,
+      clearStoredSessionActivity,
+      navigate,
+      removeStoredConversation,
+    ],
+  );
+
+  useEffect(() => {
+    if (!auth?.role) return undefined;
+
+    const readLastActivity = () => {
+      const raw = localStorage.getItem(sessionActivityKey);
+      const parsed = Number(raw || 0);
+      return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+    };
+
+    const scheduleTimeoutFrom = (lastActivityAt) => {
+      if (sessionTimeoutRef.current) {
+        window.clearTimeout(sessionTimeoutRef.current);
+        sessionTimeoutRef.current = null;
+      }
+
+      const elapsed = Date.now() - lastActivityAt;
+      const remaining = SESSION_IDLE_TIMEOUT_MS - elapsed;
+      if (remaining <= 0) {
+        executeSessionLogout(SESSION_LOGOUT_REASON_INACTIVITY);
+        return;
+      }
+
+      sessionTimeoutRef.current = window.setTimeout(() => {
+        executeSessionLogout(SESSION_LOGOUT_REASON_INACTIVITY);
+      }, remaining);
+    };
+
+    const persistActivity = (force = false) => {
+      const now = Date.now();
+      if (!force && now - sessionLastWriteRef.current < SESSION_ACTIVITY_WRITE_THROTTLE_MS) {
+        const knownActivity = readLastActivity();
+        scheduleTimeoutFrom(knownActivity || now);
+        return;
+      }
+
+      sessionLastWriteRef.current = now;
+      localStorage.setItem(sessionActivityKey, String(now));
+      scheduleTimeoutFrom(now);
+    };
+
+    const initialActivity = readLastActivity();
+    if (initialActivity && Date.now() - initialActivity >= SESSION_IDLE_TIMEOUT_MS) {
+      executeSessionLogout(SESSION_LOGOUT_REASON_INACTIVITY);
+      return undefined;
+    }
+
+    if (initialActivity) {
+      scheduleTimeoutFrom(initialActivity);
+    } else {
+      persistActivity(true);
+    }
+
+    const handleActivity = () => persistActivity(false);
+    const handlePageHide = () => persistActivity(true);
+    const handleVisibility = () => {
+      if (document.visibilityState === 'hidden') {
+        persistActivity(true);
+        return;
+      }
+
+      const latest = readLastActivity();
+      if (latest && Date.now() - latest >= SESSION_IDLE_TIMEOUT_MS) {
+        executeSessionLogout(SESSION_LOGOUT_REASON_INACTIVITY);
+        return;
+      }
+      persistActivity(true);
+    };
+
+    const handleStorage = (event) => {
+      if (event.key !== sessionActivityKey) return;
+      const nextValue = Number(event.newValue || 0);
+      if (!nextValue) return;
+      if (Date.now() - nextValue >= SESSION_IDLE_TIMEOUT_MS) {
+        executeSessionLogout(SESSION_LOGOUT_REASON_INACTIVITY);
+        return;
+      }
+      scheduleTimeoutFrom(nextValue);
+    };
+
+    window.addEventListener('pointerdown', handleActivity);
+    window.addEventListener('keydown', handleActivity);
+    window.addEventListener('touchstart', handleActivity);
+    window.addEventListener('scroll', handleActivity);
+    window.addEventListener('pagehide', handlePageHide);
+    window.addEventListener('storage', handleStorage);
+    document.addEventListener('visibilitychange', handleVisibility);
+
+    return () => {
+      if (sessionTimeoutRef.current) {
+        window.clearTimeout(sessionTimeoutRef.current);
+        sessionTimeoutRef.current = null;
+      }
+      window.removeEventListener('pointerdown', handleActivity);
+      window.removeEventListener('keydown', handleActivity);
+      window.removeEventListener('touchstart', handleActivity);
+      window.removeEventListener('scroll', handleActivity);
+      window.removeEventListener('pagehide', handlePageHide);
+      window.removeEventListener('storage', handleStorage);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
+  }, [auth?.role, executeSessionLogout, sessionActivityKey]);
+
   useEffect(() => {
     let active = true;
     const ensureSession = async () => {
       const { data } = await supabase.auth.getSession();
       if (!active) return;
       if (!data?.session) {
-        clearAllTemporaryAssistantConversations();
-        localStorage.removeItem('monitoreoAuth');
-        localStorage.removeItem('monitoreoProfile');
-        navigate('/login');
+        await executeSessionLogout('session');
       }
     };
     ensureSession();
     return () => {
       active = false;
     };
-  }, [navigate, clearAllTemporaryAssistantConversations]);
+  }, [executeSessionLogout]);
 
   useEffect(() => {
     const handleProfileUpdate = () => {
@@ -1988,11 +2303,7 @@ export default function MonitoreoLayout() {
   const handleLogout = async () => {
     setIsLoggingOut(true);
     try {
-      clearAllTemporaryAssistantConversations();
-      localStorage.removeItem('monitoreoAuth');
-      localStorage.removeItem('monitoreoProfile');
-      await supabase.auth.signOut();
-      navigate('/login');
+      await executeSessionLogout('manual');
     } finally {
       setIsLoggingOut(false);
       setIsLogoutOpen(false);
@@ -2003,6 +2314,8 @@ export default function MonitoreoLayout() {
     setTheme('dark');
     setFontSize('normal');
     setDensity(getDesktopDensityDefault());
+    setHighContrast(false);
+    setReduceMotion(false);
   };
 
   const sendAssistantMessage = async (rawMessage) => {
@@ -2188,7 +2501,7 @@ export default function MonitoreoLayout() {
     }
 
     if (assistantWizard.active) {
-      pushAssistantWizardMessage('Estas en modo asistido. Usa "Cancelar" o termina el flujo actual.');
+      pushAssistantWizardMessage('Estás en modo asistido. Usa "Cancelar" o termina el flujo actual.');
       return;
     }
 
@@ -2341,6 +2654,16 @@ export default function MonitoreoLayout() {
                   navigate('/monitoreo/usuarios');
                 },
               },
+              {
+                id: 'instituciones',
+                label: 'Instituciones Educativas',
+                icon: Building2,
+                path: '/monitoreo/instituciones',
+                action: () => {
+                  setIsMobileSidebarOpen(false);
+                  navigate('/monitoreo/instituciones');
+                },
+              },
             ]
           : []),
       ];
@@ -2377,8 +2700,8 @@ export default function MonitoreoLayout() {
       ? 'w-[84px] px-2 py-2.5'
       : 'w-[92px] px-2.5 py-3'
     : isCompactDensity
-      ? 'w-[268px] p-3.5'
-      : 'w-[296px] p-4';
+      ? 'w-[214px] p-2.5'
+      : 'w-[228px] p-3';
 
   const sidebarProfileCardClass = isSidebarCollapsed
     ? isCompactDensity
@@ -2399,24 +2722,21 @@ export default function MonitoreoLayout() {
   const sidebarDesktopLabelClass = `truncate transition-all duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] ${
     isSidebarCollapsed
       ? 'pointer-events-none ml-0 max-w-0 translate-x-2 opacity-0'
-      : `${isCompactDensity ? 'ml-2.5 max-w-[172px]' : 'ml-3 max-w-[190px]'} translate-x-0 opacity-100`
+      : `${isCompactDensity ? 'ml-2 max-w-[122px]' : 'ml-2.5 max-w-[132px]'} translate-x-0 opacity-100`
   }`;
 
   const sidebarHeaderTextClass = `min-w-0 overflow-hidden transition-all duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] ${
     isSidebarCollapsed
       ? 'pointer-events-none max-w-0 translate-x-2 opacity-0'
-      : `${isCompactDensity ? 'max-w-[160px]' : 'max-w-[180px]'} translate-x-0 opacity-100`
+      : `${isCompactDensity ? 'max-w-[110px]' : 'max-w-[118px]'} translate-x-0 opacity-100`
   }`;
 
   const sidebarRailToggleButtonClass =
     `inline-flex ${isCompactDensity ? 'h-9 w-9' : 'h-10 w-10'} shrink-0 items-center justify-center rounded-xl border border-slate-700/70 bg-slate-900/55 text-slate-300 transition-all duration-200 ease-out hover:-translate-y-[1px] hover:border-cyan-400/40 hover:bg-slate-800/80 hover:text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/80 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950`;
 
-  const sidebarTooltipClass =
-    'pointer-events-none absolute left-[calc(100%+10px)] top-1/2 z-40 -translate-y-1/2 translate-x-1 whitespace-nowrap rounded-lg border border-slate-600/80 bg-slate-950/95 px-2.5 py-1 text-xs font-medium text-slate-100 opacity-0 shadow-[0_10px_28px_rgba(2,6,23,0.5)] transition-all duration-150 ease-out group-hover:translate-x-0 group-hover:opacity-100 group-focus-visible:translate-x-0 group-focus-visible:opacity-100';
-
   const sidebarDesktopNavClass = `mt-2 flex min-h-0 flex-1 flex-col scrollbar-thin ${
     isSidebarCollapsed
-      ? `${isCompactDensity ? 'items-center gap-2.5' : 'items-center gap-3'} overflow-y-auto overflow-x-visible pr-0.5`
+      ? `${isCompactDensity ? 'items-center gap-2.5' : 'items-center gap-3'} overflow-y-auto overflow-x-hidden pr-0.5`
       : `${isCompactDensity ? 'gap-1.5' : 'gap-2'} overflow-y-auto pr-1`
   }`;
 
@@ -2493,7 +2813,7 @@ export default function MonitoreoLayout() {
           />
           <aside
             ref={mobileSidebarRef}
-            className="absolute inset-y-0 left-0 flex w-[290px] flex-col border-r border-slate-700/50 bg-gradient-to-b from-slate-950/95 via-slate-950/90 to-slate-900/80 p-4 shadow-[22px_0_55px_rgba(2,6,23,0.55)] backdrop-blur-xl"
+            className="absolute inset-y-0 left-0 flex w-[272px] flex-col border-r border-slate-700/50 bg-gradient-to-b from-slate-950/95 via-slate-950/90 to-slate-900/80 p-4 shadow-[22px_0_55px_rgba(2,6,23,0.55)] backdrop-blur-xl"
             onClick={(event) => event.stopPropagation()}
           >
             <div className="flex items-center justify-between gap-3">
@@ -2631,9 +2951,6 @@ export default function MonitoreoLayout() {
                   >
                     <Icon size={18} className={getSidebarDesktopIconClass({ active: isActive })} />
                     <span className={sidebarDesktopLabelClass}>{item.label}</span>
-                    {isSidebarCollapsed ? (
-                      <span className={sidebarTooltipClass}>{item.label}</span>
-                    ) : null}
                   </button>
                 );
               })}
@@ -2650,9 +2967,6 @@ export default function MonitoreoLayout() {
             >
               <Settings size={18} className={getSidebarDesktopIconClass()} />
               <span className={sidebarDesktopLabelClass}>Ajustes</span>
-              {isSidebarCollapsed ? (
-                <span className={sidebarTooltipClass}>Ajustes</span>
-              ) : null}
             </button>
             <button
               type="button"
@@ -2663,9 +2977,6 @@ export default function MonitoreoLayout() {
             >
               <LogOut size={18} className={getSidebarDesktopIconClass({ tone: 'warning' })} />
               <span className={sidebarDesktopLabelClass}>Cerrar sesión</span>
-              {isSidebarCollapsed ? (
-                <span className={sidebarTooltipClass}>Cerrar sesión</span>
-              ) : null}
             </button>
           </div>
 
@@ -2939,23 +3250,25 @@ export default function MonitoreoLayout() {
                   {isAssistantLoading ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
                 </button>
               </div>
-              <div className="mt-3 flex flex-wrap gap-2">
-                {ASSISTANT_QUICK_ACTIONS.map((action) => (
-                  <button
-                    key={action.id}
-                    type="button"
-                    onClick={() => handleAssistantQuickAction(action)}
-                    className={assistantQuickActionClass}
-                    disabled={
-                      isAssistantLoading ||
-                      assistantWizard.saving ||
-                      (assistantWizard.active && action.type !== 'wizard')
-                    }
-                  >
-                    {action.label}
-                  </button>
-                ))}
-              </div>
+              {assistantQuickSuggestions ? (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {ASSISTANT_QUICK_ACTIONS.map((action) => (
+                    <button
+                      key={action.id}
+                      type="button"
+                      onClick={() => handleAssistantQuickAction(action)}
+                      className={assistantQuickActionClass}
+                      disabled={
+                        isAssistantLoading ||
+                        assistantWizard.saving ||
+                        (assistantWizard.active && action.type !== 'wizard')
+                      }
+                    >
+                      {action.label}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
               {assistantWizard.active ? (
                 <div className="mt-3 rounded-xl border border-slate-700/70 bg-slate-900/70 px-3 py-2">
                   <div className="flex flex-wrap gap-2">
@@ -3064,20 +3377,27 @@ export default function MonitoreoLayout() {
             className="h-full w-full max-w-md border-l border-slate-800/70 bg-slate-950/90 p-6 shadow-2xl"
             onClick={(event) => event.stopPropagation()}
           >
-            <div className="flex items-center justify-between">
-              <h2 className="text-lg font-semibold text-slate-100">Ajustes</h2>
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h2 className="text-lg font-semibold text-slate-100">Ajustes rapidos</h2>
+                <p className="mt-1 text-xs text-slate-400">
+                  Cambios inmediatos para lectura y apariencia.
+                </p>
+              </div>
               <button
                 type="button"
                 onClick={() => setIsSettingsOpen(false)}
-                className="rounded-full border border-slate-700/60 p-2 text-slate-300 transition hover:border-slate-500"
+                className="inline-flex h-9 items-center justify-center rounded-xl border border-slate-700/60 px-3 text-xs font-semibold text-slate-300 transition hover:border-slate-500"
               >
-                <X size={14} />
+                <X size={13} className="mr-1.5" />
+                Cerrar
               </button>
             </div>
 
-            <div className="mt-6 space-y-6">
+            <div className="mt-6 space-y-5">
               <div className="rounded-2xl border border-slate-800/70 bg-slate-900/60 p-4">
-                <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Tamaño de texto</p>
+                <p className="text-xs uppercase tracking-[0.24em] text-slate-500">Lectura</p>
+                <p className="mt-1 text-sm font-semibold text-slate-100">Tamano de texto</p>
                 <div className="mt-3 flex flex-wrap gap-2">
                   {[
                     { id: 'normal', label: 'Normal' },
@@ -3088,7 +3408,7 @@ export default function MonitoreoLayout() {
                       key={option.id}
                       type="button"
                       onClick={() => setFontSize(option.id)}
-                      className={`rounded-full border px-4 py-2 text-xs font-semibold transition ${
+                      className={`inline-flex h-9 items-center justify-center rounded-xl border px-4 text-xs font-semibold transition ${
                         fontSize === option.id
                           ? 'border-emerald-500/40 bg-emerald-500/20 text-emerald-100'
                           : 'border-slate-700/60 text-slate-300 hover:border-slate-500'
@@ -3101,17 +3421,19 @@ export default function MonitoreoLayout() {
               </div>
 
               <div className="rounded-2xl border border-slate-800/70 bg-slate-900/60 p-4">
-                <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Apariencia</p>
+                <p className="text-xs uppercase tracking-[0.24em] text-slate-500">Apariencia</p>
+                <p className="mt-1 text-sm font-semibold text-slate-100">Tema</p>
                 <div className="mt-3 flex flex-wrap gap-2">
                   {[
                     { id: 'dark', label: 'Oscuro' },
                     { id: 'light', label: 'Claro' },
+                    { id: 'system', label: 'Automatico' },
                   ].map((option) => (
                     <button
                       key={option.id}
                       type="button"
                       onClick={() => setTheme(option.id)}
-                      className={`rounded-full border px-4 py-2 text-xs font-semibold transition ${
+                      className={`inline-flex h-9 items-center justify-center rounded-xl border px-4 text-xs font-semibold transition ${
                         theme === option.id
                           ? 'border-emerald-500/40 bg-emerald-500/20 text-emerald-100'
                           : 'border-slate-700/60 text-slate-300 hover:border-slate-500'
@@ -3125,7 +3447,8 @@ export default function MonitoreoLayout() {
               </div>
 
               <div className="rounded-2xl border border-slate-800/70 bg-slate-900/60 p-4">
-                <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Densidad</p>
+                <p className="text-xs uppercase tracking-[0.24em] text-slate-500">Densidad</p>
+                <p className="mt-1 text-sm font-semibold text-slate-100">Distribucion</p>
                 <div className="mt-3 flex flex-wrap gap-2">
                   {[
                     { id: DENSITY_COMPACT, label: 'Compacta' },
@@ -3135,7 +3458,7 @@ export default function MonitoreoLayout() {
                       key={option.id}
                       type="button"
                       onClick={() => setDensity(option.id)}
-                      className={`rounded-full border px-4 py-2 text-xs font-semibold transition ${
+                      className={`inline-flex h-9 items-center justify-center rounded-xl border px-4 text-xs font-semibold transition ${
                         density === option.id
                           ? 'border-emerald-500/40 bg-emerald-500/20 text-emerald-100'
                           : 'border-slate-700/60 text-slate-300 hover:border-slate-500'
@@ -3151,26 +3474,32 @@ export default function MonitoreoLayout() {
               </div>
 
               <div className="rounded-2xl border border-slate-800/70 bg-slate-900/60 p-4">
-                <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Cuenta</p>
+                <p className="text-xs uppercase tracking-[0.24em] text-slate-500">Acceso avanzado</p>
                 <button
                   type="button"
-                  onClick={() => {
-                    setIsSettingsOpen(false);
-                    navigate('/monitoreo/perfil');
-                  }}
-                  className="mt-3 inline-flex items-center gap-2 rounded-full border border-slate-700/60 px-4 py-2 text-xs font-semibold text-slate-300 transition hover:border-slate-500"
+                  onClick={openAdvancedSettings}
+                  className="mt-3 inline-flex h-9 w-full items-center justify-center rounded-xl border border-cyan-500/45 bg-cyan-500/15 px-4 text-xs font-semibold text-cyan-100 transition hover:border-cyan-400/70"
                 >
-                  Ir a mi perfil
+                  Abrir configuracion completa
                 </button>
               </div>
 
-              <button
-                type="button"
-                onClick={handleResetSettings}
-                className="w-full rounded-xl border border-slate-700/60 px-4 py-2 text-xs font-semibold text-slate-300 transition hover:border-slate-500"
-              >
-                Restablecer ajustes
-              </button>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={handleResetSettings}
+                  className="inline-flex h-9 flex-1 items-center justify-center rounded-xl border border-slate-700/60 px-4 text-xs font-semibold text-slate-300 transition hover:border-slate-500"
+                >
+                  Restablecer visual
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsSettingsOpen(false)}
+                  className="inline-flex h-9 flex-1 items-center justify-center rounded-xl border border-slate-700/60 px-4 text-xs font-semibold text-slate-300 transition hover:border-slate-500"
+                >
+                  Cerrar panel
+                </button>
+              </div>
             </div>
           </div>
         </div>
