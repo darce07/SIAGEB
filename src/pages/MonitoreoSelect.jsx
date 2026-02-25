@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Copy, MoveRight, Plus, Share2, Trash2 } from 'lucide-react';
+import { Copy, Loader2, MoveRight, Plus, Share2, Trash2 } from 'lucide-react';
 import Card from '../components/ui/Card.jsx';
 import ConfirmModal from '../components/ui/ConfirmModal.jsx';
 import { supabase } from '../lib/supabase.js';
@@ -58,6 +58,30 @@ export default function MonitoreoSelect() {
   const [expandedDescriptions, setExpandedDescriptions] = useState({});
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [noticeModal, setNoticeModal] = useState({
+    open: false,
+    title: '',
+    description: '',
+    tone: 'warning',
+  });
+
+  const openNoticeModal = (title, description, tone = 'warning') => {
+    setNoticeModal({
+      open: true,
+      title,
+      description,
+      tone,
+    });
+  };
+
+  const closeNoticeModal = () => {
+    setNoticeModal({
+      open: false,
+      title: '',
+      description: '',
+      tone: 'warning',
+    });
+  };
 
   const isAdmin = useMemo(() => {
     try {
@@ -99,7 +123,7 @@ export default function MonitoreoSelect() {
             .filter((event) => !templateIds.has(event.id))
             .map((event) => ({
               id: event.id,
-              title: event.title || 'Monitoreo sin título',
+              title: event.title || 'Monitoreo sin titulo',
               description: event.description || null,
               status: 'draft',
               levels_config: { type: 'standard', levels: [] },
@@ -149,18 +173,30 @@ export default function MonitoreoSelect() {
 
   const createInstanceForTemplate = async (template) => {
     if (template.status !== 'published') {
-      alert('Este monitoreo aún es un borrador.');
+      openNoticeModal(
+        'Monitoreo no disponible',
+        'Este monitoreo aun es un borrador.',
+        'warning',
+      );
       return false;
     }
     const status = getTemplateStatus(template);
     if (status !== 'active') {
-      alert('Este monitoreo no está activo. Solo puedes visualizar los resultados.');
+      openNoticeModal(
+        'Monitoreo no activo',
+        'Este monitoreo no esta activo. Solo puedes visualizar los resultados.',
+        'warning',
+      );
       return false;
     }
     const auth = JSON.parse(localStorage.getItem(AUTH_KEY) || '{}');
     const userId = auth?.email || auth?.docNumber || '';
     if (!userId) {
-      alert('No se pudo identificar al usuario. Vuelve a iniciar sesión.');
+      openNoticeModal(
+        'Sesion no valida',
+        'No se pudo identificar al usuario. Vuelve a iniciar sesion.',
+        'danger',
+      );
       return false;
     }
     const { data: existing, error: existingError } = await supabase
@@ -192,7 +228,11 @@ export default function MonitoreoSelect() {
       .single();
     if (error) {
       console.error(error);
-      alert('No se pudo crear el monitoreo. Inténtalo nuevamente.');
+      openNoticeModal(
+        'No se pudo crear',
+        'No se pudo crear el monitoreo. Intentalo nuevamente.',
+        'danger',
+      );
       return false;
     }
     localStorage.setItem('monitoreoInstanceActive', data.id);
@@ -287,7 +327,11 @@ export default function MonitoreoSelect() {
       setDeleteTarget(null);
     } catch (error) {
       console.error(error);
-      alert(`No se pudo eliminar el monitoreo de forma permanente.\n${error.message}`);
+      openNoticeModal(
+        'No se pudo eliminar',
+        'No se pudo eliminar el monitoreo de forma permanente. Intentalo nuevamente.',
+        'danger',
+      );
     } finally {
       setIsDeleting(false);
     }
@@ -331,13 +375,23 @@ export default function MonitoreoSelect() {
       </div>
 
       {isLoading ? (
-        <Card className="flex flex-col gap-3">
-          <p className="text-sm text-slate-400">Cargando monitoreos...</p>
+        <Card className="flex flex-col gap-4">
+          <div className="flex items-center gap-2 text-sm text-cyan-200">
+            <Loader2 size={16} className="animate-spin" />
+            <p>Cargando monitoreos...</p>
+          </div>
+          <div className="h-1.5 overflow-hidden rounded-full border border-slate-700/60 bg-slate-900/70">
+            <span className="block h-full w-1/3 animate-pulse rounded-full bg-cyan-400/70" />
+          </div>
+          <div className="space-y-2" aria-hidden="true">
+            <div className="h-3 w-2/3 animate-pulse rounded-lg bg-slate-800/80" />
+            <div className="h-3 w-1/2 animate-pulse rounded-lg bg-slate-800/65" />
+          </div>
         </Card>
       ) : visibleTemplates.length === 0 ? (
         <Card className="flex flex-col gap-3">
           <p className="text-sm text-slate-400">
-            Aún no existen plantillas de monitoreo. Contacta a un administrador.
+            Aun no existen plantillas de monitoreo. Contacta a un administrador.
           </p>
         </Card>
       ) : (
@@ -403,7 +457,7 @@ export default function MonitoreoSelect() {
                         }
                         className="text-xs font-semibold text-cyan-200 underline decoration-cyan-400/70 underline-offset-4"
                       >
-                        {isDescriptionExpanded ? 'Ver menos' : 'Ver más'}
+                        {isDescriptionExpanded ? 'Ver menos' : 'Ver mas'}
                       </button>
                     ) : null}
                   </div>
@@ -494,12 +548,23 @@ export default function MonitoreoSelect() {
         open={Boolean(deleteTarget)}
         tone="danger"
         title="Eliminar monitoreo"
-        description="Esta acción es irreversible. Se eliminará el borrador o plantilla."
+        description="Esta accion es irreversible. Se eliminara el borrador o plantilla."
         details={deleteTarget?.title || ''}
-        confirmText={isDeleting ? 'Eliminando...' : 'Sí, eliminar'}
+        confirmText={isDeleting ? 'Eliminando...' : 'Si, eliminar'}
         onCancel={() => setDeleteTarget(null)}
         onConfirm={handleDeleteTemplate}
         loading={isDeleting}
+      />
+
+      <ConfirmModal
+        open={noticeModal.open}
+        tone={noticeModal.tone}
+        title={noticeModal.title || 'Aviso'}
+        description={noticeModal.description}
+        confirmText="Entendido"
+        cancelText="Cerrar"
+        onCancel={closeNoticeModal}
+        onConfirm={closeNoticeModal}
       />
     </div>
   );

@@ -2,6 +2,7 @@ import { useContext, useEffect, useMemo, useReducer, useRef, useState } from 're
 import { CheckCircle2, RefreshCw, Save } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import Card from '../components/ui/Card.jsx';
+import ConfirmModal from '../components/ui/ConfirmModal.jsx';
 import Input from '../components/ui/Input.jsx';
 import Select from '../components/ui/Select.jsx';
 import Textarea from '../components/ui/Textarea.jsx';
@@ -252,6 +253,15 @@ const createInstance = async (templateId, templateStatus) => {
   }
 };
 
+const formatInstitutionLevel = (value) => {
+  if (value === 'inicial_cuna_jardin') return 'INICIAL CUNA JARDIN';
+  if (value === 'inicial_jardin') return 'INICIAL JARDIN';
+  if (value === 'inicial') return 'INICIAL JARDIN';
+  if (value === 'primaria') return 'PRIMARIA';
+  if (value === 'secundaria') return 'SECUNDARIA';
+  return '-';
+};
+
 export default function FichaEscritura() {
   const { setActiveSection } = useContext(SidebarContext);
   const [selectedTemplate, setSelectedTemplate] = useState(null);
@@ -294,7 +304,7 @@ export default function FichaEscritura() {
       // 2) Cargar plantilla por templateId
       const idToLoad = existing?.template_id || reusedInstance?.template_id || templateId;
       if (!idToLoad) {
-        setTemplateError('No se encontró la plantilla seleccionada.');
+        setTemplateError('No se encontro la plantilla seleccionada.');
         setSelectedTemplate(null);
         setIsTemplateLoading(false);
         return;
@@ -340,13 +350,142 @@ export default function FichaEscritura() {
   }, [defaultLevels, selectedTemplate]);
   const isReadOnly = templateStatus !== 'active';
   const [toast, setToast] = useState('');
+  const [isResetConfirmOpen, setIsResetConfirmOpen] = useState(false);
+  const [institutionCatalog, setInstitutionCatalog] = useState([]);
+  const [isInstitutionCatalogLoading, setIsInstitutionCatalogLoading] = useState(true);
+  const [institutionCatalogError, setInstitutionCatalogError] = useState('');
+  const [isInstitutionAutocompleteOpen, setIsInstitutionAutocompleteOpen] = useState(false);
   const prevDocenteRef = useRef('');
   const prevMonitorRef = useRef('');
+  const institutionAutocompleteRef = useRef(null);
 
   const allQuestions = useMemo(
     () => templateSections.flatMap((section) => section.questions || []),
     [templateSections],
   );
+
+  const institutionSuggestions = useMemo(() => {
+    const term = String(state.header.institucion || '')
+      .trim()
+      .toLowerCase();
+    if (!term) return [];
+
+    const scored = institutionCatalog
+      .map((item) => {
+        const name = String(item.nombre_ie || '');
+        const codLocal = String(item.cod_local || '');
+        const codModular = String(item.cod_modular || '');
+        const director = String(item.nombre_director || '');
+        const haystack = `${name} ${codLocal} ${codModular} ${director}`.toLowerCase();
+        if (!haystack.includes(term)) return null;
+
+        const startsWith =
+          name.toLowerCase().startsWith(term) ||
+          codLocal.toLowerCase().startsWith(term) ||
+          codModular.toLowerCase().startsWith(term)
+            ? 0
+            : 1;
+        return { item, score: startsWith };
+      })
+      .filter(Boolean)
+      .sort((left, right) => {
+        if (left.score !== right.score) return left.score - right.score;
+        return String(left.item.nombre_ie || '').localeCompare(String(right.item.nombre_ie || ''), 'es', {
+          sensitivity: 'base',
+        });
+      });
+
+    return scored.slice(0, 8).map((entry) => entry.item);
+  }, [institutionCatalog, state.header.institucion]);
+
+  const applyInstitutionSuggestion = (item) => {
+    if (!item) return;
+
+    dispatch({
+      type: 'UPDATE_HEADER',
+      field: 'institucion',
+      value: item.nombre_ie || '',
+    });
+
+    if (item.distrito) {
+      dispatch({
+        type: 'UPDATE_HEADER',
+        field: 'lugarIe',
+        value: item.distrito,
+      });
+    }
+
+    if (!state.header.director && item.nombre_director) {
+      dispatch({
+        type: 'UPDATE_HEADER',
+        field: 'director',
+        value: item.nombre_director,
+      });
+    }
+
+    setIsInstitutionAutocompleteOpen(false);
+  };
+
+  const handleInstitutionKeyDown = (event) => {
+    if (event.key === 'Escape') {
+      setIsInstitutionAutocompleteOpen(false);
+      return;
+    }
+
+    if (event.key === 'Enter' && institutionSuggestions.length) {
+      event.preventDefault();
+      applyInstitutionSuggestion(institutionSuggestions[0]);
+    }
+  };
+
+  useEffect(() => {
+    let active = true;
+
+    const loadInstitutionCatalog = async () => {
+      setIsInstitutionCatalogLoading(true);
+      setInstitutionCatalogError('');
+
+      const { data, error } = await supabase
+        .from('educational_institutions')
+        .select('id, nombre_ie, cod_local, cod_modular, distrito, nivel, modalidad, nombre_director, estado')
+        .eq('estado', 'active')
+        .order('nombre_ie', { ascending: true });
+
+      if (!active) return;
+
+      if (error) {
+        setInstitutionCatalog([]);
+        setInstitutionCatalogError('No se pudo cargar el catalogo de IE.');
+        setIsInstitutionCatalogLoading(false);
+        return;
+      }
+
+      setInstitutionCatalog(data || []);
+      setIsInstitutionCatalogLoading(false);
+    };
+
+    loadInstitutionCatalog();
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isInstitutionAutocompleteOpen) return undefined;
+
+    const handleOutsidePointer = (event) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (institutionAutocompleteRef.current?.contains(target)) return;
+      setIsInstitutionAutocompleteOpen(false);
+    };
+
+    window.addEventListener('pointerdown', handleOutsidePointer);
+    return () => {
+      window.removeEventListener('pointerdown', handleOutsidePointer);
+    };
+  }, [isInstitutionAutocompleteOpen]);
 
   useEffect(() => {
     let active = true;
@@ -450,7 +589,7 @@ export default function FichaEscritura() {
     const questionErrors = {};
     allQuestions.forEach((question) => {
       if (!state.questions[question.id]?.answer) {
-        questionErrors[question.id] = 'Seleccione Sí o No.';
+        questionErrors[question.id] = 'Seleccione Si o No.';
       }
     });
     if (Object.keys(questionErrors).length > 0) errors.questions = questionErrors;
@@ -505,17 +644,20 @@ export default function FichaEscritura() {
   };
 
   const handleReset = () => {
-    if (window.confirm('¿Seguro que deseas limpiar el formulario?')) {
-      if (activeInstance) {
-        upsertInstance({
-          ...activeInstance,
-          updated_at: new Date().toISOString(),
-          status: 'in_progress',
-          data: serializeState(createInitialState(templateSections)),
-        });
-      }
-      dispatch({ type: 'RESET', sections: templateSections });
+    setIsResetConfirmOpen(true);
+  };
+
+  const handleConfirmReset = () => {
+    if (activeInstance) {
+      upsertInstance({
+        ...activeInstance,
+        updated_at: new Date().toISOString(),
+        status: 'in_progress',
+        data: serializeState(createInitialState(templateSections)),
+      });
     }
+    dispatch({ type: 'RESET', sections: templateSections });
+    setIsResetConfirmOpen(false);
   };
 
   if (isTemplateLoading) {
@@ -550,11 +692,11 @@ export default function FichaEscritura() {
       <div className="glass-panel sticky top-6 z-30 rounded-2xl px-6 py-4">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="flex flex-col gap-1">
-            <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Sesión</p>
+            <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Sesion</p>
             <h1 className="text-lg font-semibold text-slate-100">{state.meta.sessionId}</h1>
             {state.meta.lastSavedAt ? (
               <p className="text-xs text-slate-400">
-                Último guardado: {new Date(state.meta.lastSavedAt).toLocaleString()}
+                Ultimo guardado: {new Date(state.meta.lastSavedAt).toLocaleString()}
               </p>
             ) : null}
           </div>
@@ -606,21 +748,74 @@ export default function FichaEscritura() {
         <Card className="flex flex-col gap-6">
           <SectionHeader
             eyebrow="Encabezado"
-            title="Datos de identificación"
-            description="Registra la información base de la institución y del docente monitoreado."
+            title="Datos de identificacion"
+            description="Registra la informacion base de la institucion y del docente monitoreado."
           />
           <div className="grid gap-4 md:grid-cols-2">
-            <Input
-              id="institucion"
-              label="Institución Educativa"
-              value={state.header.institucion}
-              onChange={(event) =>
-                dispatch({ type: 'UPDATE_HEADER', field: 'institucion', value: event.target.value })
-              }
-              error={state.errors?.header?.institucion}
-              placeholder="Nombre de la I.E."
-              disabled={isReadOnly}
-            />
+            <div
+              ref={institutionAutocompleteRef}
+              className="flex flex-col gap-1.5 text-[14px] leading-[1.5] text-slate-200"
+            >
+              <span className="text-[10px] uppercase tracking-[0.16em] text-slate-400">
+                Institucion Educativa
+              </span>
+              <div className="relative">
+                <input
+                  id="institucion"
+                  value={state.header.institucion}
+                  onChange={(event) => {
+                    dispatch({
+                      type: 'UPDATE_HEADER',
+                      field: 'institucion',
+                      value: event.target.value,
+                    });
+                    if (!isReadOnly) setIsInstitutionAutocompleteOpen(true);
+                  }}
+                  onFocus={() => {
+                    if (!isReadOnly) setIsInstitutionAutocompleteOpen(true);
+                  }}
+                  onKeyDown={handleInstitutionKeyDown}
+                  placeholder="Nombre de la I.E."
+                  autoComplete="off"
+                  disabled={isReadOnly}
+                  className="h-9 w-full rounded-xl border border-slate-700/60 bg-slate-900/70 px-3 text-[14px] leading-[1.5] text-slate-100 placeholder:text-slate-500 focus:border-cyan-400 focus:outline-none focus:ring-2 focus:ring-cyan-500/30 disabled:cursor-not-allowed disabled:opacity-70"
+                />
+
+                {isInstitutionAutocompleteOpen && !isReadOnly && state.header.institucion.trim() ? (
+                  <div className="absolute left-0 right-0 z-30 mt-1.5 overflow-hidden rounded-xl border border-slate-700/80 bg-slate-950/95 shadow-[0_12px_34px_rgba(2,6,23,0.45)]">
+                    {isInstitutionCatalogLoading ? (
+                      <p className="px-3 py-2 text-sm text-slate-400">Cargando instituciones...</p>
+                    ) : institutionSuggestions.length ? (
+                      <div className="max-h-72 overflow-y-auto">
+                        {institutionSuggestions.map((item) => (
+                          <button
+                            key={`ie-suggestion-${item.id}`}
+                            type="button"
+                            onClick={() => applyInstitutionSuggestion(item)}
+                            className="flex w-full flex-col gap-1 border-b border-slate-800/80 px-3 py-2 text-left last:border-b-0 hover:bg-slate-900/70"
+                          >
+                            <span className="truncate text-sm font-semibold text-slate-100">{item.nombre_ie}</span>
+                            <span className="truncate text-xs text-slate-400">
+                              Cod. modular: {item.cod_modular || '-'} | Cod. local: {item.cod_local || '-'} |{' '}
+                              {item.distrito || '-'} | {formatInstitutionLevel(item.nivel)} |{' '}
+                              {item.modalidad || '-'}
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="px-3 py-2 text-sm text-slate-400">No se encontraron IE.</p>
+                    )}
+                  </div>
+                ) : null}
+              </div>
+              {state.errors?.header?.institucion ? (
+                <span className="text-xs text-rose-400">{state.errors.header.institucion}</span>
+              ) : null}
+              {institutionCatalogError ? (
+                <span className="text-xs text-amber-300">{institutionCatalogError}</span>
+              ) : null}
+            </div>
             <Input
               id="lugarIe"
               label="Lugar donde se encuentra la IE"
@@ -654,7 +849,7 @@ export default function FichaEscritura() {
             />
             <Select
               id="condicion"
-              label="Condición"
+              label="Condicion"
               value={state.header.condicion}
               onChange={(event) =>
                 dispatch({ type: 'UPDATE_HEADER', field: 'condicion', value: event.target.value })
@@ -667,7 +862,7 @@ export default function FichaEscritura() {
             </Select>
             <Select
               id="area"
-              label="Área que monitorea"
+              label="Area que monitorea"
               value={state.header.area}
               onChange={(event) =>
                 dispatch({ type: 'UPDATE_HEADER', field: 'area', value: event.target.value })
@@ -675,9 +870,9 @@ export default function FichaEscritura() {
               error={state.errors?.header?.area}
             >
               <option value="">Seleccionar</option>
-              <option value="Comunicación">Comunicación</option>
+              <option value="Comunicacion">Comunicacion</option>
               <option value="Quechua">Quechua</option>
-              <option value="Inglés">Inglés</option>
+              <option value="Ingles">Ingles</option>
             </Select>
           </div>
         </Card>
@@ -687,7 +882,7 @@ export default function FichaEscritura() {
         <SectionHeader
           eyebrow="Cuadro informativo"
           title="Nivel de avance"
-          description="Estos niveles se mantienen visibles como referencia para cada ítem."
+          description="Estos niveles se mantienen visibles como referencia para cada item."
         />
         <div className="mt-4 flex flex-wrap gap-3">
           {templateLevels.map((item, index) => (
@@ -703,7 +898,7 @@ export default function FichaEscritura() {
       {templateSections.map((section, index) => (
         <section key={section.id} id={section.id} className="scroll-mt-28">
           <Card className="flex flex-col gap-6">
-            <SectionHeader eyebrow={`Sección ${section.id.toUpperCase()}`} title={section.title} />
+            <SectionHeader eyebrow={`Seccion ${section.id.toUpperCase()}`} title={section.title} />
             <div className="flex flex-col gap-4">
               {section.questions.map((question) => {
                 const data = state.questions[question.id] || { answer: null, level: null, obs: '' };
@@ -735,7 +930,7 @@ export default function FichaEscritura() {
                     <div className={`mt-4 flex flex-col gap-4 ${isDisabled ? 'opacity-50' : ''}`}>
                       {data.answer === 'NO' ? (
                         <p className="text-xs text-slate-400">
-                          Selecciona "Sí" para registrar nivel de logro y observación.
+                          Selecciona "Si" para registrar nivel de logro y observacion.
                         </p>
                       ) : null}
                       <div className="flex flex-col gap-2">
@@ -757,7 +952,7 @@ export default function FichaEscritura() {
                       </div>
                       <Textarea
                         id={`${question.id}-obs`}
-                        label="Observación"
+                        label="Observacion"
                         value={data.obs}
                         onChange={(event) =>
                           dispatch({
@@ -782,14 +977,14 @@ export default function FichaEscritura() {
         <div className="flex flex-col gap-6">
           <Card className="flex flex-col gap-6">
             <SectionHeader
-              eyebrow="Sección general"
-              title="Observación general y compromiso"
-              description="Síntesis del monitoreo y acuerdos con el docente monitoreado."
+              eyebrow="Seccion general"
+              title="Observacion general y compromiso"
+              description="Sintesis del monitoreo y acuerdos con el docente monitoreado."
             />
             <div className="grid gap-4 md:grid-cols-2">
               <Textarea
                 id="observacion-general"
-                label="Observación general"
+                label="Observacion general"
                 value={state.general.observacion}
                 onChange={(event) =>
                   dispatch({ type: 'UPDATE_GENERAL', field: 'observacion', value: event.target.value })
@@ -798,7 +993,7 @@ export default function FichaEscritura() {
               />
               <Textarea
                 id="compromiso"
-                label="Compromiso según resultados del monitoreo"
+                label="Compromiso segun resultados del monitoreo"
                 value={state.general.compromiso}
                 onChange={(event) =>
                   dispatch({ type: 'UPDATE_GENERAL', field: 'compromiso', value: event.target.value })
@@ -927,6 +1122,17 @@ export default function FichaEscritura() {
         </div>
         <span className="text-xs text-slate-500">Listo para conectarse a API.</span>
       </div>
+
+      <ConfirmModal
+        open={isResetConfirmOpen}
+        tone="warning"
+        title="Limpiar formulario"
+        description="Se limpiaran las respuestas del formulario actual. Deseas continuar?"
+        confirmText="Si, limpiar"
+        cancelText="Cancelar"
+        onCancel={() => setIsResetConfirmOpen(false)}
+        onConfirm={handleConfirmReset}
+      />
 
       <Toast message={toast} onClose={() => setToast('')} />
     </div>

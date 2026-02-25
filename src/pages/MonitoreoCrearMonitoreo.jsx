@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Lock, Plus, Trash2, Copy, ArrowUp, ArrowDown } from 'lucide-react';
 import Card from '../components/ui/Card.jsx';
+import ConfirmModal from '../components/ui/ConfirmModal.jsx';
 import Input from '../components/ui/Input.jsx';
 import SectionHeader from '../components/ui/SectionHeader.jsx';
 import Textarea from '../components/ui/Textarea.jsx';
@@ -58,6 +59,7 @@ const mapAvailabilityToEventStatus = (status) => {
 export default function MonitoreoCrearMonitoreo() {
   const navigate = useNavigate();
   const { templateId } = useParams();
+  const isCreatingTemplate = !templateId;
   const [editingTemplate, setEditingTemplate] = useState(null);
   const [isLoading, setIsLoading] = useState(!!templateId);
   const isAdmin = useMemo(() => {
@@ -82,6 +84,32 @@ export default function MonitoreoCrearMonitoreo() {
   const [availabilityStatus, setAvailabilityStatus] = useState(
     'active',
   );
+  const [deleteSectionTarget, setDeleteSectionTarget] = useState(null);
+  const [deleteQuestionTarget, setDeleteQuestionTarget] = useState(null);
+  const [noticeModal, setNoticeModal] = useState({
+    open: false,
+    title: '',
+    description: '',
+    tone: 'warning',
+  });
+
+  const openNoticeModal = (title, description, tone = 'warning') => {
+    setNoticeModal({
+      open: true,
+      title,
+      description,
+      tone,
+    });
+  };
+
+  const closeNoticeModal = () => {
+    setNoticeModal({
+      open: false,
+      title: '',
+      description: '',
+      tone: 'warning',
+    });
+  };
 
   useEffect(() => {
     let active = true;
@@ -160,8 +188,13 @@ export default function MonitoreoCrearMonitoreo() {
   };
 
   const handleRemoveSection = (sectionId) => {
-    if (!window.confirm('Eliminar esta seccion?')) return;
-    updateSections(sections.filter((section) => section.id !== sectionId));
+    setDeleteSectionTarget(sectionId);
+  };
+
+  const handleConfirmRemoveSection = () => {
+    if (!deleteSectionTarget) return;
+    updateSections(sections.filter((section) => section.id !== deleteSectionTarget));
+    setDeleteSectionTarget(null);
   };
 
   const handleSectionTitle = (sectionId, value) => {
@@ -215,17 +248,24 @@ export default function MonitoreoCrearMonitoreo() {
   };
 
   const handleDeleteQuestion = (sectionId, questionId) => {
-    if (!window.confirm('Eliminar esta pregunta?')) return;
+    setDeleteQuestionTarget({ sectionId, questionId });
+  };
+
+  const handleConfirmDeleteQuestion = () => {
+    if (!deleteQuestionTarget?.sectionId || !deleteQuestionTarget?.questionId) return;
     updateSections(
       sections.map((section) =>
-        section.id === sectionId
+        section.id === deleteQuestionTarget.sectionId
           ? {
               ...section,
-              questions: section.questions.filter((question) => question.id !== questionId),
+              questions: section.questions.filter(
+                (question) => question.id !== deleteQuestionTarget.questionId,
+              ),
             }
           : section,
       ),
     );
+    setDeleteQuestionTarget(null);
   };
 
   const handleDuplicateQuestion = (sectionId, question) => {
@@ -306,7 +346,7 @@ export default function MonitoreoCrearMonitoreo() {
       .upsert(payload, { onConflict: 'id' });
     if (error) {
       console.error(error);
-      alert('No se pudo guardar la plantilla.');
+      openNoticeModal('No se pudo guardar', 'No se pudo guardar la plantilla.', 'danger');
       return;
     }
 
@@ -327,7 +367,11 @@ export default function MonitoreoCrearMonitoreo() {
         .upsert(eventPayload, { onConflict: 'id' });
       if (eventError) {
         console.error(eventError);
-        alert('Plantilla guardada, pero no se pudo sincronizar con Seguimiento.');
+        openNoticeModal(
+          'Sincronizacion pendiente',
+          'Plantilla guardada, pero no se pudo sincronizar con Seguimiento.',
+          'warning',
+        );
       }
     }
 
@@ -406,25 +450,6 @@ export default function MonitoreoCrearMonitoreo() {
       </Card>
 
       <Card className="flex flex-col gap-6">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <SectionHeader
-            eyebrow="Estandar"
-            title="Encabezado estandar"
-            description="Se muestra en todos los monitoreos (no editable)."
-          />
-          <span className="inline-flex items-center gap-2 rounded-full border border-slate-700/60 px-3 py-1 text-xs text-slate-400">
-            <Lock size={12} />
-            Bloqueado
-          </span>
-        </div>
-        <div className="grid gap-4 md:grid-cols-2">
-          <Input id="ie" label="Institucion Educativa" placeholder="Nombre de la I.E." disabled />
-          <Input id="lugar" label="Lugar" placeholder="Distrito / Provincia" disabled />
-          <Input id="director" label="Director(a) / Monitor(a)" placeholder="Nombre completo" disabled />
-          <Input id="docente" label="Docente" placeholder="Apellidos y nombres" disabled />
-          <Input id="condicion" label="Nombrado / Contratado" placeholder="Seleccionar" disabled />
-          <Input id="area" label="Area" placeholder="Comunicacion / Quechua / Ingles" disabled />
-        </div>
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-800/70 bg-slate-900/50 p-4">
           <div>
             <p className="text-sm font-semibold text-slate-100">Niveles</p>
@@ -620,42 +645,46 @@ export default function MonitoreoCrearMonitoreo() {
         </div>
       </Card>
 
-      <Card className="flex flex-col gap-6">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <SectionHeader
-            eyebrow="Estandar"
-            title="Observacion general y compromiso"
-            description="Seccion bloqueada para todos los monitoreos."
-          />
-          <span className="inline-flex items-center gap-2 rounded-full border border-slate-700/60 px-3 py-1 text-xs text-slate-400">
-            <Lock size={12} />
-            Bloqueado
-          </span>
-        </div>
-        <Textarea id="observacionGeneral" label="Observacion general" disabled />
-        <Textarea id="resumen" label="Resumen del monitoreo" disabled />
-        <Textarea id="compromiso" label="Compromiso" disabled />
-      </Card>
+      {!isCreatingTemplate ? (
+        <>
+          <Card className="flex flex-col gap-6">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <SectionHeader
+                eyebrow="Estandar"
+                title="Observacion general y compromiso"
+                description="Seccion bloqueada para todos los monitoreos."
+              />
+              <span className="inline-flex items-center gap-2 rounded-full border border-slate-700/60 px-3 py-1 text-xs text-slate-400">
+                <Lock size={12} />
+                Bloqueado
+              </span>
+            </div>
+            <Textarea id="observacionGeneral" label="Observacion general" disabled />
+            <Textarea id="resumen" label="Resumen del monitoreo" disabled />
+            <Textarea id="compromiso" label="Compromiso" disabled />
+          </Card>
 
-      <Card className="flex flex-col gap-6">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <SectionHeader
-            eyebrow="Estandar"
-            title="Firmas"
-            description="Firma del docente monitoreado y del monitor (bloqueado)."
-          />
-          <span className="inline-flex items-center gap-2 rounded-full border border-slate-700/60 px-3 py-1 text-xs text-slate-400">
-            <Lock size={12} />
-            Bloqueado
-          </span>
-        </div>
-        <div className="grid gap-4 md:grid-cols-2">
-          <Input id="docenteNombre" label="Docente monitoreado" placeholder="Nombre" disabled />
-          <Input id="docenteDocumento" label="Documento del docente" placeholder="DNI / CE" disabled />
-          <Input id="monitorNombre" label="Monitor" placeholder="Nombre" disabled />
-          <Input id="monitorDocumento" label="Documento del monitor" placeholder="DNI / CE" disabled />
-        </div>
-      </Card>
+          <Card className="flex flex-col gap-6">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <SectionHeader
+                eyebrow="Estandar"
+                title="Firmas"
+                description="Firma del docente monitoreado y del monitor (bloqueado)."
+              />
+              <span className="inline-flex items-center gap-2 rounded-full border border-slate-700/60 px-3 py-1 text-xs text-slate-400">
+                <Lock size={12} />
+                Bloqueado
+              </span>
+            </div>
+            <div className="grid gap-4 md:grid-cols-2">
+              <Input id="docenteNombre" label="Docente monitoreado" placeholder="Nombre" disabled />
+              <Input id="docenteDocumento" label="Documento del docente" placeholder="DNI / CE" disabled />
+              <Input id="monitorNombre" label="Monitor" placeholder="Nombre" disabled />
+              <Input id="monitorDocumento" label="Documento del monitor" placeholder="DNI / CE" disabled />
+            </div>
+          </Card>
+        </>
+      ) : null}
 
       <div className="flex flex-wrap items-center gap-3">
         <button
@@ -686,6 +715,39 @@ export default function MonitoreoCrearMonitoreo() {
           Cancelar
         </button>
       </div>
+
+      <ConfirmModal
+        open={Boolean(deleteSectionTarget)}
+        tone="warning"
+        title="Eliminar seccion"
+        description="Esta seccion y sus preguntas se eliminaran de la plantilla."
+        confirmText="Si, eliminar"
+        cancelText="Cancelar"
+        onCancel={() => setDeleteSectionTarget(null)}
+        onConfirm={handleConfirmRemoveSection}
+      />
+
+      <ConfirmModal
+        open={Boolean(deleteQuestionTarget)}
+        tone="warning"
+        title="Eliminar pregunta"
+        description="Esta pregunta se eliminara de la seccion actual."
+        confirmText="Si, eliminar"
+        cancelText="Cancelar"
+        onCancel={() => setDeleteQuestionTarget(null)}
+        onConfirm={handleConfirmDeleteQuestion}
+      />
+
+      <ConfirmModal
+        open={noticeModal.open}
+        tone={noticeModal.tone}
+        title={noticeModal.title || 'Aviso'}
+        description={noticeModal.description}
+        confirmText="Entendido"
+        cancelText="Cerrar"
+        onCancel={closeNoticeModal}
+        onConfirm={closeNoticeModal}
+      />
     </div>
   );
 }

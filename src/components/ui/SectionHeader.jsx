@@ -17,16 +17,16 @@ export default function SectionHeader({
   const descriptionMeta = truncateWithMeta(description, descriptionMaxChars);
   const titleClassName =
     size === 'page'
-      ? 'text-2xl font-semibold leading-tight tracking-[-0.01em] text-slate-100 md:text-[28px]'
-      : 'text-lg font-semibold leading-tight tracking-[-0.01em] text-slate-100 md:text-xl';
+      ? 'text-[1.9rem] font-semibold leading-tight tracking-[-0.01em] text-slate-100 md:text-[2.15rem]'
+      : 'text-lg font-semibold leading-tight tracking-[-0.01em] text-slate-100 md:text-[1.3rem]';
   const TitleTag = size === 'page' ? 'h1' : 'h2';
 
   return (
-    <div className="flex min-w-0 flex-col gap-2">
+    <div className="flex min-w-0 flex-col gap-1.5">
       {eyebrow ? (
         <span
           title={eyebrow}
-          className="truncate text-[11px] uppercase tracking-[0.18em] text-slate-500"
+          className="truncate text-[10px] uppercase tracking-[0.2em] text-slate-500"
         >
           {eyebrow}
         </span>
@@ -39,7 +39,7 @@ export default function SectionHeader({
       {descriptionMeta.text ? (
         <p
           title={descriptionMeta.isTruncated ? String(description || '') : undefined}
-          className="truncate text-sm leading-5 text-slate-400/90"
+          className="truncate text-sm leading-5 text-slate-400/85"
         >
           {descriptionMeta.text}
         </p>

@@ -219,8 +219,6 @@ const addDays = (date, count) => {
 const isSameDay = (left, right) => normalizeDay(left).getTime() === normalizeDay(right).getTime();
 const isInRange = (day, start, end) =>
   normalizeDay(day) >= normalizeDay(start) && normalizeDay(day) <= normalizeDay(end);
-const weekdayShortLabel = (day) =>
-  day.toLocaleDateString(undefined, { weekday: 'short' }).replace('.', '');
 
 const buildCalendarDays = (anchorDate) => {
   const monthStart = startOfMonth(anchorDate);
@@ -255,6 +253,7 @@ export default function MonitoreoSeguimiento() {
   const [modalityFilter, setModalityFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
   const [showDrafts, setShowDrafts] = useState(false);
+  const [isCalendarHighContrast, setIsCalendarHighContrast] = useState(false);
   const [selectedDayKey, setSelectedDayKey] = useState(() => normalizeDay(new Date()).toISOString());
 
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -930,7 +929,7 @@ export default function MonitoreoSeguimiento() {
         <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2 lg:grid-cols-[repeat(4,minmax(0,1fr))_auto]">
             <Select compact hideLabel id="scopeFilterLeft" label="Vista" value={scopeFilter} onChange={(event) => setScopeFilter(event.target.value)}>
               <option value="all">Todos</option>
-              <option value="mine">Solo mios</option>
+              <option value="mine">Solo míos</option>
             </Select>
             <Select compact hideLabel id="statusFilterLeft" label="Estado" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
               <option value="all">Todos</option>
@@ -964,14 +963,59 @@ export default function MonitoreoSeguimiento() {
         </div>
       </Card>
 
-      <div className="grid gap-5 lg:grid-cols-[360px_minmax(0,1fr)]">
-        <Card className="order-2 min-w-0 flex h-fit flex-col gap-3 rounded-[18px] border border-white/10 bg-white/5 p-4 shadow-[0_10px_30px_-18px_rgba(0,0,0,0.65)] lg:order-2">
-          <div className="rounded-2xl border border-slate-800/70 bg-slate-950/40 p-3">
-            <div className="mb-2 flex items-center justify-between gap-2">
-              <p className="text-[12px] font-semibold capitalize text-slate-200">
-                {currentDate.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}
-              </p>
-              <div className="flex items-center gap-1.5">
+      {loading ? (
+        <Card className="flex flex-col gap-4 rounded-[18px] border border-white/10 bg-white/5 p-4 shadow-[0_10px_30px_-18px_rgba(0,0,0,0.65)]">
+          <div className="flex items-center gap-2 text-sm text-cyan-200">
+            <Loader2 size={16} className="animate-spin" />
+            <p>Cargando seguimiento...</p>
+          </div>
+          <div className="h-1.5 overflow-hidden rounded-full border border-slate-700/60 bg-slate-900/70">
+            <span className="block h-full w-1/3 animate-pulse rounded-full bg-cyan-400/70" />
+          </div>
+          <div className="grid gap-2 sm:grid-cols-2" aria-hidden="true">
+            <div className="h-24 animate-pulse rounded-xl border border-slate-800/70 bg-slate-900/45" />
+            <div className="h-24 animate-pulse rounded-xl border border-slate-800/70 bg-slate-900/45" />
+          </div>
+        </Card>
+      ) : (
+        <div className="grid gap-5 lg:grid-cols-[340px_minmax(0,1fr)]">
+        <Card className="order-1 min-w-0 flex h-fit flex-col gap-3 rounded-[22px] border border-white/10 bg-white/5 p-4 shadow-[0_14px_36px_-20px_rgba(0,0,0,0.72)] lg:order-1">
+          <div
+            className={`rounded-[24px] border p-4 transition-all duration-300 ${
+              isCalendarHighContrast
+                ? 'border-slate-500/80 bg-slate-950/95 shadow-[0_12px_30px_-18px_rgba(2,6,23,0.95)]'
+                : 'border-slate-800/60 bg-[radial-gradient(120%_90%_at_50%_0%,rgba(56,189,248,0.10),transparent_56%),linear-gradient(180deg,rgba(15,23,42,0.88),rgba(2,6,23,0.82))]'
+            }`}
+          >
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <div className="flex min-w-0 items-center gap-2">
+                <span
+                  className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border ${
+                    isCalendarHighContrast
+                      ? 'border-slate-500/80 bg-slate-900 text-cyan-200'
+                      : 'border-cyan-400/30 bg-cyan-500/10 text-cyan-200'
+                  }`}
+                >
+                  <CalendarDays size={14} />
+                </span>
+                <p className="truncate text-[13px] font-semibold capitalize text-slate-100">
+                  {currentDate.toLocaleDateString('es-PE', { month: 'long', year: 'numeric' })}
+                </p>
+              </div>
+
+              <div className="flex shrink-0 items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setIsCalendarHighContrast((prev) => !prev)}
+                  title={isCalendarHighContrast ? 'Desactivar alto contraste' : 'Activar alto contraste'}
+                  className={`inline-flex h-8 items-center justify-center rounded-full border px-2.5 text-[10px] font-semibold transition-all duration-200 ${
+                    isCalendarHighContrast
+                      ? 'border-cyan-300/70 bg-cyan-500/20 text-cyan-100'
+                      : 'border-slate-700/70 bg-slate-900/70 text-slate-200 hover:border-cyan-400/55 hover:text-cyan-100'
+                  }`}
+                >
+                  {isCalendarHighContrast ? 'AA' : 'Aa'}
+                </button>
                 <button
                   type="button"
                   onClick={() => {
@@ -982,42 +1026,48 @@ export default function MonitoreoSeguimiento() {
                     setSelectedDayKey(todayKey);
                     setSelectedEventId(todayEvents.length ? todayEvents[0].id : '');
                   }}
-                  className="inline-flex h-7 items-center justify-center rounded-md border border-slate-700/70 px-2 text-[10px] font-semibold uppercase tracking-wide text-slate-300 transition hover:border-slate-500"
+                  className="inline-flex h-8 items-center justify-center rounded-full border border-slate-700/70 bg-slate-900/70 px-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-200 transition-all duration-200 hover:-translate-y-[1px] hover:border-cyan-400/55 hover:bg-slate-800/90 hover:text-cyan-100"
                 >
                   Hoy
                 </button>
                 <button
                   type="button"
                   onClick={() => navigateCalendar(-1)}
-                  className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-slate-700/70 text-slate-300 transition hover:border-slate-500"
-                  title="Anterior"
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-700/70 bg-slate-900/70 text-slate-200 transition-all duration-200 hover:-translate-y-[1px] hover:border-cyan-400/55 hover:bg-slate-800/90 hover:text-cyan-100"
+                  title="Mes anterior"
                 >
                   <ChevronLeft size={14} />
                 </button>
                 <button
                   type="button"
                   onClick={() => navigateCalendar(1)}
-                  className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-slate-700/70 text-slate-300 transition hover:border-slate-500"
-                  title="Siguiente"
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-700/70 bg-slate-900/70 text-slate-200 transition-all duration-200 hover:-translate-y-[1px] hover:border-cyan-400/55 hover:bg-slate-800/90 hover:text-cyan-100"
+                  title="Mes siguiente"
                 >
                   <ChevronRight size={14} />
                 </button>
               </div>
             </div>
-            <div className="mb-1 grid grid-cols-7 gap-1">
-              {miniCalendarDays.slice(0, 7).map((day, index) => (
-                <span key={`mini-w-${index}`} className="text-center text-[10px] uppercase tracking-wide text-slate-500">
-                  {weekdayShortLabel(day).slice(0, 1)}
+            <div className="mt-3.5 grid grid-cols-7 gap-2">
+              {['L', 'M', 'X', 'J', 'V', 'S', 'D'].map((label) => (
+                <span
+                  key={`mini-w-${label}`}
+                  className={`text-center text-[10px] font-semibold uppercase tracking-[0.12em] ${
+                    isCalendarHighContrast ? 'text-slate-300' : 'text-slate-500'
+                  }`}
+                >
+                  {label}
                 </span>
               ))}
             </div>
-            <div className="grid grid-cols-7 gap-1">
+            <div className="mt-2 grid grid-cols-7 gap-2">
               {miniCalendarDays.map((day) => {
                 const dayKey = normalizeDay(day).toISOString();
                 const dayEvents = eventsByDay.get(dayKey) || [];
                 const isMiniToday = isSameDay(day, new Date());
                 const isMiniSelected = selectedDayKey === dayKey;
                 const isMiniCurrentMonth = day.getMonth() === currentDate.getMonth();
+                const isMiniWeekend = day.getDay() === 0 || day.getDay() === 6;
                 const dayCategories = Array.from(
                   new Set(dayEvents.map((event) => getEventCategory(event)).filter(Boolean)),
                 ).slice(0, 3);
@@ -1025,6 +1075,12 @@ export default function MonitoreoSeguimiento() {
                   .map((category) => CATEGORY_DOT_STYLES[category]?.label)
                   .filter(Boolean)
                   .join(' / ');
+                const dayLabel = day.toLocaleDateString('es-PE', {
+                  day: '2-digit',
+                  month: '2-digit',
+                  year: 'numeric',
+                });
+
                 return (
                   <button
                     key={`mini-${dayKey}`}
@@ -1038,46 +1094,97 @@ export default function MonitoreoSeguimiento() {
                       setSelectedDayKey(dayKey);
                       setSelectedEventId(dayEvents.length ? dayEvents[0].id : '');
                     }}
-                    title={dayTooltip || undefined}
-                    className={`relative inline-flex h-8 items-center justify-center rounded-md text-[11px] transition ${
-                      isMiniSelected
-                        ? 'bg-cyan-500/20 text-cyan-100 ring-1 ring-cyan-400/60'
-                        : isMiniToday
-                          ? 'bg-slate-700/70 text-slate-100'
-                          : isMiniCurrentMonth
-                            ? 'text-slate-300 hover:bg-slate-800/60'
-                            : 'text-slate-500 hover:bg-slate-900/50'
+                    aria-label={`${dayLabel}. ${dayEvents.length} evento${dayEvents.length === 1 ? '' : 's'}.`}
+                    title={dayTooltip || dayLabel}
+                    className={`relative inline-flex h-11 items-center justify-center rounded-full border text-[12px] font-semibold transition-all duration-200 ease-out ${
+                      isCalendarHighContrast
+                        ? isMiniSelected
+                          ? 'border-cyan-200 bg-cyan-300 text-slate-950 shadow-[0_10px_24px_-14px_rgba(56,189,248,0.9)]'
+                          : isMiniToday
+                            ? 'border-emerald-200 bg-emerald-300 text-slate-950'
+                            : isMiniCurrentMonth
+                              ? 'border-slate-500/80 bg-slate-950 text-slate-100 hover:-translate-y-[1px] hover:border-cyan-300'
+                              : 'border-slate-800 bg-slate-950/70 text-slate-500'
+                        : isMiniSelected
+                          ? 'border-cyan-300/80 bg-gradient-to-r from-cyan-400/30 via-sky-400/20 to-indigo-500/25 text-slate-50 shadow-[0_12px_24px_-16px_rgba(56,189,248,0.95),inset_0_1px_0_rgba(186,230,253,0.45)]'
+                          : isMiniToday
+                            ? 'border-emerald-400/55 bg-emerald-500/15 text-emerald-100'
+                            : isMiniCurrentMonth
+                              ? `border-slate-800/80 ${
+                                  isMiniWeekend
+                                    ? 'bg-slate-900/70 text-slate-300'
+                                    : 'bg-slate-900/48 text-slate-200'
+                                } shadow-[inset_0_1px_0_rgba(148,163,184,0.10)] hover:-translate-y-[1px] hover:border-cyan-400/45 hover:bg-slate-800/85 hover:text-slate-100`
+                              : 'border-slate-900/70 bg-slate-950/40 text-slate-500 hover:border-slate-700/70 hover:bg-slate-900/55'
                     }`}
                   >
                     {day.getDate()}
                     {dayCategories.length ? (
-                      <span className="absolute bottom-[2px] left-1/2 flex -translate-x-1/2 items-center gap-1">
+                      <span className="absolute bottom-[4px] left-1/2 flex -translate-x-1/2 items-center gap-1">
                         {dayCategories.map((category) => (
                           <span
                             key={`${dayKey}-${category}`}
-                            className={`h-1 w-1 rounded-full ring-1 ${CATEGORY_DOT_STYLES[category]?.className || 'bg-slate-400 ring-slate-300/50'}`}
+                            className={`h-1.5 w-1.5 rounded-full ring-1 ${
+                              isCalendarHighContrast ? 'ring-slate-900/90' : 'ring-slate-300/50'
+                            } ${CATEGORY_DOT_STYLES[category]?.className || 'bg-slate-400'}`}
                           />
                         ))}
+                      </span>
+                    ) : null}
+                    {dayEvents.length > 1 ? (
+                      <span
+                        className={`absolute -right-1 -top-1 inline-flex min-w-[16px] items-center justify-center rounded-full border px-1 text-[9px] font-semibold leading-4 ${
+                          isCalendarHighContrast
+                            ? 'border-cyan-300/70 bg-cyan-200 text-slate-950'
+                            : 'border-cyan-400/30 bg-slate-950/95 text-cyan-100 shadow-[0_0_0_1px_rgba(15,23,42,0.65)]'
+                        }`}
+                      >
+                        {dayEvents.length > 9 ? '+9' : dayEvents.length}
                       </span>
                     ) : null}
                   </button>
                 );
               })}
             </div>
-            <div className="mt-3 flex flex-wrap gap-3 text-[10px] text-slate-400">
+            <div className="mt-4 flex flex-wrap gap-2 text-[11px] text-slate-300">
               {Object.entries(CATEGORY_DOT_STYLES).map(([key, item]) => (
-                <span key={key} className="inline-flex items-center gap-1">
+                <span
+                  key={key}
+                  className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 ${
+                    isCalendarHighContrast
+                      ? 'border-slate-600/90 bg-slate-950 text-slate-100'
+                      : 'border-slate-700/70 bg-slate-900/75 shadow-[inset_0_1px_0_rgba(148,163,184,0.12)]'
+                  }`}
+                >
                   <span
                     className={`h-2 w-2 rounded-full ring-1 ring-offset-1 ring-offset-slate-900 ${item.className}`}
                   />
                   {item.label}
                 </span>
               ))}
+              <span
+                className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 ${
+                  isCalendarHighContrast
+                    ? 'border-cyan-300/70 bg-cyan-500/25 text-cyan-100'
+                    : 'border-cyan-400/25 bg-cyan-500/10 text-cyan-100/90'
+                }`}
+              >
+                <span
+                  className={`inline-flex min-w-[16px] items-center justify-center rounded-full border px-1 py-0.5 text-[9px] font-semibold leading-none ${
+                    isCalendarHighContrast
+                      ? 'border-cyan-300/70 bg-cyan-100 text-slate-950'
+                      : 'border-cyan-400/30 bg-slate-950/95 text-cyan-100'
+                  }`}
+                >
+                  {selectedDayEvents.length > 9 ? '+9' : selectedDayEvents.length}
+                </span>
+                Eventos del día
+              </span>
             </div>
           </div>
         </Card>
 
-        <Card className="order-1 min-w-0 lg:sticky lg:top-6 flex max-h-[calc(100vh-8rem)] flex-col gap-4 overflow-y-auto rounded-[18px] border border-white/10 bg-white/5 shadow-[0_10px_30px_-18px_rgba(0,0,0,0.65)] lg:order-1">
+        <Card className="order-2 min-w-0 flex max-h-[calc(100vh-8rem)] flex-col gap-4 overflow-y-auto rounded-[18px] border border-white/10 bg-white/5 shadow-[0_10px_30px_-18px_rgba(0,0,0,0.65)] lg:order-2 lg:sticky lg:top-6">
           <div className="flex items-center gap-2">
             <CalendarDays size={16} className="text-cyan-300" />
             <p className="text-sm font-semibold text-slate-100">Detalle del evento</p>
@@ -1104,7 +1211,7 @@ export default function MonitoreoSeguimiento() {
             <>
               <div className="rounded-xl border border-slate-800/70 bg-slate-900/40 p-3">
                 <p className="text-xs uppercase tracking-wide text-slate-400">
-                  Eventos del dia ({selectedDayEvents.length})
+                  Eventos del día ({selectedDayEvents.length})
                 </p>
                 <div className="mt-2 space-y-2">
                   {selectedDayEvents.map((event) => {
@@ -1253,18 +1360,12 @@ export default function MonitoreoSeguimiento() {
                     Eliminar
                   </button>
                 </div>
-              ) : (
-                <button
-                  type="button"
-                  className="inline-flex items-center gap-2 rounded-xl border border-slate-700/70 px-3 py-2 text-xs font-semibold text-slate-300"
-                >
-                  Ver detalles
-                </button>
-              )}
+              ) : null}
             </>
           )}
         </Card>
-      </div>
+        </div>
+      )}
 
       {isModalOpen ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
