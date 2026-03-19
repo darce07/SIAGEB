@@ -14,9 +14,28 @@ const jsonResponse = (status: number, body: Record<string, unknown>) =>
 const normalizeDocType = (value: unknown) => String(value || '').trim().toUpperCase();
 const normalizeDocNumber = (value: unknown) => String(value || '').trim();
 const normalizeStatus = (value: unknown) => String(value || '').trim().toLowerCase();
+const normalizeDocComparable = (value: unknown) =>
+  String(value || '')
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '');
 const isActiveStatus = (value: unknown) => {
   const status = normalizeStatus(value);
   return status === 'active' || status === 'activo';
+};
+const isEmailConfirmedAuthUser = (user: Record<string, unknown> | null | undefined) => {
+  const raw = String(user?.email_confirmed_at || '').trim();
+  if (!raw) return false;
+  const parsed = new Date(raw);
+  return !Number.isNaN(parsed.valueOf());
+};
+const isLoginCapableAuthUser = (user: Record<string, unknown> | null | undefined) => {
+  if (!isEmailConfirmedAuthUser(user)) return false;
+  const bannedUntilRaw = String(user?.banned_until || '').trim();
+  if (!bannedUntilRaw) return true;
+  const parsed = new Date(bannedUntilRaw);
+  if (Number.isNaN(parsed.valueOf())) return true;
+  return parsed.valueOf() <= Date.now();
 };
 
 const pickSingleActiveEmail = (rows: Array<Record<string, unknown>>) => {
@@ -37,6 +56,42 @@ const pickSingleActiveEmail = (rows: Array<Record<string, unknown>>) => {
 
   // Ambiguous: same DNI linked to multiple active emails.
   return { email: null, reason: 'ambiguous' as const };
+};
+
+const findAuthEmailsByDocument = async (
+  adminClient: ReturnType<typeof createClient>,
+  docType: string,
+  docNumber: string,
+) => {
+  const targetDoc = normalizeDocComparable(docNumber);
+  if (!targetDoc) return [];
+
+  const matches = new Set<string>();
+  let page = 1;
+
+  while (page <= 100) {
+    const { data, error } = await adminClient.auth.admin.listUsers({ page, perPage: 200 });
+    if (error) break;
+
+    const users = data?.users || [];
+    for (const user of users) {
+      const meta = (user?.user_metadata || {}) as Record<string, unknown>;
+      const metaDoc = normalizeDocComparable(meta?.doc_number);
+      if (!metaDoc || metaDoc !== targetDoc) continue;
+
+      const metaDocType = normalizeDocType(meta?.doc_type);
+      if (docType && metaDocType && docType !== metaDocType) continue;
+      if (!isLoginCapableAuthUser(user as unknown as Record<string, unknown>)) continue;
+
+      const email = String(user?.email || '').trim().toLowerCase();
+      if (email) matches.add(email);
+    }
+
+    if (users.length < 200) break;
+    page += 1;
+  }
+
+  return Array.from(matches);
 };
 
 Deno.serve(async (req) => {
@@ -91,6 +146,15 @@ Deno.serve(async (req) => {
     if (!fallback.error) {
       const fallbackRows = Array.isArray(fallback.data) ? fallback.data : [];
       resolved = pickSingleActiveEmail(fallbackRows);
+    }
+  }
+
+  if (!resolved.email) {
+    const authMatches = await findAuthEmailsByDocument(adminClient, docType, docNumber);
+    if (authMatches.length === 1) {
+      resolved = { email: authMatches[0], reason: 'ok' as const };
+    } else if (authMatches.length > 1) {
+      resolved = { email: null, reason: 'ambiguous' as const };
     }
   }
 
