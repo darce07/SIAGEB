@@ -241,6 +241,11 @@ export default function Login() {
       });
 
       if (authError || !data?.user) {
+        const authMessage = String(authError?.message || '').toLowerCase();
+        if (authMessage.includes('email not confirmed') || authMessage.includes('email_not_confirmed')) {
+          setError('Debes verificar tu correo antes de iniciar sesion.');
+          return;
+        }
         setError('Credenciales incorrectas o usuario no habilitado.');
         return;
       }
