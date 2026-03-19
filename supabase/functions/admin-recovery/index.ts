@@ -19,7 +19,16 @@ const getEnv = () => {
   return { url, serviceRoleKey, recoveryCode };
 };
 
+const isEmailConfirmedAuthUser = (user: unknown) => {
+  const emailConfirmedAtRaw = (user as { email_confirmed_at?: string | null } | null)?.email_confirmed_at || null;
+  if (!emailConfirmedAtRaw) return false;
+  const parsed = new Date(String(emailConfirmedAtRaw));
+  return !Number.isNaN(parsed.valueOf());
+};
+
 const isLoginCapableAuthUser = (user: unknown) => {
+  if (!isEmailConfirmedAuthUser(user)) return false;
+
   const bannedUntilRaw = (user as { banned_until?: string | null } | null)?.banned_until || null;
   if (!bannedUntilRaw) return true;
 
@@ -145,7 +154,7 @@ Deno.serve(async (req) => {
 
       const { error: updateAuthError } = await adminClient.auth.admin.updateUserById(profileMatch.id, {
         password,
-        email_confirm: true,
+        email_confirm: false,
         app_metadata: { ...(existingUser?.app_metadata || {}), role: 'admin' },
         user_metadata: {
           ...(existingUser?.user_metadata || {}),
@@ -169,7 +178,7 @@ Deno.serve(async (req) => {
         const { data: created, error: createError } = await adminClient.auth.admin.createUser({
           email,
           password,
-          email_confirm: true,
+          email_confirm: false,
           app_metadata: { role: 'admin' },
           user_metadata: {
             first_name: 'Admin',
@@ -184,7 +193,7 @@ Deno.serve(async (req) => {
       } else {
         const { error: updateAuthError } = await adminClient.auth.admin.updateUserById(existingUser.id, {
           password,
-          email_confirm: true,
+          email_confirm: false,
           app_metadata: { ...(existingUser.app_metadata || {}), role: 'admin' },
           user_metadata: {
             ...(existingUser.user_metadata || {}),
@@ -214,7 +223,11 @@ Deno.serve(async (req) => {
     });
     if (profileError) return jsonResponse(500, { error: profileError.message });
 
-    return jsonResponse(200, { success: true, email });
+    return jsonResponse(200, {
+      success: true,
+      email,
+      requiresEmailVerification: true,
+    });
   }
 
   return jsonResponse(400, { error: 'Accion no soportada.' });

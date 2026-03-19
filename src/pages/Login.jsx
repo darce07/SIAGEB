@@ -92,6 +92,10 @@ export default function Login() {
       return { email: '', error: 'No se pudo validar el documento. Intenta nuevamente.' };
     }
 
+    if (lookupData?.error) {
+      return { email: '', error: String(lookupData.error) };
+    }
+
     if (!lookupData?.email) {
       return { email: '', error: 'No existe un usuario activo con ese documento.' };
     }
@@ -189,7 +193,12 @@ export default function Login() {
         return;
       }
 
-      setRecoverySuccess('Acceso admin recuperado. Ahora inicia sesion con el correo recuperado.');
+      const requiresEmailVerification = Boolean(data?.requiresEmailVerification);
+      setRecoverySuccess(
+        requiresEmailVerification
+          ? 'Cuenta admin creada/actualizada. Revisa tu correo y verifica la cuenta antes de iniciar sesion.'
+          : 'Acceso admin recuperado. Ahora inicia sesion con el correo recuperado.',
+      );
       setRole('admin');
       setForm((prev) => ({
         ...prev,
@@ -228,7 +237,7 @@ export default function Login() {
 
       const { data, error: authError } = await supabase.auth.signInWithPassword({
         email,
-        password: form.password,
+        password: form.password.trim(),
       });
 
       if (authError || !data?.user) {
