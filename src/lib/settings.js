@@ -63,13 +63,6 @@ export const readBooleanSetting = (key, fallback = false) => {
 };
 
 export const getDesktopDensityDefault = () => {
-  if (typeof window !== 'undefined') {
-    try {
-      if (window.matchMedia('(min-width: 1024px)').matches) return DENSITY_COMPACT;
-    } catch {
-      // noop
-    }
-  }
   return DENSITY_COMFORT;
 };
 
