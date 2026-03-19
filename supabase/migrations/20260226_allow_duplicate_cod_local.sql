@@ -1,0 +1,1 @@
+drop index if exists public.educational_institutions_cod_local_unique;

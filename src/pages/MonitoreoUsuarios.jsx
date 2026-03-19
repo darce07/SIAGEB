@@ -818,8 +818,8 @@ export default function MonitoreoUsuarios() {
         </Card>
       ) : (
         <>
-          <Card className="flex flex-col gap-6">
-            <SectionHeader eyebrow="Equipo" title="Equipo" description="Administra especialistas y roles." size="page" />
+            <Card className="flex flex-col gap-6">
+              <SectionHeader title="Equipo" size="page" />
             <div
               className={`rounded-xl border px-4 py-3 text-sm ${
                 activeAdminCount <= 1
@@ -919,8 +919,8 @@ export default function MonitoreoUsuarios() {
             ) : null}
           </Card>
 
-          <Card className="flex flex-col gap-6">
-            <SectionHeader eyebrow="Listado" title="Miembros" description="Gestión de usuarios activos y roles." />
+            <Card className="flex flex-col gap-6">
+              <SectionHeader eyebrow="Listado" title="Miembros" />
             <div className="grid gap-3 md:grid-cols-3">
               <Input id="search" label="Buscar" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Nombre o correo" />
               <Select id="roleFilter" label="Rol" value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)}>

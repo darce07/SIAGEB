@@ -377,17 +377,7 @@ export default function MonitoreoInstituciones() {
       nextErrors.codModular = 'El codigo modular debe ser numerico.';
     }
 
-    const codLocalNormalized = normalizeCode(form.codLocal);
     const codModularNormalized = normalizeCode(form.codModular);
-
-    const codLocalDuplicated = institutions.some(
-      (item) =>
-        normalizeCode(item.cod_local) === codLocalNormalized && String(item.id) !== String(form.id || ''),
-    );
-
-    if (codLocalNormalized && codLocalDuplicated) {
-      nextErrors.codLocal = 'Este codigo local ya esta registrado.';
-    }
 
     const codModularDuplicated = institutions.some(
       (item) =>
@@ -457,11 +447,9 @@ export default function MonitoreoInstituciones() {
 
     if (saveError) {
       if (saveError.code === '23505') {
-        const duplicateMessage = /cod_local/i.test(saveError.message)
-          ? 'Ya existe una institucion con ese codigo local.'
-          : /cod_modular/i.test(saveError.message)
-            ? 'Ya existe una institucion con ese codigo modular.'
-            : 'Ya existe un registro duplicado con esos datos.';
+        const duplicateMessage = /cod_modular/i.test(saveError.message)
+          ? 'Ya existe una institucion con ese codigo modular.'
+          : 'Ya existe un registro duplicado con esos datos.';
         setError(duplicateMessage);
         showToast(duplicateMessage, 'error');
       } else {
@@ -595,12 +583,7 @@ export default function MonitoreoInstituciones() {
         </div>
       ) : null}
 
-      <SectionHeader
-        eyebrow="Catalogo"
-        title="Instituciones Educativas"
-        description="Busca y gestiona IE."
-        size="page"
-      />
+      <SectionHeader title="Instituciones Educativas" size="page" />
 
       <Card className="flex flex-wrap items-center gap-2.5 py-3">
         <span className="rounded-full border border-slate-700/70 bg-slate-900/55 px-3 py-1 text-xs text-slate-200">
@@ -640,7 +623,6 @@ export default function MonitoreoInstituciones() {
             <SectionHeader
               eyebrow="Registro"
               title={isEditing ? 'Editando institucion educativa' : 'Registrar institucion educativa'}
-              description="Registra o edita una IE."
             />
 
             {isEditing ? (
@@ -798,7 +780,7 @@ export default function MonitoreoInstituciones() {
 
       <Card className="flex flex-col gap-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
-          <SectionHeader eyebrow="Listado" title="Listado de IE" description="Busca y gestiona IE." />
+          <SectionHeader eyebrow="Listado" title="Listado de IE" />
           <div className="rounded-xl border border-slate-700/60 bg-slate-900/45 px-3 py-2 text-xs text-slate-300">
             Mostrando {rangeStart}-{rangeEnd} de {filteredInstitutions.length} IE
           </div>

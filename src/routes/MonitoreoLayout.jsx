@@ -13,11 +13,14 @@ import {
   PanelLeftOpen,
   Send,
   Settings,
+  Users,
   X,
 } from 'lucide-react';
 import chatbotIcon from '../assets/chatbot-icon.png';
 import { SIDEBAR_SECTIONS } from '../data/fichaEscritura.js';
 import { supabase } from '../lib/supabase.js';
+import { SIDEBAR_GROUPS_BY_ROLE, SIDEBAR_ITEM_DEFINITIONS } from '../config/roleUiConfig.js';
+import { ROLE_ADMIN, ROLE_SPECIALIST, resolveUserRole } from '../lib/roles.js';
 import ErrorBoundary from '../components/ErrorBoundary.jsx';
 import ConfirmModal from '../components/ui/ConfirmModal.jsx';
 
@@ -77,7 +80,7 @@ const WIZARD_EMPTY_DRAFT = {
 };
 const WIZARD_FIELD_ALIASES = {
   titulo: 'title',
-  título: 'title',
+  'título': 'title',
   title: 'title',
   'fecha inicio': 'startAt',
   inicio: 'startAt',
@@ -87,7 +90,7 @@ const WIZARD_FIELD_ALIASES = {
   responsables: 'responsibles',
   responsable: 'responsibles',
   descripcion: 'description',
-  descripción: 'description',
+  'descripción': 'description',
   objetivos: 'objectives',
   objetivo: 'objectives',
 };
@@ -96,19 +99,158 @@ const ASSISTANT_WIZARD_EDIT_FIELDS = [
   { id: 'startAt', label: 'Fecha inicio', command: 'editar fecha inicio' },
   { id: 'endAt', label: 'Fecha fin', command: 'editar fecha fin' },
   { id: 'responsibles', label: 'Responsables', command: 'editar responsables' },
-  { id: 'description', label: 'Descripción', command: 'editar descripcion' },
+  { id: 'description', label: 'DescripciÃ³n', command: 'editar descripcion' },
   { id: 'objectives', label: 'Objetivos', command: 'editar objetivos' },
 ];
-const ASSISTANT_QUICK_ACTIONS = [
-  { id: 'active', label: 'Activos', prompt: 'Que monitoreos estan activos', type: 'prompt' },
-  { id: 'upcoming', label: 'Vencen pronto', prompt: 'Que monitoreos estan por vencer', type: 'prompt' },
-  { id: 'today', label: 'Hoy', prompt: 'Que monitoreos tengo hoy', type: 'prompt' },
-  { id: 'create-monitoring', label: '+ Crear monitoreo', type: 'wizard' },
+const ASSISTANT_STATE_CRITICAL = 'critical';
+const ASSISTANT_STATE_OVERLOAD = 'overload';
+const ASSISTANT_STATE_WARNING = 'warning';
+const ASSISTANT_STATE_NORMAL = 'normal';
+const ASSISTANT_STATE_NO_DATA = 'no-data';
+const ASSISTANT_STATE_PRIORITY = [
+  ASSISTANT_STATE_CRITICAL,
+  ASSISTANT_STATE_OVERLOAD,
+  ASSISTANT_STATE_WARNING,
+  ASSISTANT_STATE_NORMAL,
+  ASSISTANT_STATE_NO_DATA,
 ];
+const ASSISTANT_ACTIONS_CATALOG = [
+  {
+    id: 'critical',
+    label: 'Ver pendientes críticos',
+    prompt: 'Que monitoreos estan vencidos o en riesgo critico',
+    type: 'prompt',
+    tone: 'critical',
+    localOnly: true,
+  },
+  {
+    id: 'today',
+    label: 'Ver lo de hoy',
+    prompt: 'Que monitoreos y actividades tengo hoy',
+    type: 'prompt',
+    tone: 'info',
+    localOnly: true,
+  },
+  {
+    id: 'upcoming',
+    label: 'Por vencer pronto',
+    prompt: 'Que monitoreos estan por vencer en 7 dias',
+    type: 'prompt',
+    tone: 'warning',
+    localOnly: true,
+  },
+  {
+    id: 'urgent',
+    label: 'Ver lo más urgente',
+    prompt: 'Muestrame lo mas urgente del sistema',
+    type: 'prompt',
+    tone: 'critical',
+    localOnly: true,
+  },
+  {
+    id: 'prioritize',
+    label: 'Priorizar pendientes',
+    prompt: 'Ayudame a priorizar los pendientes mas urgentes',
+    type: 'prompt',
+    tone: 'warning',
+    localOnly: true,
+  },
+  {
+    id: 'create-monitoring',
+    label: 'Crear monitoreo',
+    type: 'wizard',
+    tone: 'success',
+  },
+  {
+    id: 'view-reports',
+    label: 'Ver reportes',
+    type: 'navigate',
+    path: '/monitoreo/reportes',
+    tone: 'neutral',
+  },
+  {
+    id: 'view-monitorings',
+    label: 'Ver monitoreos',
+    type: 'navigate',
+    path: '/monitoreo',
+    tone: 'neutral',
+  },
+  {
+    id: 'go-tracking',
+    label: 'Ir a seguimiento',
+    type: 'navigate',
+    path: '/monitoreo/seguimiento',
+    tone: 'info',
+  },
+  {
+    id: 'go-calendar',
+    label: 'Ir al calendario',
+    type: 'navigate',
+    path: '/monitoreo/seguimiento',
+    tone: 'info',
+  },
+  {
+    id: 'open-monitoring',
+    label: 'Abrir monitoreo',
+    type: 'navigate',
+    path: '/monitoreo',
+    tone: 'neutral',
+  },
+  {
+    id: 'view-activities',
+    label: 'Ver actividades',
+    type: 'navigate',
+    path: '/monitoreo/seguimiento',
+    tone: 'info',
+  },
+];
+const ASSISTANT_ACTIONS_BY_ID = ASSISTANT_ACTIONS_CATALOG.reduce((accumulator, action) => {
+  accumulator[action.id] = action;
+  return accumulator;
+}, {});
+const ASSISTANT_QUICK_ACTION_IDS_BY_ROLE_AND_STATE = {
+  [ROLE_ADMIN]: {
+    [ASSISTANT_STATE_CRITICAL]: ['critical', 'view-reports', 'go-tracking'],
+    [ASSISTANT_STATE_OVERLOAD]: ['urgent', 'prioritize', 'go-tracking'],
+    [ASSISTANT_STATE_WARNING]: ['today', 'upcoming', 'go-calendar'],
+    [ASSISTANT_STATE_NORMAL]: ['view-reports', 'view-monitorings', 'create-monitoring'],
+    [ASSISTANT_STATE_NO_DATA]: ['create-monitoring', 'view-monitorings'],
+  },
+  [ROLE_SPECIALIST]: {
+    [ASSISTANT_STATE_CRITICAL]: ['open-monitoring', 'today', 'go-calendar'],
+    [ASSISTANT_STATE_OVERLOAD]: ['urgent', 'today', 'go-calendar'],
+    [ASSISTANT_STATE_WARNING]: ['today', 'upcoming', 'go-calendar'],
+    [ASSISTANT_STATE_NORMAL]: ['view-monitorings', 'view-activities', 'create-monitoring'],
+    [ASSISTANT_STATE_NO_DATA]: ['create-monitoring', 'view-monitorings'],
+  },
+};
 const ASSISTANT_GREETING_REGEX =
-  /^(hola|buen(?:os|as)\s+d[ií]as|buen(?:as)\s+tardes|buen(?:as)\s+noches|saludos|que tal|gracias)\b/i;
+  /^(hola|buen(?:os|as)\s+d[iÃ­]as|buen(?:as)\s+tardes|buen(?:as)\s+noches|saludos|que tal|gracias)\b/i;
 const ASSISTANT_DOMAIN_QUERY_REGEX =
   /\b(monitoreo|monitoreos|reporte|reportes|calendario|seguimiento|documento|documentos|borrador|crear|activo|activos|vencen|vencer|hoy)\b/i;
+
+const toSafeDateValue = (value) => {
+  const parsed = value ? new Date(value) : null;
+  if (!parsed || Number.isNaN(parsed.getTime())) return null;
+  return parsed;
+};
+
+const getStartOfCurrentDay = () => {
+  const now = new Date();
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+};
+
+const addDaysToDate = (date, amount) => {
+  const next = new Date(date);
+  next.setDate(next.getDate() + amount);
+  return next;
+};
+
+const toBadgeLabel = (value) => {
+  const count = Number(value) || 0;
+  if (count <= 0) return '';
+  return count > 99 ? '99+' : String(count);
+};
 
 const getDesktopDensityDefault = () => {
   if (typeof window !== 'undefined') {
@@ -175,10 +317,220 @@ const normalizeAssistantUserKey = (value) =>
 
 const buildStorageKey = (prefix, userKey) => `${prefix}:${normalizeAssistantUserKey(userKey)}`;
 
-const getAssistantGreetingText = (name = '') =>
-  name
-    ? `Hola ${name}, soy Yoryi, tu asistente virtual de AGEBRE. Puedo ayudarte con monitoreos, reportes y documentos.`
-    : 'Hola, soy Yoryi, tu asistente virtual de AGEBRE. Puedo ayudarte con monitoreos, reportes y documentos.';
+const toCount = (value) => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return 0;
+  return parsed > 0 ? Math.floor(parsed) : 0;
+};
+
+const withPlural = (count, singular, plural) => `${count} ${count === 1 ? singular : plural}`;
+
+const resolveAssistantState = ({ role = ROLE_SPECIALIST, context = null } = {}) => {
+  if (!context) return ASSISTANT_STATE_NORMAL;
+
+  const totalTemplates = toCount(context.totalTemplates);
+  const totalInstances = toCount(context.totalInstances);
+  const totalEvents =
+    role === ROLE_ADMIN ? toCount(context.totalEvents) : toCount(context.totalAssignedEvents);
+  const hasData = totalTemplates + totalInstances + totalEvents > 0;
+  if (!hasData) return ASSISTANT_STATE_NO_DATA;
+
+  if (role === ROLE_ADMIN) {
+    const overdueTemplates = toCount(context.overdueTemplates);
+    const overdueMonitoring = toCount(context.overdueMonitoring);
+    const pendingReports = toCount(context.pendingReports);
+    const dueSoonMonitoring = toCount(context.dueSoonMonitoring);
+    const upcomingActivities = toCount(context.upcomingActivities);
+
+    if (overdueTemplates > 0 || overdueMonitoring > 0) return ASSISTANT_STATE_CRITICAL;
+    if (pendingReports >= 3 || dueSoonMonitoring + upcomingActivities >= 5) {
+      return ASSISTANT_STATE_OVERLOAD;
+    }
+    if (pendingReports > 0 || dueSoonMonitoring > 0 || upcomingActivities > 0) {
+      return ASSISTANT_STATE_WARNING;
+    }
+    return ASSISTANT_STATE_NORMAL;
+  }
+
+  const overdueMonitoring = toCount(context.overdueMonitoring);
+  const dueSoonMonitoring = toCount(context.dueSoonMonitoring);
+  const upcomingActivities = toCount(context.upcomingActivities);
+  const draftCount = toCount(context.draftCount);
+
+  if (overdueMonitoring > 0) return ASSISTANT_STATE_CRITICAL;
+  if (dueSoonMonitoring + upcomingActivities + draftCount >= 6) return ASSISTANT_STATE_OVERLOAD;
+  if (dueSoonMonitoring > 0 || upcomingActivities > 0 || draftCount > 0) {
+    return ASSISTANT_STATE_WARNING;
+  }
+  return ASSISTANT_STATE_NORMAL;
+};
+
+const resolveAssistantQuickActions = ({
+  role = ROLE_SPECIALIST,
+  state = ASSISTANT_STATE_NORMAL,
+} = {}) => {
+  const normalizedState = ASSISTANT_STATE_PRIORITY.includes(state)
+    ? state
+    : ASSISTANT_STATE_NORMAL;
+  const roleConfig =
+    ASSISTANT_QUICK_ACTION_IDS_BY_ROLE_AND_STATE[role] ||
+    ASSISTANT_QUICK_ACTION_IDS_BY_ROLE_AND_STATE[ROLE_SPECIALIST];
+  const actionIds =
+    roleConfig[normalizedState] ||
+    roleConfig[ASSISTANT_STATE_NORMAL] ||
+    ASSISTANT_QUICK_ACTION_IDS_BY_ROLE_AND_STATE[ROLE_SPECIALIST][ASSISTANT_STATE_NORMAL];
+
+  return actionIds
+    .map((actionId) => ASSISTANT_ACTIONS_BY_ID[actionId])
+    .filter(Boolean);
+};
+
+const getAssistantQuickActionsHint = (actions = []) => {
+  const list = Array.isArray(actions) ? actions : [];
+  if (!list.length) return '1) Ver monitoreos 2) Ver reportes 3) Crear monitoreo';
+  return list.map((action, index) => `${index + 1}) ${action.label}`).join(' ');
+};
+
+const getAssistantGreetingText = ({ name = '', role = ROLE_SPECIALIST, context = null } = {}) => {
+  const shortName = String(name || '').trim();
+  const greeting = shortName ? `Hola ${shortName} \u{1F44B}` : 'Hola \u{1F44B}';
+
+  if (!context) {
+    return `${greeting}\nEstoy revisando tu estado actual...`;
+  }
+
+  const state = resolveAssistantState({ role, context });
+
+  if (role === ROLE_ADMIN) {
+    const overdueMonitoring = toCount(context.overdueMonitoring) + toCount(context.overdueTemplates);
+    const pendingReports = toCount(context.pendingReports);
+    const dueSoonMonitoring = toCount(context.dueSoonMonitoring);
+    const upcomingActivities = toCount(context.upcomingActivities);
+
+    if (state === ASSISTANT_STATE_CRITICAL) {
+      return [
+        greeting,
+        '',
+        `Hay ${withPlural(overdueMonitoring, 'monitoreo vencido', 'monitoreos vencidos')} y ${withPlural(pendingReports, 'reporte pendiente', 'reportes pendientes')} en el sistema.`,
+        'Te recomiendo revisarlos ahora para evitar retrasos.',
+      ].join('\n');
+    }
+
+    if (state === ASSISTANT_STATE_OVERLOAD) {
+      return [
+        greeting,
+        '',
+        `Hay varias tareas pendientes: ${withPlural(overdueMonitoring, 'monitoreo vencido', 'monitoreos vencidos')}, ${withPlural(pendingReports, 'reporte por revisar', 'reportes por revisar')} y ${withPlural(upcomingActivities, 'actividad próxima', 'actividades próximas')}.`,
+        'Puedo ayudarte a priorizar lo más urgente.',
+      ].join('\n');
+    }
+
+    if (state === ASSISTANT_STATE_WARNING) {
+      return [
+        greeting,
+        '',
+        `Tienes ${withPlural(upcomingActivities, 'actividad próxima', 'actividades próximas')} y ${withPlural(dueSoonMonitoring, 'monitoreo por vencer', 'monitoreos por vencer')} esta semana.`,
+        'Te recomiendo revisarlos con anticipación.',
+      ].join('\n');
+    }
+
+    if (state === ASSISTANT_STATE_NO_DATA) {
+      return [
+        greeting,
+        '',
+        'Aún no hay monitoreos ni reportes registrados en el sistema.',
+        'Puedo ayudarte a crear el primero.',
+      ].join('\n');
+    }
+
+    return [
+      greeting,
+      '',
+      'Todo está al día por ahora.',
+      'Puedes revisar reportes o gestionar monitoreos cuando lo necesites.',
+    ].join('\n');
+  }
+
+  const overdueMonitoring = toCount(context.overdueMonitoring);
+  const pendingActivities = toCount(context.todayActivities);
+  const dueSoonMonitoring = toCount(context.dueSoonMonitoring);
+  const upcomingActivities = toCount(context.upcomingActivities);
+  const monitoringToComplete = dueSoonMonitoring + toCount(context.draftCount);
+
+  if (state === ASSISTANT_STATE_CRITICAL) {
+    return [
+      greeting,
+      '',
+      `Tienes ${withPlural(overdueMonitoring, 'monitoreo vencido', 'monitoreos vencidos')} y ${withPlural(pendingActivities, 'actividad pendiente', 'actividades pendientes')}.`,
+      'Es importante revisarlos cuanto antes.',
+    ].join('\n');
+  }
+
+  if (state === ASSISTANT_STATE_OVERLOAD) {
+    return [
+      greeting,
+      '',
+      `Tienes varias tareas pendientes: ${withPlural(monitoringToComplete, 'monitoreo por completar', 'monitoreos por completar')} y varias actividades próximas.`,
+      'Puedo ayudarte a enfocarte en lo más urgente.',
+    ].join('\n');
+  }
+
+  if (state === ASSISTANT_STATE_WARNING) {
+    return [
+      greeting,
+      '',
+      `Tienes ${withPlural(upcomingActivities, 'actividad programada', 'actividades programadas')} y ${withPlural(dueSoonMonitoring, 'monitoreo por vencer pronto', 'monitoreos por vencer pronto')}.`,
+      'Te recomiendo avanzar con tiempo.',
+    ].join('\n');
+  }
+
+  if (state === ASSISTANT_STATE_NO_DATA) {
+    return [
+      greeting,
+      '',
+      'Aún no tienes monitoreos registrados.',
+      'Puedo ayudarte a crear uno.',
+    ].join('\n');
+  }
+
+  return [
+    greeting,
+    '',
+    'No tienes pendientes por ahora.',
+    'Puedes revisar monitoreos o avanzar en nuevas actividades.',
+  ].join('\n');
+};
+
+const getAssistantQuickActionResponse = ({ actionId = '', role = ROLE_SPECIALIST, context = null } = {}) => {
+  const overdueMonitoring = toCount(context?.overdueMonitoring) + toCount(context?.overdueTemplates);
+
+  if (actionId === 'critical' || actionId === 'urgent') {
+    if (overdueMonitoring > 0) {
+      return `\u26A0\uFE0F Encontré ${withPlural(overdueMonitoring, 'monitoreo vencido', 'monitoreos vencidos')}.\nTe recomiendo revisarlo hoy para evitar retrasos.`;
+    }
+    return '\u2705 Todo está al día.\nNo tienes pendientes por ahora.';
+  }
+
+  if (actionId === 'upcoming') {
+    return '\u23F3 Tienes monitoreos próximos a vencer.\nEs buen momento para adelantarte.';
+  }
+
+  if (actionId === 'today') {
+    return '\u{1F4C5} Estas son tus actividades programadas para hoy.';
+  }
+
+  if (actionId === 'view-reports') {
+    return '\u{1F4CA} Aquí tienes los reportes pendientes y en progreso.';
+  }
+
+  if (actionId === 'prioritize') {
+    return role === ROLE_ADMIN
+      ? 'Te ayudaré a priorizar pendientes del sistema por criticidad.'
+      : 'Te ayudaré a priorizar tus tareas más urgentes.';
+  }
+
+  return '';
+};
 
 const isSameDayText = (left, right) => String(left || '').trim() === String(right || '').trim();
 
@@ -209,8 +561,8 @@ const buildChatMessage = (role, text, extra = {}) => ({
   kind: extra.kind || 'message',
 });
 
-const buildGreetingMessage = (name = '') =>
-  buildChatMessage('assistant', getAssistantGreetingText(name), { kind: 'greeting' });
+const buildGreetingMessage = (payload = {}) =>
+  buildChatMessage('assistant', getAssistantGreetingText(payload), { kind: 'greeting' });
 
 const parseAssistantListItem = (rawItem) => {
   const content = String(rawItem || '').trim();
@@ -259,7 +611,7 @@ const parseAssistantListMessage = (rawText) => {
     const content = line.replace(/^-+\s*/, '').trim();
     if (!content) return;
 
-    const summaryMatch = content.match(/^\.{3}\s*y\s+(\d+)\s+m[aá]s\.?$/i);
+    const summaryMatch = content.match(/^\.{3}\s*y\s+(\d+)\s+m[aÃ¡]s\.?$/i);
     if (summaryMatch) {
       summarizedCount = Number(summaryMatch[1]) || 0;
       return;
@@ -410,16 +762,16 @@ const buildChoiceParseFeedback = (parsed) => {
 
   const ignored = [];
   if (invalidTokens.length) {
-    ignored.push(`${invalidTokens.join(',')} (fuera de rango/no válido)`);
+    ignored.push(`${invalidTokens.join(',')} (fuera de rango/no vÃ¡lido)`);
   }
   if (duplicateIndices.length) {
     ignored.push(`${duplicateIndices.join(',')} (duplicado)`);
   }
 
   if (picked.length) {
-    return `Tomé: ${picked.join(',')}. Ignoré: ${ignored.join(' ; ')}.`;
+    return `TomÃ©: ${picked.join(',')}. IgnorÃ©: ${ignored.join(' ; ')}.`;
   }
-  return `No se encontraron opciones válidas. Ignoré: ${ignored.join(' ; ')}.`;
+  return `No se encontraron opciones vÃ¡lidas. IgnorÃ©: ${ignored.join(' ; ')}.`;
 };
 
 const extractNumberedOptionsFromText = (text) => {
@@ -459,10 +811,10 @@ const extractNumberedOptionsFromText = (text) => {
   }));
 };
 
-const buildQuickActionOptionContext = () => ({
+const buildQuickActionOptionContext = (actions = resolveAssistantQuickActions()) => ({
   source: 'quick-actions',
   mode: 'single',
-  options: ASSISTANT_QUICK_ACTIONS.map((action) => ({
+  options: actions.map((action) => ({
     label: action.label,
     value: action.id,
   })),
@@ -685,6 +1037,8 @@ export default function MonitoreoLayout() {
     readBooleanSetting(ASSISTANT_CLEAR_ON_LOGOUT_KEY, false),
   );
   const [selectedTemplateSections, setSelectedTemplateSections] = useState(null);
+  const [navBadges, setNavBadges] = useState({});
+  const [assistantGreetingContext, setAssistantGreetingContext] = useState(null);
   const [auth, setAuth] = useState(() => {
     try {
       return JSON.parse(localStorage.getItem('monitoreoAuth'));
@@ -700,7 +1054,9 @@ export default function MonitoreoLayout() {
     }
   });
 
-  const isAdmin = auth?.role === 'admin';
+  const userRole = resolveUserRole(auth?.role);
+  const isAdmin = userRole === ROLE_ADMIN;
+  const currentUserId = auth?.email || auth?.docNumber || auth?.id || profile?.id || '';
   const avatarUrl = profile?.avatarUrl || profile?.avatar_url || '';
   const displayName = useMemo(() => {
     if (profile?.fullName) return profile.fullName;
@@ -731,6 +1087,22 @@ export default function MonitoreoLayout() {
       .join(' ');
     return name || '';
   }, [displayName]);
+  const assistantState = useMemo(
+    () => resolveAssistantState({ role: userRole, context: assistantGreetingContext }),
+    [userRole, assistantGreetingContext],
+  );
+  const assistantQuickActionItems = useMemo(
+    () =>
+      resolveAssistantQuickActions({
+        role: userRole,
+        state: assistantState,
+      }),
+    [userRole, assistantState],
+  );
+  const assistantQuickActionHint = useMemo(
+    () => getAssistantQuickActionsHint(assistantQuickActionItems),
+    [assistantQuickActionItems],
+  );
   const assistantUserKey = useMemo(
     () => profile?.id || auth?.email || auth?.docNumber || auth?.name || 'anon',
     [auth, profile],
@@ -931,8 +1303,8 @@ export default function MonitoreoLayout() {
     );
     return [
       `${getWizardStepIndicator(wizard.draft, wizard.step, wizard.currentResponsible)}`,
-      'Selecciona especialista responsable (escribe número o correo).',
-      'Responde con número. Si son varias opciones, usa comas.',
+      'Selecciona especialista responsable (escribe nÃºmero o correo).',
+      'Responde con nÃºmero. Si son varias opciones, usa comas.',
       ...lines,
     ].join('\n');
   };
@@ -985,7 +1357,7 @@ export default function MonitoreoLayout() {
         step,
         mode: 'single',
         options: [
-          { label: 'Sí', value: 'yes' },
+          { label: 'SÃ­', value: 'yes' },
           { label: 'No', value: 'no' },
         ],
       };
@@ -998,7 +1370,7 @@ export default function MonitoreoLayout() {
         mode: 'single',
         options: [
           { label: 'Abrir borrador', value: 'openDraft' },
-          { label: 'Añadir detalles', value: 'addDetails' },
+          { label: 'AÃ±adir detalles', value: 'addDetails' },
         ],
       };
     }
@@ -1009,7 +1381,7 @@ export default function MonitoreoLayout() {
         step,
         mode: 'single',
         options: [
-          { label: 'Sí', value: 'yes' },
+          { label: 'SÃ­', value: 'yes' },
           { label: 'No', value: 'no' },
         ],
       };
@@ -1026,10 +1398,10 @@ export default function MonitoreoLayout() {
       ? wizard.pendingResponsibleQueue.length
       : 0;
     const responsibleContextLine = currentResponsibleName
-      ? `Responsable actual: ${currentResponsibleName}${pendingCount ? ` (${pendingCount} pendiente${pendingCount === 1 ? '' : 's'} después de este).` : '.'}`
+      ? `Responsable actual: ${currentResponsibleName}${pendingCount ? ` (${pendingCount} pendiente${pendingCount === 1 ? '' : 's'} despuÃ©s de este).` : '.'}`
       : '';
     if (wizard.step === 'title') {
-      return `${progress}\nIndica el título del monitoreo.`;
+      return `${progress}\nIndica el tÃ­tulo del monitoreo.`;
     }
     if (wizard.step === 'startAt') {
       return `${progress}\nIngresa la fecha de inicio (dd/mm/yyyy o yyyy-mm-dd).`;
@@ -1041,33 +1413,33 @@ export default function MonitoreoLayout() {
       return getWizardSpecialistPrompt(wizard);
     }
     if (wizard.step === 'responsibleLevel') {
-      return `${progress}${responsibleContextLine ? `\n${responsibleContextLine}` : ''}\nSelecciona nivel del responsable.\n1) Inicial\n2) Primaria\n3) Secundaria\nResponde con número o texto.`;
+      return `${progress}${responsibleContextLine ? `\n${responsibleContextLine}` : ''}\nSelecciona nivel del responsable.\n1) Inicial\n2) Primaria\n3) Secundaria\nResponde con nÃºmero o texto.`;
     }
     if (wizard.step === 'responsibleModality') {
-      return `${progress}${responsibleContextLine ? `\n${responsibleContextLine}` : ''}\nSelecciona modalidad.\n1) EBR\n2) EBE\nResponde con número o texto.`;
+      return `${progress}${responsibleContextLine ? `\n${responsibleContextLine}` : ''}\nSelecciona modalidad.\n1) EBR\n2) EBE\nResponde con nÃºmero o texto.`;
     }
     if (wizard.step === 'responsibleCourse') {
       return `${progress}${responsibleContextLine ? `\n${responsibleContextLine}` : ''}\nEscribe el curso del responsable (obligatorio para Primaria/Secundaria).`;
     }
     if (wizard.step === 'responsibleMore') {
-      return `${progress}\n¿Deseas agregar otro responsable?\n1) Sí\n2) No\nResponde con número o texto.`;
+      return `${progress}\nÂ¿Deseas agregar otro responsable?\n1) SÃ­\n2) No\nResponde con nÃºmero o texto.`;
     }
     if (wizard.step === 'postCreateChoice') {
-      return 'Puedes continuar con:\n1) Abrir borrador\n2) Añadir detalles\nResponde con número o texto.';
+      return 'Puedes continuar con:\n1) Abrir borrador\n2) AÃ±adir detalles\nResponde con nÃºmero o texto.';
     }
     if (wizard.step === 'optionalDescription') {
-      return 'Descripción (opcional): escribe el texto o responde "omitir".';
+      return 'DescripciÃ³n (opcional): escribe el texto o responde "omitir".';
     }
     if (wizard.step === 'optionalObjective') {
       return 'Objetivos/metas (opcional): escribe un objetivo o responde "omitir".';
     }
     if (wizard.step === 'optionalObjectiveMore') {
-      return '¿Deseas agregar otro objetivo?\n1) Sí\n2) No\nResponde con número o texto.';
+      return 'Â¿Deseas agregar otro objetivo?\n1) SÃ­\n2) No\nResponde con nÃºmero o texto.';
     }
     if (wizard.step === 'completed') {
       return 'Flujo completado. Puedes abrir el borrador o crear otro monitoreo.';
     }
-    return 'Continuemos con la creación del monitoreo.';
+    return 'Continuemos con la creaciÃ³n del monitoreo.';
   };
 
   const fetchWizardSpecialists = async () => {
@@ -1281,7 +1653,7 @@ export default function MonitoreoLayout() {
 
   const startAssistantWizard = async () => {
     if (assistantWizard.active) {
-      pushAssistantWizardMessage('Ya estás en modo asistido. Puedes continuar o usar "Cancelar".');
+      pushAssistantWizardMessage('Ya estÃ¡s en modo asistido. Puedes continuar o usar "Cancelar".');
       return;
     }
 
@@ -1290,9 +1662,9 @@ export default function MonitoreoLayout() {
       const specialistOptions = await fetchWizardSpecialists();
       if (!specialistOptions.length) {
         setAssistantWizard(createEmptyWizardState());
-        setAssistantOptionContext(buildQuickActionOptionContext());
+        setAssistantOptionContext(buildQuickActionOptionContext(assistantQuickActionItems));
         pushAssistantWizardMessage(
-          'No hay especialistas disponibles para asignar responsables. Revisa usuarios activos e inténtalo de nuevo.',
+          'No hay especialistas disponibles para asignar responsables. Revisa usuarios activos e intÃ©ntalo de nuevo.',
         );
         return;
       }
@@ -1305,19 +1677,19 @@ export default function MonitoreoLayout() {
       };
       setAssistantWizard(nextWizard);
       pushAssistantWizardMessage(
-        'Modo asistido activado.\nTe guiaré paso a paso. Responde una pregunta por vez.',
+        'Modo asistido activado.\nTe guiarÃ© paso a paso. Responde una pregunta por vez.',
       );
       promptWizardStep(nextWizard);
     } catch (error) {
       setAssistantWizard(createEmptyWizardState());
-      setAssistantOptionContext(buildQuickActionOptionContext());
-      pushAssistantWizardMessage(`No se pudo iniciar el asistente de creación.\n- ${error.message}`);
+      setAssistantOptionContext(buildQuickActionOptionContext(assistantQuickActionItems));
+      pushAssistantWizardMessage(`No se pudo iniciar el asistente de creaciÃ³n.\n- ${error.message}`);
     }
   };
 
   const cancelAssistantWizard = () => {
     setAssistantWizard(createEmptyWizardState());
-    setAssistantOptionContext(buildQuickActionOptionContext());
+    setAssistantOptionContext(buildQuickActionOptionContext(assistantQuickActionItems));
     pushAssistantWizardMessage('Creacion cancelada. No se aplicaron cambios adicionales.');
   };
 
@@ -1347,7 +1719,7 @@ export default function MonitoreoLayout() {
     };
     const nextStep = stepByField[fieldKey];
     if (!nextStep) {
-      pushAssistantWizardMessage('Campo no reconocido. Usa: título, fecha inicio, fecha fin, responsables, descripción u objetivos.');
+      pushAssistantWizardMessage('Campo no reconocido. Usa: tÃ­tulo, fecha inicio, fecha fin, responsables, descripciÃ³n u objetivos.');
       return;
     }
 
@@ -1367,11 +1739,11 @@ export default function MonitoreoLayout() {
   const handleAssistantOpenDraft = () => {
     const templateId = assistantWizard.draft.templateId;
     if (!templateId) {
-      pushAssistantWizardMessage('Aún no hay un borrador para abrir.');
+      pushAssistantWizardMessage('AÃºn no hay un borrador para abrir.');
       return;
     }
     localStorage.setItem('monitoreoTemplateSelected', templateId);
-    setAssistantOptionContext(buildQuickActionOptionContext());
+    setAssistantOptionContext(buildQuickActionOptionContext(assistantQuickActionItems));
     setIsAssistantOpen(false);
     if (isAdmin) {
       navigate(`/monitoreo/plantillas/${templateId}`);
@@ -1411,7 +1783,7 @@ export default function MonitoreoLayout() {
       handleAssistantOpenDraft();
       return;
     }
-    if (normalized === 'Añadir detalles') {
+    if (normalized === 'AÃ±adir detalles') {
       handleAssistantAddDetails();
       return;
     }
@@ -1534,13 +1906,13 @@ export default function MonitoreoLayout() {
         handleAssistantOpenDraft();
         return;
       }
-      pushAssistantWizardMessage('Responde "1" (Abrir borrador) o "2" (Añadir detalles).');
+      pushAssistantWizardMessage('Responde "1" (Abrir borrador) o "2" (AÃ±adir detalles).');
       return;
     }
 
     if (wizard.step === 'title') {
       if (!input) {
-        pushAssistantWizardMessage('El título es obligatorio.');
+        pushAssistantWizardMessage('El tÃ­tulo es obligatorio.');
         promptWizardStep(wizard);
         return;
       }
@@ -1554,7 +1926,7 @@ export default function MonitoreoLayout() {
     if (wizard.step === 'startAt') {
       const isoDate = parseWizardDateToIso(input);
       if (!isoDate) {
-        pushAssistantWizardMessage('Fecha inválida. Usa formato dd/mm/yyyy o yyyy-mm-dd.');
+        pushAssistantWizardMessage('Fecha invÃ¡lida. Usa formato dd/mm/yyyy o yyyy-mm-dd.');
         promptWizardStep(wizard);
         return;
       }
@@ -1571,7 +1943,7 @@ export default function MonitoreoLayout() {
     if (wizard.step === 'endAt') {
       const isoDate = parseWizardDateToIso(input);
       if (!isoDate) {
-        pushAssistantWizardMessage('Fecha inválida. Usa formato dd/mm/yyyy o yyyy-mm-dd.');
+        pushAssistantWizardMessage('Fecha invÃ¡lida. Usa formato dd/mm/yyyy o yyyy-mm-dd.');
         promptWizardStep(wizard);
         return;
       }
@@ -1597,14 +1969,14 @@ export default function MonitoreoLayout() {
           .map((option) => option?.value)
           .filter(Boolean);
         if (!selectedSpecialists.length) {
-          pushAssistantWizardMessage('No identifiqué especialistas válidos. Elige índices dentro de la lista.');
+          pushAssistantWizardMessage('No identifiquÃ© especialistas vÃ¡lidos. Elige Ã­ndices dentro de la lista.');
           promptWizardStep(wizard);
           return;
         }
       } else {
         const selected = resolveWizardSpecialistSelection(input, wizard.specialistOptions);
         if (!selected) {
-          pushAssistantWizardMessage('No identifiqué al especialista. Elige un número o escribe correo/nombre.');
+          pushAssistantWizardMessage('No identifiquÃ© al especialista. Elige un nÃºmero o escribe correo/nombre.');
           promptWizardStep(wizard);
           return;
         }
@@ -1667,7 +2039,7 @@ export default function MonitoreoLayout() {
       const level =
         parsedChoice?.selectedOptions?.[0]?.value || normalizeWizardLevel(input);
       if (!level) {
-        pushAssistantWizardMessage('Nivel inválido. Usa Inicial, Primaria o Secundaria.');
+        pushAssistantWizardMessage('Nivel invÃ¡lido. Usa Inicial, Primaria o Secundaria.');
         promptWizardStep(wizard);
         return;
       }
@@ -1686,7 +2058,7 @@ export default function MonitoreoLayout() {
       const modality =
         parsedChoice?.selectedOptions?.[0]?.value || normalizeWizardModality(input);
       if (!modality) {
-        pushAssistantWizardMessage('Modalidad inválida. Usa EBR o EBE.');
+        pushAssistantWizardMessage('Modalidad invÃ¡lida. Usa EBR o EBE.');
         promptWizardStep(wizard);
         return;
       }
@@ -1778,7 +2150,7 @@ export default function MonitoreoLayout() {
           wizard.objectiveTextColumn = saved.objectiveTextColumn || wizard.objectiveTextColumn;
           setAssistantWizard({ ...wizard, saving: false });
           pushAssistantWizardMessage(
-            `Listo, creé el monitoreo en BORRADOR: ${wizard.draft.title}\n- Usa "Abrir borrador" o "Añadir detalles".`,
+            `Listo, creÃ© el monitoreo en BORRADOR: ${wizard.draft.title}\n- Usa "Abrir borrador" o "AÃ±adir detalles".`,
           );
           promptWizardStep(wizard);
         } catch (error) {
@@ -1873,7 +2245,7 @@ export default function MonitoreoLayout() {
       return;
     }
 
-    pushAssistantWizardMessage('No entendí la respuesta. Vamos con el siguiente paso.');
+    pushAssistantWizardMessage('No entendÃ­ la respuesta. Vamos con el siguiente paso.');
     promptWizardStep(wizard);
   };
 
@@ -2042,7 +2414,13 @@ export default function MonitoreoLayout() {
     if (restored.length) {
       setAssistantMessages(restored);
     } else {
-      setAssistantMessages([buildGreetingMessage(greetingName)]);
+      setAssistantMessages([
+        buildGreetingMessage({
+          name: greetingName,
+          role: userRole,
+          context: assistantGreetingContext,
+        }),
+      ]);
     }
     setExpandedAssistantCards({});
     setAssistantStorageReady(true);
@@ -2075,18 +2453,52 @@ export default function MonitoreoLayout() {
   }, [assistantMessages, assistantMode, assistantStorageReady, assistantModeKey]);
 
   useEffect(() => {
+    setAssistantOptionContext((prev) => {
+      if (prev?.source === 'assistant-reply') return prev;
+
+      const next = buildQuickActionOptionContext(assistantQuickActionItems);
+      const previousValues = Array.isArray(prev?.options) ? prev.options.map((item) => item?.value) : [];
+      const nextValues = next.options.map((item) => item?.value);
+      const hasSameValues =
+        previousValues.length === nextValues.length &&
+        previousValues.every((value, index) => value === nextValues[index]);
+
+      if (hasSameValues && prev?.source === 'quick-actions') return prev;
+      return next;
+    });
+  }, [assistantQuickActionItems]);
+
+  useEffect(() => {
     if (!assistantStorageReady) return;
-    const nextGreetingText = getAssistantGreetingText(greetingName);
+    const nextGreetingText = getAssistantGreetingText({
+      name: greetingName,
+      role: userRole,
+      context: assistantGreetingContext,
+    });
     setAssistantMessagesSafely((prev) => {
-      if (!prev.length) return [buildGreetingMessage(greetingName)];
+      if (!prev.length)
+        return [
+          buildGreetingMessage({
+            name: greetingName,
+            role: userRole,
+            context: assistantGreetingContext,
+          }),
+        ];
       const first = prev[0];
       if (first.kind !== 'greeting') {
-        return [buildGreetingMessage(greetingName), ...prev];
+        return [
+          buildGreetingMessage({
+            name: greetingName,
+            role: userRole,
+            context: assistantGreetingContext,
+          }),
+          ...prev,
+        ];
       }
       if (isSameDayText(first.text, nextGreetingText)) return prev;
       return [{ ...first, text: nextGreetingText }, ...prev.slice(1)];
     });
-  }, [assistantStorageReady, greetingName]);
+  }, [assistantStorageReady, greetingName, userRole, assistantGreetingContext]);
 
   const clearStoredSessionActivity = useCallback(() => {
     try {
@@ -2327,6 +2739,7 @@ export default function MonitoreoLayout() {
     let effectiveMessage = trimmed;
     let shortCircuitMessage = '';
     let triggerQuickWizard = false;
+    let navigateQuickActionPath = '';
 
     if (!assistantWizard.active && assistantOptionContext?.options?.length) {
       const parsedChoice = resolveChoiceFromContext(trimmed, assistantOptionContext);
@@ -2335,7 +2748,7 @@ export default function MonitoreoLayout() {
           const isExactSingleIndex = /^\d+$/.test(trimmed);
           if (!isExactSingleIndex) {
             shortCircuitMessage =
-              'Para atajos rápidos escribe un solo número: 1) Activos 2) Vencen pronto 3) Hoy 4) + Crear monitoreo.';
+              `Para atajos rÃ¡pidos escribe un solo nÃºmero: ${assistantQuickActionHint}.`;
           } else {
             const feedback = buildChoiceParseFeedback(parsedChoice);
             if (feedback) {
@@ -2343,14 +2756,17 @@ export default function MonitoreoLayout() {
             }
             if (!parsedChoice.validIndices.length) {
               shortCircuitMessage =
-                'Índice fuera de rango. Usa: 1) Activos 2) Vencen pronto 3) Hoy 4) + Crear monitoreo.';
+                `Ãndice fuera de rango. Usa: ${assistantQuickActionHint}.`;
             } else {
               const actionId = parsedChoice.selectedOptions?.[0]?.value;
-              const quickAction = ASSISTANT_QUICK_ACTIONS.find((item) => item.id === actionId);
+              const quickAction = assistantQuickActionItems.find((item) => item.id === actionId);
               if (!quickAction) {
-                shortCircuitMessage = 'No pude resolver ese atajo. Intenta con un número del 1 al 4.';
+                shortCircuitMessage = `No pude resolver ese atajo. Intenta con un nÃºmero del 1 al ${assistantQuickActionItems.length || 1}.`;
               } else if (quickAction.type === 'wizard') {
                 triggerQuickWizard = true;
+              } else if (quickAction.type === 'navigate' && quickAction.path) {
+                navigateQuickActionPath = quickAction.path;
+                shortCircuitMessage = `Abriendo ${quickAction.label.toLowerCase()}...`;
               } else {
                 effectiveMessage = quickAction.prompt || quickAction.label || trimmed;
               }
@@ -2362,7 +2778,7 @@ export default function MonitoreoLayout() {
             preflightAssistantMessages.push(buildChatMessage('assistant', feedback));
           }
           if (!parsedChoice.validIndices.length) {
-            shortCircuitMessage = 'No se encontraron opciones válidas. Responde con un número de la lista.';
+            shortCircuitMessage = 'No se encontraron opciones vÃ¡lidas. Responde con un nÃºmero de la lista.';
           } else {
             effectiveMessage = String(parsedChoice.selectedOptions?.[0]?.value || trimmed).trim() || trimmed;
           }
@@ -2378,16 +2794,19 @@ export default function MonitoreoLayout() {
         ...prev,
         buildChatMessage('assistant', shortCircuitMessage),
       ]);
+      if (navigateQuickActionPath) {
+        navigate(navigateQuickActionPath);
+      }
       return;
     }
 
     if (!assistantWizard.active && !triggerQuickWizard && isAssistantGreetingOnly(trimmed)) {
-      setAssistantOptionContext(buildQuickActionOptionContext());
+      setAssistantOptionContext(buildQuickActionOptionContext(assistantQuickActionItems));
       setAssistantMessagesSafely((prev) => [
         ...prev,
         buildChatMessage(
           'assistant',
-          'Asistente AGEBRE\nHola, estoy listo para ayudarte.\nPuedes pedirme: 1) Activos 2) Vencen pronto 3) Hoy 4) + Crear monitoreo.',
+          `Asistente AGEBRE\nEstoy listo para ayudarte.\nAtajos: ${assistantQuickActionHint}.`,
         ),
       ]);
       return;
@@ -2463,7 +2882,7 @@ export default function MonitoreoLayout() {
               mode: 'single',
               options: extractedOptions,
             }
-          : buildQuickActionOptionContext(),
+          : buildQuickActionOptionContext(assistantQuickActionItems),
       );
       setAssistantMessagesSafely((prev) => [
         ...prev,
@@ -2473,13 +2892,13 @@ export default function MonitoreoLayout() {
       const unauthorized =
         error?.context?.status === 401 ||
         /401|unauthorized|authorization/i.test(String(error?.message || ''));
-      setAssistantOptionContext(buildQuickActionOptionContext());
+      setAssistantOptionContext(buildQuickActionOptionContext(assistantQuickActionItems));
       setAssistantMessagesSafely((prev) => [
         ...prev,
         buildChatMessage(
           'assistant',
           unauthorized
-            ? 'Tu sesión venció. Cierra sesión e ingresa nuevamente.'
+            ? 'Tu sesiÃ³n venciÃ³. Cierra sesiÃ³n e ingresa nuevamente.'
             : 'No se pudo contactar al asistente. Intenta de nuevo.',
         ),
       ]);
@@ -2495,13 +2914,38 @@ export default function MonitoreoLayout() {
   const handleAssistantQuickAction = async (action) => {
     if (!action) return;
 
+    const quickResponse = getAssistantQuickActionResponse({
+      actionId: action.id,
+      role: userRole,
+      context: assistantGreetingContext,
+    });
+
     if (action.type === 'wizard') {
+      if (quickResponse) {
+        setAssistantMessagesSafely((prev) => [...prev, buildChatMessage('assistant', quickResponse)]);
+      }
       await startAssistantWizard();
       return;
     }
 
+    if (action.type === 'navigate' && action.path) {
+      setAssistantMessagesSafely((prev) => [
+        ...prev,
+        buildChatMessage('assistant', quickResponse || `Abriendo ${action.label.toLowerCase()}...`),
+      ]);
+      navigate(action.path);
+      return;
+    }
+
     if (assistantWizard.active) {
-      pushAssistantWizardMessage('Estás en modo asistido. Usa "Cancelar" o termina el flujo actual.');
+      pushAssistantWizardMessage('EstÃ¡s en modo asistido. Usa "Cancelar" o termina el flujo actual.');
+      return;
+    }
+
+    if (quickResponse) {
+      setAssistantMessagesSafely((prev) => [...prev, buildChatMessage('assistant', quickResponse)]);
+    }
+    if (action.localOnly) {
       return;
     }
 
@@ -2521,8 +2965,14 @@ export default function MonitoreoLayout() {
     setExpandedAssistantCards({});
     removeStoredConversation(ASSISTANT_MODE_PERSISTENT);
     removeStoredConversation(ASSISTANT_MODE_TEMPORARY);
-    setAssistantOptionContext(buildQuickActionOptionContext());
-    setAssistantMessagesSafely([buildGreetingMessage(greetingName)]);
+    setAssistantOptionContext(buildQuickActionOptionContext(assistantQuickActionItems));
+    setAssistantMessagesSafely([
+      buildGreetingMessage({
+        name: greetingName,
+        role: userRole,
+        context: assistantGreetingContext,
+      }),
+    ]);
   };
 
   const handleAssistantModeToggle = () => {
@@ -2599,75 +3049,264 @@ export default function MonitoreoLayout() {
     };
   }, [isFicha]);
 
-  const sidebarItems = useMemo(() => {
+  useEffect(() => {
+    let active = true;
+
+    const loadNavBadges = async () => {
+      if (!auth?.role) {
+        if (active) {
+          setNavBadges({});
+          setAssistantGreetingContext(null);
+        }
+        return;
+      }
+
+      const startOfToday = getStartOfCurrentDay();
+      const sevenDayLimit = addDaysToDate(startOfToday, 7);
+      const now = new Date();
+
+      const templatesPromise = supabase
+        .from('monitoring_templates')
+        .select('id,status,availability');
+
+      const instancesBaseQuery = supabase
+        .from('monitoring_instances')
+        .select('id,status,created_by');
+      const instancesPromise =
+        userRole === ROLE_ADMIN
+          ? instancesBaseQuery
+          : currentUserId
+            ? instancesBaseQuery.eq('created_by', currentUserId)
+            : instancesBaseQuery;
+
+      const eventsPromise = supabase
+        .from('monitoring_events')
+        .select('id,event_type,status,start_at,end_at,created_by,monitoring_event_responsibles(user_id)');
+
+      const [templatesResult, instancesResult, eventsResult] = await Promise.all([
+        templatesPromise,
+        instancesPromise,
+        eventsPromise,
+      ]);
+
+      if (!active) return;
+
+      if (templatesResult.error || instancesResult.error || eventsResult.error) {
+        setNavBadges({});
+        setAssistantGreetingContext(null);
+        return;
+      }
+
+      const templates = templatesResult.data || [];
+      const instances = instancesResult.data || [];
+      const events = eventsResult.data || [];
+      const totalTemplates = templates.length;
+      const totalInstances = instances.length;
+      const totalEvents = events.length;
+
+      const overdueTemplatesCount = templates.filter((template) => {
+        if (template?.status !== 'published') return false;
+        const endAt = toSafeDateValue(template?.availability?.endAt);
+        return Boolean(endAt && endAt < startOfToday);
+      }).length;
+
+      const pendingReportsCount = instances.filter((instance) => instance?.status !== 'completed').length;
+      const overdueMonitoringCount = events.filter((event) => {
+        const status = String(event?.status || '').toLowerCase();
+        const type = String(event?.event_type || '').toLowerCase();
+        if (type !== 'monitoring') return false;
+        if (status === 'closed' || status === 'hidden') return false;
+        const eventEnd = toSafeDateValue(event?.end_at);
+        return Boolean(eventEnd && eventEnd < startOfToday);
+      }).length;
+      const adminDueSoonMonitoring = events.filter((event) => {
+        const status = String(event?.status || '').toLowerCase();
+        const type = String(event?.event_type || '').toLowerCase();
+        if (type !== 'monitoring') return false;
+        if (status === 'closed' || status === 'hidden') return false;
+        const eventEnd = toSafeDateValue(event?.end_at);
+        if (!eventEnd) return false;
+        return eventEnd >= startOfToday && eventEnd <= sevenDayLimit;
+      }).length;
+      const adminUpcomingActivities = events.filter((event) => {
+        const status = String(event?.status || '').toLowerCase();
+        const type = String(event?.event_type || '').toLowerCase();
+        if (type !== 'activity') return false;
+        if (status === 'closed' || status === 'hidden') return false;
+        const eventStart = toSafeDateValue(event?.start_at);
+        if (!eventStart) return false;
+        return eventStart >= startOfToday && eventStart <= sevenDayLimit;
+      }).length;
+
+      if (userRole === ROLE_ADMIN) {
+        setNavBadges({
+          reportes: pendingReportsCount,
+          elegir: overdueTemplatesCount,
+        });
+        setAssistantGreetingContext({
+          totalTemplates,
+          totalInstances,
+          totalEvents,
+          overdueTemplates: overdueTemplatesCount,
+          overdueMonitoring: overdueMonitoringCount,
+          dueSoonMonitoring: adminDueSoonMonitoring,
+          upcomingActivities: adminUpcomingActivities,
+          pendingReports: pendingReportsCount,
+        });
+        return;
+      }
+
+      const specialistDraftCount = instances.filter((instance) => {
+        const status = String(instance?.status || '').toLowerCase();
+        return status === 'draft' || status === 'borrador' || status === 'in_progress';
+      }).length;
+
+      const specialistCriticalEvents = events.filter((event) => {
+        if (!currentUserId) return false;
+        const status = String(event?.status || '').toLowerCase();
+        if (status === 'closed' || status === 'hidden') return false;
+
+        const eventEnd = toSafeDateValue(event?.end_at);
+        if (!eventEnd || eventEnd > sevenDayLimit) return false;
+
+        if (event?.created_by === currentUserId) return true;
+        return (event?.monitoring_event_responsibles || []).some(
+          (responsible) => responsible?.user_id === currentUserId,
+        );
+      }).length;
+      const specialistOwnedEvents = events.filter((event) => {
+        if (!currentUserId) return false;
+        if (event?.created_by === currentUserId) return true;
+        return (event?.monitoring_event_responsibles || []).some(
+          (responsible) => responsible?.user_id === currentUserId,
+        );
+      });
+
+      const specialistDueSoonMonitoring = specialistOwnedEvents.filter((event) => {
+        const status = String(event?.status || '').toLowerCase();
+        const type = String(event?.event_type || '').toLowerCase();
+        if (type !== 'monitoring') return false;
+        if (status === 'closed' || status === 'hidden') return false;
+        const eventEnd = toSafeDateValue(event?.end_at);
+        if (!eventEnd || eventEnd < startOfToday || eventEnd > sevenDayLimit) return false;
+        return true;
+      }).length;
+
+      const specialistInProgressActivities = specialistOwnedEvents.filter((event) => {
+        const status = String(event?.status || '').toLowerCase();
+        const type = String(event?.event_type || '').toLowerCase();
+        if (type !== 'activity') return false;
+        if (status === 'closed' || status === 'hidden') return false;
+        const eventStart = toSafeDateValue(event?.start_at);
+        const eventEnd = toSafeDateValue(event?.end_at);
+        if (!eventStart || !eventEnd) return false;
+        if (!(eventStart <= now && eventEnd >= now)) return false;
+        return true;
+      }).length;
+
+      const specialistOverdueMonitoring = specialistOwnedEvents.filter((event) => {
+        const status = String(event?.status || '').toLowerCase();
+        const type = String(event?.event_type || '').toLowerCase();
+        if (type !== 'monitoring') return false;
+        if (status === 'closed' || status === 'hidden') return false;
+        const eventEnd = toSafeDateValue(event?.end_at);
+        return Boolean(eventEnd && eventEnd < startOfToday);
+      }).length;
+
+      const specialistTodayActivities = specialistOwnedEvents.filter((event) => {
+        const status = String(event?.status || '').toLowerCase();
+        const type = String(event?.event_type || '').toLowerCase();
+        if (type !== 'activity') return false;
+        if (status === 'closed' || status === 'hidden') return false;
+        const eventStart = toSafeDateValue(event?.start_at);
+        const eventEnd = toSafeDateValue(event?.end_at);
+        if (!eventStart || !eventEnd) return false;
+        return eventStart <= now && eventEnd >= now;
+      }).length;
+      const specialistUpcomingActivities = specialistOwnedEvents.filter((event) => {
+        const status = String(event?.status || '').toLowerCase();
+        const type = String(event?.event_type || '').toLowerCase();
+        if (type !== 'activity') return false;
+        if (status === 'closed' || status === 'hidden') return false;
+        const eventStart = toSafeDateValue(event?.start_at);
+        if (!eventStart) return false;
+        return eventStart >= startOfToday && eventStart <= sevenDayLimit;
+      }).length;
+
+      setNavBadges({
+        seguimiento: specialistCriticalEvents,
+        elegir: specialistDraftCount,
+      });
+      setAssistantGreetingContext({
+        totalTemplates,
+        totalInstances,
+        totalAssignedEvents: specialistOwnedEvents.length,
+        overdueMonitoring: specialistOverdueMonitoring,
+        dueSoonMonitoring: specialistDueSoonMonitoring,
+        todayActivities: specialistTodayActivities,
+        upcomingActivities: specialistUpcomingActivities,
+        inProgressActivities: specialistInProgressActivities,
+        draftCount: specialistDraftCount,
+        pendingReports: pendingReportsCount,
+      });
+    };
+
+    loadNavBadges();
+    const intervalId = window.setInterval(loadNavBadges, 90000);
+
+    return () => {
+      active = false;
+      window.clearInterval(intervalId);
+    };
+  }, [auth?.role, currentUserId, userRole]);
+
+  const sidebarGroups = useMemo(() => {
+    const iconByKey = {
+      dashboard: LayoutDashboard,
+      calendar: CalendarRange,
+      clipboard: ClipboardList,
+      chart: BarChart3,
+      building: Building2,
+      users: Users,
+    };
+
+    const buildNavItem = (itemId) => {
+      const definition = SIDEBAR_ITEM_DEFINITIONS[itemId];
+      if (!definition) return null;
+
+      const disabled = Boolean(definition.adminOnly && userRole !== ROLE_ADMIN);
+      const Icon = iconByKey[definition.iconKey] || ClipboardList;
+      const badgeText = toBadgeLabel(navBadges[itemId]);
+
+      return {
+        id: definition.id,
+        label: definition.label,
+        icon: Icon,
+        path: definition.path,
+        disabled,
+        disabledBadge: disabled ? 'Admin' : '',
+        badgeText,
+        action: () => {
+          if (disabled) return;
+          setIsMobileSidebarOpen(false);
+          navigate(definition.path);
+        },
+      };
+    };
+
     if (!isFicha) {
-      return [
-        {
-          id: 'inicio',
-          label: 'Inicio',
-          icon: LayoutDashboard,
-          path: '/monitoreo/inicio',
-          action: () => {
-            setIsMobileSidebarOpen(false);
-            navigate('/monitoreo/inicio');
-          },
-        },
-        {
-          id: 'elegir',
-          label: 'Monitoreos',
-          icon: ClipboardList,
-          path: '/monitoreo',
-          action: () => {
-            setIsMobileSidebarOpen(false);
-            navigate('/monitoreo');
-          },
-        },
-        {
-          id: 'reportes',
-          label: 'Reportes',
-          icon: BarChart3,
-          path: '/monitoreo/reportes',
-          action: () => {
-            setIsMobileSidebarOpen(false);
-            navigate('/monitoreo/reportes');
-          },
-        },
-        {
-          id: 'seguimiento',
-          label: 'Seguimiento',
-          icon: CalendarRange,
-          path: '/monitoreo/seguimiento',
-          action: () => {
-            setIsMobileSidebarOpen(false);
-            navigate('/monitoreo/seguimiento');
-          },
-        },
-        ...(isAdmin
-          ? [
-              {
-                id: 'usuarios',
-                label: 'Equipo',
-                icon: ClipboardList,
-                path: '/monitoreo/usuarios',
-                action: () => {
-                  setIsMobileSidebarOpen(false);
-                  navigate('/monitoreo/usuarios');
-                },
-              },
-              {
-                id: 'instituciones',
-                label: 'Instituciones Educativas',
-                icon: Building2,
-                path: '/monitoreo/instituciones',
-                action: () => {
-                  setIsMobileSidebarOpen(false);
-                  navigate('/monitoreo/instituciones');
-                },
-              },
-            ]
-          : []),
-      ];
+      const roleGroups = SIDEBAR_GROUPS_BY_ROLE[userRole] || SIDEBAR_GROUPS_BY_ROLE[ROLE_SPECIALIST];
+      return roleGroups
+        .map((group) => ({
+          id: group.id,
+          label: group.label,
+          items: (group.itemIds || [])
+            .map((itemId) => buildNavItem(itemId))
+            .filter(Boolean),
+        }))
+        .filter((group) => group.items.length > 0);
     }
+
     let templateSections = SIDEBAR_SECTIONS;
     if (selectedTemplateSections?.length) {
       templateSections = [
@@ -2680,19 +3319,25 @@ export default function MonitoreoLayout() {
       ];
     }
 
-    return templateSections.map((section) => ({
-      id: section.id,
-      label: section.label,
-      icon: ClipboardList,
-      action: () => {
-        const element = document.getElementById(section.id);
-        if (element) {
-          element.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        }
-        setIsMobileSidebarOpen(false);
+    return [
+      {
+        id: 'formulario',
+        label: 'Formulario',
+        items: templateSections.map((section) => ({
+          id: section.id,
+          label: section.label,
+          icon: ClipboardList,
+          action: () => {
+            const element = document.getElementById(section.id);
+            if (element) {
+              element.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
+            setIsMobileSidebarOpen(false);
+          },
+        })),
       },
-    }));
-  }, [isFicha, isAdmin, navigate, selectedTemplateSections]);
+    ];
+  }, [isFicha, navBadges, navigate, selectedTemplateSections, userRole]);
 
   const isCompactDensity = density === DENSITY_COMPACT;
   const sidebarDesktopRailClass = isSidebarCollapsed
@@ -2705,19 +3350,19 @@ export default function MonitoreoLayout() {
 
   const sidebarProfileCardClass = isSidebarCollapsed
     ? isCompactDensity
-      ? 'min-h-[104px] px-1.5 py-2.5'
-      : 'min-h-[116px] px-2 py-3'
+      ? 'min-h-[88px] px-1.5 py-2'
+      : 'min-h-[98px] px-2 py-2.5'
     : isCompactDensity
-      ? 'min-h-[76px] px-2.5 py-2.5'
-      : 'min-h-[82px] px-3 py-2.5';
+      ? 'min-h-[70px] px-2 py-2'
+      : 'min-h-[74px] px-2.5 py-2';
 
   const sidebarDesktopButtonSizeClass = isSidebarCollapsed
     ? isCompactDensity
-      ? 'mx-auto h-10 w-10 justify-center px-0'
-      : 'mx-auto h-12 w-12 justify-center px-0'
+      ? 'mx-auto h-9 w-9 justify-center px-0'
+      : 'mx-auto h-10 w-10 justify-center px-0'
     : isCompactDensity
-      ? 'h-10 w-full justify-start px-3'
-      : 'h-11 w-full justify-start px-3.5';
+      ? 'h-9 w-full justify-start px-2.5'
+      : 'h-10 w-full justify-start px-3';
 
   const sidebarDesktopLabelClass = `truncate transition-all duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] ${
     isSidebarCollapsed
@@ -2736,23 +3381,27 @@ export default function MonitoreoLayout() {
 
   const sidebarDesktopNavClass = `mt-2 flex min-h-0 flex-1 flex-col scrollbar-thin ${
     isSidebarCollapsed
-      ? `${isCompactDensity ? 'items-center gap-2.5' : 'items-center gap-3'} overflow-y-auto overflow-x-hidden pr-0.5`
-      : `${isCompactDensity ? 'gap-1.5' : 'gap-2'} overflow-y-auto pr-1`
+      ? `${isCompactDensity ? 'items-center gap-3' : 'items-center gap-3.5'} overflow-y-auto overflow-x-hidden pr-0.5`
+      : `${isCompactDensity ? 'gap-2' : 'gap-2.5'} overflow-y-auto pr-1`
   }`;
 
-  const sidebarDesktopFooterClass = `mt-5 border-t border-slate-700/45 pt-4 ${
+  const sidebarDesktopFooterClass = `mt-4 border-t border-slate-800/65 pt-3 ${
     isSidebarCollapsed
       ? isCompactDensity
-        ? 'space-y-2.5'
-        : 'space-y-3'
+        ? 'space-y-2'
+        : 'space-y-2.5'
       : isCompactDensity
-        ? 'space-y-1.5'
-        : 'space-y-2'
+        ? 'space-y-1'
+        : 'space-y-1.5'
   }`;
 
   const contentContainerClass = isCompactDensity
-    ? 'mx-auto w-full max-w-[1320px] px-3 py-3 md:px-4 md:py-4'
-    : 'mx-auto w-full max-w-[1400px] px-4 py-4 md:px-6 md:py-5';
+    ? 'mx-auto w-full max-w-[1240px] px-3 py-3 md:px-4 md:py-4'
+    : 'mx-auto w-full max-w-[1280px] px-4 py-4 md:px-5 md:py-5 lg:px-6 lg:py-6';
+
+  const contentSurfaceClass = isCompactDensity
+    ? 'content-surface rounded-[22px] px-3.5 py-3.5 md:px-4 md:py-4'
+    : 'content-surface rounded-3xl px-4 py-4 md:px-5 md:py-5';
 
   const assistantPanelClass = isCompactDensity
     ? 'flex w-[min(90vw,408px)] max-h-[calc(100vh-5.5rem)] flex-col overflow-hidden rounded-2xl border border-slate-800/70 bg-slate-900/70 font-sans text-[13px] leading-5 text-slate-200 shadow-[0_20px_60px_-30px_rgba(0,0,0,0.75)] backdrop-blur'
@@ -2770,33 +3419,54 @@ export default function MonitoreoLayout() {
     ? 'flex-1 rounded-xl border border-slate-700/70 bg-slate-900/80 px-3 py-1.5 text-sm leading-5 text-slate-100 placeholder:text-slate-500 focus:border-cyan-400 focus:outline-none focus:ring-2 focus:ring-cyan-500/30'
     : 'flex-1 rounded-xl border border-slate-700/70 bg-slate-900/80 px-3 py-2 text-sm leading-5 text-slate-100 placeholder:text-slate-500 focus:border-cyan-400 focus:outline-none focus:ring-2 focus:ring-cyan-500/30';
 
-  const assistantQuickActionClass = isCompactDensity
-    ? 'rounded-full border border-slate-600/70 bg-slate-800/70 px-2.5 py-1 text-xs font-semibold text-slate-100 transition hover:border-cyan-400/70 hover:text-cyan-100 disabled:cursor-not-allowed disabled:opacity-60'
-    : 'rounded-full border border-slate-600/70 bg-slate-800/70 px-3 py-1.5 text-xs font-semibold text-slate-100 transition hover:border-cyan-400/70 hover:text-cyan-100 disabled:cursor-not-allowed disabled:opacity-60';
+  const getAssistantQuickActionClass = (tone = 'neutral') => {
+    const spacing = isCompactDensity ? 'px-2.5 py-1' : 'px-3 py-1.5';
+    const toneClassByType = {
+      critical:
+        'border-rose-500/45 bg-rose-500/15 text-rose-100 hover:border-rose-400/70 hover:bg-rose-500/20',
+      warning:
+        'border-amber-500/45 bg-amber-500/15 text-amber-100 hover:border-amber-400/70 hover:bg-amber-500/20',
+      info:
+        'border-cyan-500/45 bg-cyan-500/15 text-cyan-100 hover:border-cyan-400/70 hover:bg-cyan-500/20',
+      success:
+        'border-emerald-500/45 bg-emerald-500/15 text-emerald-100 hover:border-emerald-400/70 hover:bg-emerald-500/20',
+      neutral:
+        'border-slate-600/70 bg-slate-800/70 text-slate-100 hover:border-cyan-400/70 hover:text-cyan-100',
+    };
+
+    return `rounded-full border ${spacing} text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-60 ${
+      toneClassByType[tone] || toneClassByType.neutral
+    }`;
+  };
 
   const assistantToggleButtonClass = isCompactDensity
     ? 'inline-flex h-11 w-11 items-center justify-center rounded-full border border-cyan-500/40 bg-cyan-500/20 text-cyan-100 shadow-lg transition hover:border-cyan-400/70'
     : 'inline-flex h-12 w-12 items-center justify-center rounded-full border border-cyan-500/40 bg-cyan-500/20 text-cyan-100 shadow-lg transition hover:border-cyan-400/70';
 
-  const getSidebarDesktopButtonClass = ({ active = false, tone = 'neutral' } = {}) => {
+  const getSidebarDesktopButtonClass = ({ active = false, tone = 'neutral', disabled = false } = {}) => {
     const base =
-      `group relative inline-flex items-center rounded-2xl border text-sm font-medium transition-all duration-200 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/80 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950 ${sidebarDesktopButtonSizeClass}`;
+      `group relative inline-flex items-center rounded-xl text-sm font-medium transition-all duration-200 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/80 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950 ${sidebarDesktopButtonSizeClass}`;
+
+    if (disabled) {
+      return `${base} cursor-not-allowed text-slate-500/90 opacity-80`;
+    }
 
     if (tone === 'warning') {
-      return `${base} border-amber-500/30 bg-slate-900/50 text-amber-200 shadow-[inset_0_0_0_1px_rgba(245,158,11,0.08)] hover:-translate-y-[1px] hover:border-amber-400/55 hover:bg-amber-500/14 hover:text-amber-100 hover:shadow-[0_10px_22px_rgba(245,158,11,0.18)]`;
+      return `${base} text-slate-400 hover:bg-amber-500/12 hover:text-amber-100`;
     }
 
     if (active) {
-      return `${base} border-cyan-400/45 bg-gradient-to-r from-cyan-500/20 to-sky-500/12 text-slate-50 shadow-[0_8px_24px_rgba(14,165,233,0.2),inset_0_0_0_1px_rgba(186,230,253,0.2)]`;
+      return `${base} bg-cyan-500/14 text-slate-50`;
     }
 
-    return `${base} border-slate-700/70 bg-slate-900/45 text-slate-300 shadow-[inset_0_0_0_1px_rgba(15,23,42,0.5)] hover:-translate-y-[1px] hover:border-cyan-400/35 hover:bg-slate-800/78 hover:text-slate-100 hover:shadow-[0_10px_24px_rgba(14,116,144,0.16)]`;
+    return `${base} text-slate-400 hover:bg-slate-800/65 hover:text-slate-100`;
   };
 
-  const getSidebarDesktopIconClass = ({ active = false, tone = 'neutral' } = {}) => {
-    if (tone === 'warning') return 'shrink-0 text-amber-200 group-hover:text-amber-100';
-    if (active) return 'shrink-0 text-cyan-100';
-    return 'shrink-0 text-slate-300 group-hover:text-slate-100';
+  const getSidebarDesktopIconClass = ({ active = false, tone = 'neutral', disabled = false } = {}) => {
+    if (disabled) return 'shrink-0 text-slate-600';
+    if (tone === 'warning') return 'shrink-0 text-slate-400 group-hover:text-amber-100';
+    if (active) return 'shrink-0 text-cyan-200';
+    return 'shrink-0 text-slate-400 group-hover:text-slate-100';
   };
 
   return (
@@ -2837,32 +3507,70 @@ export default function MonitoreoLayout() {
                   mobileSidebarButtonRef.current?.focus?.();
                 }}
                 className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-700/70 bg-slate-900/55 text-slate-200 transition-all duration-200 ease-out hover:border-cyan-400/45 hover:bg-slate-800/80 hover:text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/80 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
-                aria-label="Cerrar menú"
+                aria-label="Cerrar menÃº"
               >
                 <X size={16} />
               </button>
             </div>
 
-            <nav className="mt-6 flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto pr-1 scrollbar-thin">
-              {sidebarItems.map((item) => {
-                const isActive = isFicha ? activeSection === item.id : location.pathname === item.path;
-                const Icon = item.icon;
-                return (
-                  <button
-                    key={`mobile-${item.id}`}
-                    type="button"
-                    onClick={item.action}
-                    className={`group flex h-11 items-center gap-3 rounded-2xl border px-3 text-sm font-medium transition-all duration-200 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/80 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950 ${
-                      isActive
-                        ? 'border-cyan-400/45 bg-gradient-to-r from-cyan-500/20 to-sky-500/12 text-slate-100 shadow-[0_8px_22px_rgba(14,165,233,0.18),inset_0_0_0_1px_rgba(186,230,253,0.18)]'
-                        : 'border-slate-700/70 bg-slate-900/45 text-slate-300 hover:-translate-y-[1px] hover:border-cyan-400/35 hover:bg-slate-800/78 hover:text-slate-100 hover:shadow-[0_10px_22px_rgba(14,116,144,0.14)]'
-                    }`}
-                  >
-                    <Icon size={17} className={isActive ? 'text-cyan-100' : 'text-slate-300 group-hover:text-slate-100'} />
-                    <span className="truncate">{item.label}</span>
-                  </button>
-                );
-              })}
+            <nav className="mt-5 flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto pr-1 scrollbar-thin">
+              {sidebarGroups.map((group) => (
+                <div key={`mobile-group-${group.id}`} className="space-y-1.5">
+                  <p className="px-3 text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-500/90">
+                    {group.label}
+                  </p>
+                  {group.items.map((item) => {
+                    const isActive = isFicha ? activeSection === item.id : location.pathname === item.path;
+                    const Icon = item.icon;
+                    return (
+                      <button
+                        key={`mobile-${item.id}`}
+                        type="button"
+                        onClick={item.action}
+                        disabled={item.disabled}
+                        className={`group relative flex h-10 items-center gap-3 rounded-xl px-3 text-sm font-medium transition-all duration-200 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/80 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950 ${
+                          item.disabled
+                            ? 'cursor-not-allowed text-slate-500/90 opacity-80'
+                            : isActive
+                              ? 'bg-cyan-500/14 text-slate-100'
+                              : 'text-slate-300 hover:bg-slate-800/65 hover:text-slate-100'
+                        }`}
+                      >
+                        <span
+                          aria-hidden="true"
+                          className={`pointer-events-none absolute left-0 top-1/2 h-5 -translate-y-1/2 rounded-r-full transition-all ${
+                            item.disabled
+                              ? 'w-0'
+                              : isActive
+                              ? 'w-[3px] bg-cyan-400'
+                              : 'w-0 group-hover:w-[2px] group-hover:bg-slate-500/75'
+                          }`}
+                        />
+                        <Icon
+                          size={16}
+                          className={
+                            item.disabled
+                              ? 'text-slate-600'
+                              : isActive
+                                ? 'text-cyan-200'
+                                : 'text-slate-400 group-hover:text-slate-100'
+                          }
+                        />
+                        <span className="truncate">{item.label}</span>
+                        {item.badgeText ? (
+                          <span className="ml-auto inline-flex min-w-[20px] items-center justify-center rounded-full border border-cyan-500/35 bg-cyan-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-cyan-100">
+                            {item.badgeText}
+                          </span>
+                        ) : item.disabledBadge ? (
+                          <span className="ml-auto inline-flex items-center justify-center rounded-full border border-slate-700/60 bg-slate-900/60 px-2 py-0.5 text-[10px] font-semibold text-slate-400">
+                            {item.disabledBadge}
+                          </span>
+                        ) : null}
+                      </button>
+                    );
+                  })}
+                </div>
+              ))}
             </nav>
 
             <div className="mt-4 flex flex-col gap-2 border-t border-slate-700/40 pt-4">
@@ -2872,7 +3580,7 @@ export default function MonitoreoLayout() {
                   setIsMobileSidebarOpen(false);
                   setIsSettingsOpen(true);
                 }}
-                className="inline-flex h-11 items-center gap-3 rounded-2xl border border-slate-700/70 bg-slate-900/45 px-3 text-sm font-medium text-slate-200 transition-all duration-200 ease-out hover:-translate-y-[1px] hover:border-cyan-400/35 hover:bg-slate-800/78 hover:text-slate-100 hover:shadow-[0_10px_22px_rgba(14,116,144,0.14)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/80 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
+                className="inline-flex h-10 items-center gap-3 rounded-xl px-3 text-sm font-medium text-slate-300 transition-all duration-200 ease-out hover:bg-slate-800/65 hover:text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/80 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
               >
                 <Settings size={14} />
                 Ajustes
@@ -2883,10 +3591,10 @@ export default function MonitoreoLayout() {
                   setIsMobileSidebarOpen(false);
                   setIsLogoutOpen(true);
                 }}
-                className="inline-flex h-11 items-center gap-3 rounded-2xl border border-amber-500/35 bg-slate-900/50 px-3 text-sm font-medium text-amber-200 transition-all duration-200 ease-out hover:-translate-y-[1px] hover:border-amber-400/60 hover:bg-amber-500/14 hover:text-amber-100 hover:shadow-[0_10px_22px_rgba(245,158,11,0.16)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300/80 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
+                className="inline-flex h-10 items-center gap-3 rounded-xl px-3 text-sm font-medium text-slate-400 transition-all duration-200 ease-out hover:bg-amber-500/12 hover:text-amber-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300/80 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
               >
                 <LogOut size={14} />
-                Cerrar sesión
+                Cerrar sesiÃ³n
               </button>
             </div>
           </aside>
@@ -2902,7 +3610,7 @@ export default function MonitoreoLayout() {
             <div className={`flex h-full ${isSidebarCollapsed ? 'flex-col items-center justify-between' : 'items-center justify-between gap-3'}`}>
               <div
                 className={`min-w-0 items-center ${isSidebarCollapsed ? 'order-2 flex w-full justify-center' : 'order-1 flex flex-1 gap-3'}`}
-                title={isSidebarCollapsed ? `${displayName || 'Usuario'} · ${roleLabel}` : undefined}
+                title={isSidebarCollapsed ? `${displayName || 'Usuario'} Â· ${roleLabel}` : undefined}
               >
                 <div className="flex h-12 w-12 items-center justify-center overflow-hidden rounded-2xl border border-slate-700/70 bg-slate-800/80 text-sm font-semibold text-slate-200 shadow-[0_8px_20px_rgba(2,6,23,0.45)]">
                   {avatarUrl ? (
@@ -2929,31 +3637,58 @@ export default function MonitoreoLayout() {
           </div>
 
           <div className="mt-1 flex min-h-0 flex-1 flex-col">
-            {!isSidebarCollapsed ? (
-              <p className="px-1 text-[10px] font-semibold uppercase tracking-[0.24em] text-slate-500/90">
-                Navegación
-              </p>
-            ) : null}
             <nav className={sidebarDesktopNavClass}>
-              {sidebarItems.map((item) => {
-                const isActive = isFicha
-                  ? activeSection === item.id
-                  : location.pathname === item.path;
-                const Icon = item.icon;
-                return (
-                  <button
-                    key={item.id}
-                    type="button"
-                    onClick={item.action}
-                    aria-label={item.label}
-                    title={isSidebarCollapsed ? item.label : undefined}
-                    className={getSidebarDesktopButtonClass({ active: isActive })}
-                  >
-                    <Icon size={18} className={getSidebarDesktopIconClass({ active: isActive })} />
-                    <span className={sidebarDesktopLabelClass}>{item.label}</span>
-                  </button>
-                );
-              })}
+              {sidebarGroups.map((group) => (
+                <div key={`desktop-group-${group.id}`} className={isSidebarCollapsed ? 'w-full space-y-2' : 'space-y-1.5'}>
+                  {!isSidebarCollapsed ? (
+                    <p className="px-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-500/90">
+                      {group.label}
+                    </p>
+                  ) : null}
+                  <div className={isSidebarCollapsed ? 'space-y-2' : 'space-y-0.5'}>
+                    {group.items.map((item) => {
+                      const isActive = isFicha
+                        ? activeSection === item.id
+                        : location.pathname === item.path;
+                      const Icon = item.icon;
+                      return (
+                        <button
+                          key={item.id}
+                          type="button"
+                          onClick={item.action}
+                          disabled={item.disabled}
+                          aria-label={item.label}
+                          title={isSidebarCollapsed ? item.label : item.disabled ? 'Solo administradores' : undefined}
+                          className={getSidebarDesktopButtonClass({ active: isActive, disabled: item.disabled })}
+                        >
+                          <span
+                            aria-hidden="true"
+                            className={`pointer-events-none absolute left-0 top-1/2 h-5 -translate-y-1/2 rounded-r-full transition-all ${
+                              item.disabled
+                                ? 'w-0'
+                                : isActive
+                                ? 'w-[3px] bg-cyan-400'
+                                : 'w-0 group-hover:w-[2px] group-hover:bg-slate-500/75'
+                            }`}
+                          />
+                          <Icon size={16} className={getSidebarDesktopIconClass({ active: isActive, disabled: item.disabled })} />
+                          <span className={sidebarDesktopLabelClass}>{item.label}</span>
+                          {!isSidebarCollapsed && item.badgeText ? (
+                            <span className="ml-auto inline-flex min-w-[20px] items-center justify-center rounded-full border border-cyan-500/35 bg-cyan-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-cyan-100">
+                              {item.badgeText}
+                            </span>
+                          ) : null}
+                          {!isSidebarCollapsed && !item.badgeText && item.disabledBadge ? (
+                            <span className="ml-auto inline-flex items-center justify-center rounded-full border border-slate-700/60 bg-slate-900/60 px-2 py-0.5 text-[10px] font-semibold text-slate-400">
+                              {item.disabledBadge}
+                            </span>
+                          ) : null}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
             </nav>
           </div>
 
@@ -2965,27 +3700,20 @@ export default function MonitoreoLayout() {
               title={isSidebarCollapsed ? 'Ajustes' : undefined}
               className={getSidebarDesktopButtonClass()}
             >
-              <Settings size={18} className={getSidebarDesktopIconClass()} />
+              <Settings size={16} className={getSidebarDesktopIconClass()} />
               <span className={sidebarDesktopLabelClass}>Ajustes</span>
             </button>
             <button
               type="button"
               onClick={() => setIsLogoutOpen(true)}
-              aria-label="Cerrar sesión"
-              title={isSidebarCollapsed ? 'Cerrar sesión' : undefined}
+              aria-label="Cerrar sesiÃ³n"
+              title={isSidebarCollapsed ? 'Cerrar sesiÃ³n' : undefined}
               className={getSidebarDesktopButtonClass({ tone: 'warning' })}
             >
-              <LogOut size={18} className={getSidebarDesktopIconClass({ tone: 'warning' })} />
-              <span className={sidebarDesktopLabelClass}>Cerrar sesión</span>
+              <LogOut size={16} className={getSidebarDesktopIconClass({ tone: 'warning' })} />
+              <span className={sidebarDesktopLabelClass}>Cerrar sesiÃ³n</span>
             </button>
           </div>
-
-          {!isSidebarCollapsed ? (
-            <div className="mt-3 rounded-2xl border border-slate-700/45 bg-slate-900/45 p-4 text-xs text-slate-400 shadow-[inset_0_0_0_1px_rgba(15,23,42,0.35)]">
-              <p className="text-[10px] font-semibold uppercase tracking-[0.3em] text-slate-500">Sistema</p>
-              <p className="mt-2 leading-5">Tus avances se guardan automáticamente.</p>
-            </div>
-          ) : null}
         </aside>
         <div className="login-glow flex flex-1 flex-col overflow-hidden">
           <div className="lg:hidden">
@@ -2995,8 +3723,8 @@ export default function MonitoreoLayout() {
                 type="button"
                 onClick={() => setIsMobileSidebarOpen(true)}
                 className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-slate-800/70 text-slate-200 transition hover:border-slate-600/70"
-                aria-label="Abrir menú"
-                title="Menú"
+                aria-label="Abrir menÃº"
+                title="MenÃº"
               >
                 <PanelLeftOpen size={16} />
               </button>
@@ -3015,7 +3743,9 @@ export default function MonitoreoLayout() {
           <main className="flex-1 overflow-y-auto overscroll-contain scrollbar-thin">
             <ErrorBoundary>
               <div className={contentContainerClass}>
-                <Outlet />
+                <div className={contentSurfaceClass}>
+                  <Outlet />
+                </div>
               </div>
             </ErrorBoundary>
           </main>
@@ -3063,7 +3793,7 @@ export default function MonitoreoLayout() {
                   </p>
                   <div className="mt-2 space-y-1.5 text-sm leading-6 text-slate-100">
                     <p>
-                      <span className="text-slate-400">Título:</span>{' '}
+                      <span className="text-slate-400">TÃ­tulo:</span>{' '}
                       {assistantWizard.draft.title || 'No registrado'}
                     </p>
                     <p>
@@ -3143,7 +3873,7 @@ export default function MonitoreoLayout() {
                                     onClick={() => handleAssistantViewDetail(item)}
                                     className="rounded-lg border border-slate-600/70 bg-slate-800/60 px-3 py-1.5 text-xs font-semibold text-slate-100 transition hover:border-slate-500"
                                   >
-                                    Ver detalle
+                                    Abrir monitoreo
                                   </button>
                                   <button
                                     type="button"
@@ -3172,7 +3902,7 @@ export default function MonitoreoLayout() {
                               onClick={() => handleAssistantCardToggle(message.id)}
                               className="mt-1.5 text-xs font-semibold text-cyan-200 underline decoration-cyan-400/70 underline-offset-4"
                             >
-                              {isExpanded ? 'Ver menos' : `Ver más (${hiddenCount})`}
+                              {isExpanded ? 'Ver menos' : `Ver mÃ¡s (${hiddenCount})`}
                             </button>
                           ) : null}
                         </div>
@@ -3236,7 +3966,7 @@ export default function MonitoreoLayout() {
                   onKeyDown={(event) => {
                     if (event.key === 'Enter') handleAssistantSend();
                   }}
-                  placeholder="Escribe tu pregunta..."
+                  placeholder="Pregúntame sobre monitoreos, reportes o actividades..."
                   className={assistantInputClass}
                   disabled={isAssistantLoading || assistantWizard.saving}
                 />
@@ -3252,12 +3982,12 @@ export default function MonitoreoLayout() {
               </div>
               {assistantQuickSuggestions ? (
                 <div className="mt-3 flex flex-wrap gap-2">
-                  {ASSISTANT_QUICK_ACTIONS.map((action) => (
+                  {assistantQuickActionItems.map((action) => (
                     <button
                       key={action.id}
                       type="button"
                       onClick={() => handleAssistantQuickAction(action)}
-                      className={assistantQuickActionClass}
+                      className={getAssistantQuickActionClass(action.tone)}
                       disabled={
                         isAssistantLoading ||
                         assistantWizard.saving ||
@@ -3278,7 +4008,7 @@ export default function MonitoreoLayout() {
                       className="rounded-lg border border-slate-600/70 bg-slate-800/70 px-3 py-1.5 text-xs font-semibold text-slate-100 transition hover:border-cyan-400/70"
                       disabled={isAssistantLoading || assistantWizard.saving}
                     >
-                      Atrás
+                      AtrÃ¡s
                     </button>
                     <button
                       type="button"
@@ -3326,11 +4056,11 @@ export default function MonitoreoLayout() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => handleAssistantWizardControl('Añadir detalles')}
+                    onClick={() => handleAssistantWizardControl('AÃ±adir detalles')}
                     className="rounded-lg border border-slate-600/70 bg-slate-800/70 px-3 py-1.5 text-xs font-semibold text-slate-100 transition hover:border-cyan-400/70"
                     disabled={isAssistantLoading || assistantWizard.saving}
                   >
-                    Añadir detalles
+                    AÃ±adir detalles
                   </button>
                 </div>
               ) : null}
@@ -3340,7 +4070,7 @@ export default function MonitoreoLayout() {
                   onClick={handleAssistantClearConversation}
                   className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-1.5 text-xs font-semibold text-rose-200 transition hover:border-rose-400/60 hover:text-rose-100"
                 >
-                  Borrar conversación
+                  Eliminar conversaciÃ³n
                 </button>
                 <button
                   type="button"
@@ -3348,13 +4078,13 @@ export default function MonitoreoLayout() {
                   className="rounded-lg border border-slate-600/70 bg-slate-800/70 px-3 py-1.5 text-xs font-semibold text-slate-100 transition hover:border-cyan-400/70 hover:text-cyan-100"
                 >
                   {assistantMode === ASSISTANT_MODE_PERSISTENT
-                    ? 'Modo: Persistente'
-                    : 'Modo: Temporal (sesión)'}
+                    ? 'SesiÃ³n persistente'
+                    : 'SesiÃ³n temporal'}
                 </button>
               </div>
-              <p className="mt-2 text-xs leading-5 text-slate-500/90">
-                Se conservan hasta {ASSISTANT_HISTORY_MAX_MESSAGES} mensajes y se eliminan automáticamente tras {ASSISTANT_RETENTION_DAYS} días.
-              </p>
+              {assistantMode === ASSISTANT_MODE_TEMPORARY ? (
+                <p className="mt-2 text-xs leading-5 text-slate-500/90">Sesión temporal</p>
+              ) : null}
             </div>
           </div>
         ) : null}
@@ -3452,7 +4182,7 @@ export default function MonitoreoLayout() {
                 <div className="mt-3 flex flex-wrap gap-2">
                   {[
                     { id: DENSITY_COMPACT, label: 'Compacta' },
-                    { id: DENSITY_COMFORT, label: 'Cómoda' },
+                    { id: DENSITY_COMFORT, label: 'CÃ³moda' },
                   ].map((option) => (
                     <button
                       key={option.id}
@@ -3469,7 +4199,7 @@ export default function MonitoreoLayout() {
                   ))}
                 </div>
                 <p className="mt-2 text-xs text-slate-500">
-                  En escritorio se usa Compacta por defecto para mejorar lectura rápida.
+                  En escritorio se usa Compacta por defecto para mejorar lectura rÃ¡pida.
                 </p>
               </div>
 
@@ -3507,10 +4237,10 @@ export default function MonitoreoLayout() {
       <ConfirmModal
         open={isLogoutOpen}
         tone="warning"
-        title="Cerrar sesión"
-        description="¿Seguro que deseas cerrar sesión?"
-        details="Tendrás que iniciar sesión nuevamente para continuar."
-        confirmText={isLoggingOut ? 'Cerrando sesión...' : 'Sí, cerrar sesión'}
+        title="Cerrar sesiÃ³n"
+        description="Â¿Seguro que deseas cerrar sesiÃ³n?"
+        details="TendrÃ¡s que iniciar sesiÃ³n nuevamente para continuar."
+        confirmText={isLoggingOut ? 'Cerrando sesiÃ³n...' : 'SÃ­, cerrar sesiÃ³n'}
         cancelText="Cancelar"
         onCancel={() => setIsLogoutOpen(false)}
         onConfirm={handleLogout}
@@ -3519,3 +4249,6 @@ export default function MonitoreoLayout() {
     </SidebarContext.Provider>
   );
 }
+
+
+

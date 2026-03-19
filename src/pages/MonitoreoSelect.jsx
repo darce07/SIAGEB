@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Copy, Loader2, MoveRight, Plus, Share2, Trash2 } from 'lucide-react';
+import { Loader2, Plus } from 'lucide-react';
 import Card from '../components/ui/Card.jsx';
 import ConfirmModal from '../components/ui/ConfirmModal.jsx';
+import MonitoreoCard from '../components/monitoreos/MonitoreoCard.jsx';
 import { supabase } from '../lib/supabase.js';
 
 const AUTH_KEY = 'monitoreoAuth';
@@ -26,6 +27,44 @@ const statusLabel = (status) => {
   return 'Programado';
 };
 
+const resolveTemplateDisplayStatus = (template) => {
+  if (template.status !== 'published') {
+    const status = getTemplateStatus(template);
+    return {
+      status,
+      statusType: 'draft',
+      statusText: status === 'active' ? 'Borrador activo' : 'Borrador',
+      sortRank: 1,
+    };
+  }
+
+  const status = getTemplateStatus(template);
+  if (status === 'active') {
+    return { status, statusType: 'active', statusText: statusLabel(status), sortRank: 0 };
+  }
+  if (status === 'closed') {
+    return { status, statusType: 'closed', statusText: statusLabel(status), sortRank: 3 };
+  }
+  return { status, statusType: 'scheduled', statusText: statusLabel(status), sortRank: 2 };
+};
+
+const compareTemplatesForDisplay = (left, right) => {
+  const leftMeta = resolveTemplateDisplayStatus(left);
+  const rightMeta = resolveTemplateDisplayStatus(right);
+
+  if (leftMeta.sortRank !== rightMeta.sortRank) {
+    return leftMeta.sortRank - rightMeta.sortRank;
+  }
+
+  const leftUpdated = new Date(left.updated_at || left.updatedAt || 0).getTime();
+  const rightUpdated = new Date(right.updated_at || right.updatedAt || 0).getTime();
+  if (leftUpdated !== rightUpdated) return rightUpdated - leftUpdated;
+
+  return String(left.title || '').localeCompare(String(right.title || ''), 'es', {
+    sensitivity: 'base',
+  });
+};
+
 const selectTemplate = (templateId) => {
   if (templateId) {
     localStorage.setItem('monitoreoTemplateSelected', templateId);
@@ -43,11 +82,10 @@ const mapEventStatusToAvailabilityStatus = (status) => {
   return 'active';
 };
 
-const truncateLabel = (value, maxChars = 70) => {
-  const text = String(value || '').trim();
-  if (!text) return '';
-  if (text.length <= maxChars) return text;
-  return `${text.slice(0, Math.max(1, maxChars - 1)).trimEnd()}...`;
+const formatDateLabel = (value) => {
+  const parsed = value ? new Date(value) : null;
+  if (!parsed || Number.isNaN(parsed.getTime())) return '';
+  return parsed.toLocaleDateString('es-PE');
 };
 
 export default function MonitoreoSelect() {
@@ -55,7 +93,6 @@ export default function MonitoreoSelect() {
   const [templates, setTemplates] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [showDrafts, setShowDrafts] = useState(false);
-  const [expandedDescriptions, setExpandedDescriptions] = useState({});
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [noticeModal, setNoticeModal] = useState({
@@ -167,8 +204,8 @@ export default function MonitoreoSelect() {
 
   const visibleTemplates = useMemo(() => {
     const published = templates.filter((item) => item.status === 'published');
-    if (!isAdmin) return published;
-    return showDrafts ? templates : published;
+    const source = !isAdmin ? published : showDrafts ? templates : published;
+    return source.slice().sort(compareTemplatesForDisplay);
   }, [isAdmin, showDrafts, templates]);
 
   const createInstanceForTemplate = async (template) => {
@@ -237,6 +274,12 @@ export default function MonitoreoSelect() {
     }
     localStorage.setItem('monitoreoInstanceActive', data.id);
     return true;
+  };
+
+  const handleUseTemplate = async (template) => {
+    selectTemplate(template.id);
+    const created = await createInstanceForTemplate(template);
+    if (created) navigate('/monitoreo/ficha-escritura');
   };
 
   const handleDuplicate = async (template) => {
@@ -338,23 +381,16 @@ export default function MonitoreoSelect() {
   };
 
   return (
-    <div className="flex flex-col gap-8">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div className="flex flex-col gap-3">
-          <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Monitoreos</p>
-          <h1 title="Monitoreos" className="max-w-[70ch] truncate text-3xl font-semibold text-slate-100">
-            Monitoreos
-          </h1>
-          <p
-            title="Gestiona plantillas y monitoreos"
-            className="max-w-[70ch] truncate text-sm text-slate-400/90"
-          >
-            Gestiona plantillas y monitoreos
-          </p>
-        </div>
+    <div className="flex flex-col gap-7">
+        <div className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-800/70 pb-4">
+          <div className="flex flex-col gap-1.5">
+            <h1 title="Monitoreos" className="max-w-[70ch] truncate text-3xl font-semibold text-slate-100">
+              Monitoreos
+            </h1>
+          </div>
         {isAdmin ? (
           <div className="flex flex-wrap items-center gap-3">
-            <label className="inline-flex items-center gap-2 rounded-full border border-slate-700/60 px-3 py-2 text-xs text-slate-300">
+            <label className="inline-flex h-9 items-center gap-2 rounded-xl border border-slate-700/60 bg-slate-900/45 px-3 text-xs text-slate-300">
               <input
                 type="checkbox"
                 checked={showDrafts}
@@ -365,7 +401,7 @@ export default function MonitoreoSelect() {
             </label>
             <Link
               to="/monitoreo/plantillas/nueva"
-              className="inline-flex items-center gap-2 rounded-full border border-emerald-500/40 bg-emerald-500/20 px-4 py-2 text-xs font-semibold text-emerald-100 transition hover:border-emerald-400/70"
+              className="ds-btn ds-btn-primary h-9 px-4"
             >
               <Plus size={14} />
               Crear nuevo monitoreo
@@ -395,152 +431,64 @@ export default function MonitoreoSelect() {
           </p>
         </Card>
       ) : (
-        <div className="grid gap-6">
+        <div className="grid grid-cols-1 gap-5 [@media(min-width:1100px)]:grid-cols-2">
           {visibleTemplates.map((template) => {
-            const status = getTemplateStatus(template);
+            const { status, statusType, statusText } = resolveTemplateDisplayStatus(template);
             const isActive = status === 'active';
             const templateTitle = String(template.title || 'Monitoreo').trim();
-            const titleDisplay = truncateLabel(templateTitle, 70);
             const templateDescription = String(template.description || '').trim();
-            const isDescriptionExpanded = Boolean(expandedDescriptions[template.id]);
-            const shouldShowDescriptionToggle = templateDescription.length > 150;
+            const deadlineLabel = formatDateLabel(template?.availability?.endAt);
+            const updatedLabel = formatDateLabel(template.updated_at || template.updatedAt || Date.now());
+            const note = status === 'closed'
+              ? 'Sin edicion ni nuevos formularios.'
+              : '';
+
+            const primaryActionLabel = isActive
+              ? 'Usar plantilla'
+              : status === 'closed'
+                ? 'Ver resultados'
+                : 'Programado';
+            const primaryActionVariant = isActive
+              ? 'primary'
+              : status === 'closed'
+                ? 'neutral'
+                : 'muted';
+            const primaryActionDisabled = !isActive && status !== 'closed';
+            const onPrimaryAction = isActive
+              ? () => handleUseTemplate(template)
+              : status === 'closed'
+                ? () => navigate('/monitoreo/reportes')
+                : undefined;
+
+            const onEdit = isAdmin ? () => navigate(`/monitoreo/plantillas/${template.id}`) : undefined;
+            const onDuplicate = isAdmin ? () => handleDuplicate(template) : undefined;
+            const onShare = isAdmin ? () => handleTogglePublish(template) : undefined;
+            const onDelete = isAdmin ? () => setDeleteTarget(template) : undefined;
+
             return (
-            <Card key={template.id} className="flex flex-wrap items-start justify-between gap-6">
-              <div className="min-w-[220px] flex-1 space-y-2">
-                <div className="flex flex-wrap items-center gap-2">
-                  <p title={templateTitle} className="max-w-[70ch] truncate text-sm font-semibold text-slate-100">
-                    {titleDisplay}
-                  </p>
-                  <span
-                    className={`rounded-full border px-3 py-1 text-xs font-semibold ${
-                      template.status !== 'published'
-                        ? 'border-slate-700/60 bg-slate-900/60 text-slate-400'
-                        : isActive
-                        ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200'
-                        : status === 'closed'
-                        ? 'border-amber-500/40 bg-amber-500/10 text-amber-200'
-                        : 'border-slate-700/60 bg-slate-900/60 text-slate-400'
-                    }`}
-                  >
-                    {template.status !== 'published'
-                      ? status === 'active'
-                        ? 'Borrador activo'
-                        : 'Borrador'
-                      : statusLabel(status)}
-                  </span>
-                </div>
-                {templateDescription ? (
-                  <div className="space-y-1">
-                    <p
-                      title={templateDescription}
-                      className={`text-sm text-slate-400 ${isDescriptionExpanded ? '' : 'overflow-hidden'}`}
-                      style={
-                        isDescriptionExpanded
-                          ? undefined
-                          : {
-                              display: '-webkit-box',
-                              WebkitLineClamp: 2,
-                              WebkitBoxOrient: 'vertical',
-                            }
-                      }
-                    >
-                      {templateDescription}
-                    </p>
-                    {shouldShowDescriptionToggle ? (
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setExpandedDescriptions((prev) => ({
-                            ...prev,
-                            [template.id]: !prev[template.id],
-                          }))
-                        }
-                        className="text-xs font-semibold text-cyan-200 underline decoration-cyan-400/70 underline-offset-4"
-                      >
-                        {isDescriptionExpanded ? 'Ver menos' : 'Ver mas'}
-                      </button>
-                    ) : null}
-                  </div>
-                ) : null}
-                {status === 'closed' ? (
-                  <p title="Monitoreo cerrado: no se pueden agregar ni editar formularios." className="truncate text-xs text-amber-200">
-                    Monitoreo cerrado: sin edicion ni nuevos formularios.
-                  </p>
-                ) : null}
-                <div className="flex flex-wrap gap-4 text-xs text-slate-500">
-                  <span>{template.sections?.length || 0} secciones</span>
-                  <span>{countQuestions(template.sections)} preguntas</span>
-                  <span>Actualizado: {new Date(template.updated_at || template.updatedAt || Date.now()).toLocaleDateString()}</span>
-                </div>
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                {isAdmin ? (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => navigate(`/monitoreo/plantillas/${template.id}`)}
-                      className="inline-flex items-center gap-2 rounded-full border border-slate-700/60 px-4 py-2 text-xs font-semibold text-slate-300 transition hover:border-slate-500"
-                    >
-                      Editar
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleDuplicate(template)}
-                      className="inline-flex items-center gap-2 rounded-full border border-slate-700/60 px-4 py-2 text-xs font-semibold text-slate-300 transition hover:border-slate-500"
-                    >
-                      <Copy size={14} />
-                      Duplicar
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleTogglePublish(template)}
-                      className="inline-flex items-center gap-2 rounded-full border border-slate-700/60 px-4 py-2 text-xs font-semibold text-slate-300 transition hover:border-slate-500"
-                    >
-                      <Share2 size={14} />
-                      {template.status === 'published' ? 'Despublicar' : 'Publicar'}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setDeleteTarget(template)}
-                      className="inline-flex items-center gap-2 rounded-full border border-rose-500/40 px-4 py-2 text-xs font-semibold text-rose-200 transition hover:border-rose-400/70"
-                    >
-                      <Trash2 size={14} />
-                      Eliminar
-                    </button>
-                  </>
-                ) : null}
-                {isActive ? (
-                  <Link
-                    to="/monitoreo/ficha-escritura"
-                    onClick={async (event) => {
-                      selectTemplate(template.id);
-                      const created = await createInstanceForTemplate(template);
-                      if (!created) {
-                        event.preventDefault();
-                      }
-                    }}
-                    className="inline-flex items-center gap-2 rounded-full border border-sky-500/30 bg-sky-500/10 px-4 py-2 text-xs font-semibold text-sky-200 transition hover:border-sky-400/60 hover:bg-sky-500/20"
-                  >
-                    Usar plantilla
-                    <MoveRight size={14} />
-                  </Link>
-                ) : status === 'closed' ? (
-                  <button
-                    type="button"
-                    onClick={() => navigate('/monitoreo/reportes')}
-                    className="inline-flex items-center gap-2 rounded-full border border-slate-700/60 px-4 py-2 text-xs font-semibold text-slate-300 transition hover:border-slate-500"
-                  >
-                    Ver resultados
-                    <MoveRight size={14} />
-                  </button>
-                ) : (
-                  <span className="inline-flex items-center gap-2 rounded-full border border-slate-700/60 px-4 py-2 text-xs font-semibold text-slate-400">
-                    Programado
-                  </span>
-                )}
-              </div>
-            </Card>
-          )})}
+              <MonitoreoCard
+                key={template.id}
+                title={templateTitle}
+                description={templateDescription}
+                status={statusType}
+                statusLabel={statusText}
+                sections={template.sections?.length || 0}
+                questions={countQuestions(template.sections)}
+                updatedAtLabel={updatedLabel}
+                deadlineLabel={deadlineLabel}
+                note={note}
+                primaryActionLabel={primaryActionLabel}
+                primaryActionVariant={primaryActionVariant}
+                primaryActionDisabled={primaryActionDisabled}
+                onPrimaryAction={onPrimaryAction}
+                onEdit={onEdit}
+                onDuplicate={onDuplicate}
+                onShare={onShare}
+                shareLabel={template.status === 'published' ? 'Despublicar' : 'Publicar'}
+                onDelete={onDelete}
+              />
+            );
+          })}
         </div>
       )}
 

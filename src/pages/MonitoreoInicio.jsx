@@ -3,21 +3,23 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import {
   AlertTriangle,
   CalendarDays,
-  CheckCircle2,
   ClipboardList,
   Clock3,
   FileClock,
   MoveRight,
+  Settings,
+  Users,
+  BarChart3,
 } from 'lucide-react';
 import Card from '../components/ui/Card.jsx';
 import SectionHeader from '../components/ui/SectionHeader.jsx';
 import { supabase } from '../lib/supabase.js';
+import { HOME_QUICK_ACTIONS_BY_ROLE, HOME_WIDGETS_BY_ROLE } from '../config/roleUiConfig.js';
+import { ROLE_ADMIN, ROLE_SPECIALIST, resolveUserRole } from '../lib/roles.js';
 
 const AUTH_KEY = 'monitoreoAuth';
 const ALERT_WINDOW_DAYS = 7;
-const AGENDA_ITEMS_LIMIT = 6;
-const ACTIVITY_ITEMS_LIMIT = 6;
-const STALE_REPORT_DAYS = 10;
+const AGENDA_ITEMS_LIMIT = 3;
 
 const toSafeDate = (value) => {
   const parsed = value ? new Date(value) : null;
@@ -43,18 +45,6 @@ const formatDateShort = (value) => {
     day: '2-digit',
     month: '2-digit',
     year: 'numeric',
-  }).format(date);
-};
-
-const formatDateTimeShort = (value) => {
-  const date = toSafeDate(value);
-  if (!date) return 'No registrado';
-  return new Intl.DateTimeFormat('es-PE', {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
   }).format(date);
 };
 
@@ -97,6 +87,15 @@ const normalizeTemplateEventStatus = (template) => {
 
 const pluralize = (count, singular, plural) => (count === 1 ? singular : plural);
 
+const isSameDay = (left, right) => {
+  if (!left || !right) return false;
+  return (
+    left.getFullYear() === right.getFullYear() &&
+    left.getMonth() === right.getMonth() &&
+    left.getDate() === right.getDate()
+  );
+};
+
 const toneClassByAlert = {
   critical: 'border-rose-500/40 bg-rose-500/10 text-rose-100',
   warning: 'border-amber-500/40 bg-amber-500/10 text-amber-100',
@@ -107,6 +106,15 @@ const iconByAlert = {
   critical: AlertTriangle,
   warning: Clock3,
   info: ClipboardList,
+};
+
+const quickActionIconByKey = {
+  clipboard: ClipboardList,
+  calendar: CalendarDays,
+  fileClock: FileClock,
+  chart: BarChart3,
+  users: Users,
+  settings: Settings,
 };
 
 export default function MonitoreoInicio() {
@@ -120,7 +128,8 @@ export default function MonitoreoInicio() {
     }
   }, []);
 
-  const isAdmin = auth?.role === 'admin';
+  const userRole = resolveUserRole(auth?.role);
+  const isAdmin = userRole === ROLE_ADMIN;
   const userId = auth?.email || auth?.docNumber || '';
 
   const [templates, setTemplates] = useState([]);
@@ -201,116 +210,163 @@ export default function MonitoreoInicio() {
     [publishedTemplates],
   );
 
-  const expiringSoonTemplates = useMemo(() => {
-    const today = new Date();
-    const limit = addDays(today, ALERT_WINDOW_DAYS);
-    return publishedTemplates
-      .filter((template) => {
-        if (getTemplateStatus(template) !== 'active') return false;
+  const draftTemplatesCount = useMemo(
+    () => templates.filter((template) => template.status !== 'published').length,
+    [templates],
+  );
+
+  const todayStart = useMemo(() => {
+    const now = new Date();
+    return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  }, []);
+
+  const overdueTemplatesCount = useMemo(
+    () =>
+      publishedTemplates.filter((template) => {
         const endAt = toSafeDate(template?.availability?.endAt);
-        return endAt && endAt >= today && endAt <= limit;
-      })
-      .sort((left, right) => {
-        const leftEnd = toSafeDate(left?.availability?.endAt)?.getTime() || 0;
-        const rightEnd = toSafeDate(right?.availability?.endAt)?.getTime() || 0;
-        return leftEnd - rightEnd;
-      });
-  }, [publishedTemplates]);
+        if (!endAt) return false;
+        if (getTemplateStatus(template) === 'hidden') return false;
+        return endAt < todayStart;
+      }).length,
+    [publishedTemplates, todayStart],
+  );
 
-  const draftTemplatesCount = useMemo(() => {
+  const dueTodayTemplatesCount = useMemo(
+    () =>
+      publishedTemplates.filter((template) => {
+        const endAt = toSafeDate(template?.availability?.endAt);
+        if (!endAt) return false;
+        if (getTemplateStatus(template) === 'hidden') return false;
+        return isSameDay(endAt, todayStart);
+      }).length,
+    [publishedTemplates, todayStart],
+  );
+
+  const dueSoonTemplatesCount = useMemo(() => {
+    const soonLimit = addDays(todayStart, 2);
+    return publishedTemplates.filter((template) => {
+      const endAt = toSafeDate(template?.availability?.endAt);
+      if (!endAt) return false;
+      if (getTemplateStatus(template) === 'hidden') return false;
+      if (isSameDay(endAt, todayStart)) return false;
+      return endAt > todayStart && endAt <= soonLimit;
+    }).length;
+  }, [publishedTemplates, todayStart]);
+
+  const eventsWithoutResponsibleCount = useMemo(() => {
     if (!isAdmin) return 0;
-    return templates.filter((template) => template.status !== 'published').length;
-  }, [isAdmin, templates]);
-
-  const eventsWithoutResponsible = useMemo(() => {
-    if (!isAdmin) return [];
     return events.filter(
       (event) =>
         event.event_type === 'monitoring' &&
         event.status !== 'closed' &&
         (event.monitoring_event_responsibles?.length || 0) === 0,
-    );
+    ).length;
   }, [events, isAdmin]);
 
-  const staleInProgressReports = useMemo(() => {
-    const today = new Date();
-    return instances.filter((instance) => {
-      if (instance.status !== 'in_progress') return false;
-      const updatedAt = toSafeDate(instance.updated_at || instance.created_at);
-      if (!updatedAt) return false;
-      const staleLimit = addDays(updatedAt, STALE_REPORT_DAYS);
-      return staleLimit < today;
-    });
-  }, [instances]);
+  const pendingReportsCount = useMemo(
+    () => instances.filter((instance) => instance.status !== 'completed').length,
+    [instances],
+  );
 
-  const alerts = useMemo(() => {
+  const priorityActions = useMemo(() => {
     const items = [];
 
-    if (expiringSoonTemplates.length) {
-      const soonest = expiringSoonTemplates[0];
+    if (overdueTemplatesCount > 0) {
       items.push({
-        id: 'expiring',
+        id: 'overdue-templates',
+        priority: 1,
+        tone: 'critical',
+        title: `${overdueTemplatesCount} ${pluralize(overdueTemplatesCount, 'monitoreo vencido', 'monitoreos vencidos')}`,
+        description: 'Requiere revision inmediata.',
+        actionLabel: 'Revisar',
+        actionPath: '/monitoreo/reportes',
+      });
+    }
+
+    if (dueTodayTemplatesCount > 0) {
+      items.push({
+        id: 'due-today-templates',
+        priority: 2,
         tone: 'warning',
-        title: `${expiringSoonTemplates.length} ${pluralize(
-          expiringSoonTemplates.length,
-          'monitoreo vence',
-          'monitoreos vencen',
-        )} en ${ALERT_WINDOW_DAYS} días`,
-        description: `Próximo: ${truncateLabel(soonest.title, 56)} (${formatDateShort(
-          soonest?.availability?.endAt,
-        )}).`,
-        actionLabel: 'Ver reportes',
+        title: `${dueTodayTemplatesCount} ${pluralize(
+          dueTodayTemplatesCount,
+          'monitoreo vence hoy',
+          'monitoreos vencen hoy',
+        )}`,
+        description: 'Prioriza la ejecucion antes del cierre.',
+        actionLabel: 'Atender',
+        actionPath: '/monitoreo/reportes',
+      });
+    }
+
+    if (pendingReportsCount > 0) {
+      items.push({
+        id: 'pending-reports',
+        priority: 3,
+        tone: 'info',
+        title: `${pendingReportsCount} ${pluralize(pendingReportsCount, 'reporte pendiente', 'reportes pendientes')}`,
+        description: 'Continua formularios en progreso.',
+        actionLabel: 'Continuar',
         actionPath: '/monitoreo/reportes',
       });
     }
 
     if (draftTemplatesCount > 0) {
       items.push({
-        id: 'drafts',
+        id: 'draft-templates',
+        priority: 4,
         tone: 'info',
-        title: `${draftTemplatesCount} ${pluralize(draftTemplatesCount, 'borrador pendiente', 'borradores pendientes')}`,
-        description: 'Revisa y publica los borradores para que sean visibles.',
-        actionLabel: 'Ir a monitoreos',
+        title: `${draftTemplatesCount} ${pluralize(
+          draftTemplatesCount,
+          'borrador requiere completarse',
+          'borradores requieren completarse',
+        )}`,
+        description: 'Publica o completa los borradores.',
+        actionLabel: 'Completar',
         actionPath: '/monitoreo',
       });
     }
 
-    if (eventsWithoutResponsible.length > 0) {
+    if (dueSoonTemplatesCount > 0) {
       items.push({
-        id: 'responsibles',
-        tone: 'critical',
-        title: `${eventsWithoutResponsible.length} ${pluralize(
-          eventsWithoutResponsible.length,
-          'evento sin responsable',
-          'eventos sin responsable',
-        )}`,
-        description: 'Asigna especialistas para evitar seguimientos incompletos.',
-        actionLabel: 'Ir a seguimiento',
-        actionPath: '/monitoreo/seguimiento',
-      });
-    }
-
-    if (staleInProgressReports.length > 0) {
-      items.push({
-        id: 'stale-reports',
+        id: 'due-soon-templates',
+        priority: 5,
         tone: 'warning',
-        title: `${staleInProgressReports.length} ${pluralize(
-          staleInProgressReports.length,
-          'reporte lleva tiempo sin actualizarse',
-          'reportes llevan tiempo sin actualizarse',
+        title: `${dueSoonTemplatesCount} ${pluralize(
+          dueSoonTemplatesCount,
+          'monitoreo vence pronto',
+          'monitoreos vencen pronto',
         )}`,
-        description: `Sin actualización en los últimos ${STALE_REPORT_DAYS} días.`,
-        actionLabel: 'Revisar reportes',
+        description: 'Revisa vencimientos de los proximos 2 dias.',
+        actionLabel: 'Priorizar',
         actionPath: '/monitoreo/reportes',
       });
     }
 
-    return items;
+    if (eventsWithoutResponsibleCount > 0) {
+      items.push({
+        id: 'events-without-responsible',
+        priority: 6,
+        tone: 'critical',
+        title: `${eventsWithoutResponsibleCount} ${pluralize(
+          eventsWithoutResponsibleCount,
+          'evento sin responsable',
+          'eventos sin responsable',
+        )}`,
+        description: 'Asigna responsables para no frenar seguimiento.',
+        actionLabel: 'Asignar',
+        actionPath: '/monitoreo/seguimiento',
+      });
+    }
+
+    return items.sort((a, b) => a.priority - b.priority).slice(0, 3);
   }, [
     draftTemplatesCount,
-    eventsWithoutResponsible.length,
-    expiringSoonTemplates,
-    staleInProgressReports.length,
+    dueSoonTemplatesCount,
+    dueTodayTemplatesCount,
+    eventsWithoutResponsibleCount,
+    overdueTemplatesCount,
+    pendingReportsCount,
   ]);
 
   const agendaEvents = useMemo(() => {
@@ -356,152 +412,141 @@ export default function MonitoreoInicio() {
       .slice(0, AGENDA_ITEMS_LIMIT);
   }, [agendaEvents, isAdmin]);
 
-  const nextSteps = useMemo(() => {
-    const steps = [];
+  const adminAlerts = useMemo(() => {
+    const items = [];
 
-    if (isAdmin) {
-      if (draftTemplatesCount > 0) {
-        steps.push({
-          id: 'step-drafts',
-          title: `Publicar ${draftTemplatesCount} ${pluralize(draftTemplatesCount, 'borrador', 'borradores')}`,
-          detail: 'Valida título, fecha y estado antes de publicar.',
-          path: '/monitoreo',
-          cta: 'Revisar',
-        });
-      }
-      if (eventsWithoutResponsible.length > 0) {
-        steps.push({
-          id: 'step-responsibles',
-          title: 'Asignar responsables pendientes',
-          detail: `${eventsWithoutResponsible.length} ${pluralize(
-            eventsWithoutResponsible.length,
-            'evento requiere responsable',
-            'eventos requieren responsable',
-          )}.`,
-          path: '/monitoreo/seguimiento',
-          cta: 'Asignar',
-        });
-      }
-      if (expiringSoonTemplates.length > 0) {
-        steps.push({
-          id: 'step-expiring',
-          title: 'Revisar monitoreos por vencer',
-          detail: `Próximo vencimiento: ${formatDateShort(expiringSoonTemplates[0]?.availability?.endAt)}.`,
-          path: '/monitoreo/reportes',
-          cta: 'Revisar',
-        });
-      }
-      if (staleInProgressReports.length > 0) {
-        steps.push({
-          id: 'step-reports',
-          title: 'Actualizar reportes en progreso',
-          detail: `${staleInProgressReports.length} ${pluralize(
-            staleInProgressReports.length,
-            'reporte necesita seguimiento',
-            'reportes necesitan seguimiento',
-          )}.`,
-          path: '/monitoreo/reportes',
-          cta: 'Ir',
-        });
-      }
-    } else {
-      const inProgress = instances.filter((item) => item.status === 'in_progress').length;
-      if (inProgress > 0) {
-        steps.push({
-          id: 'step-continue',
-          title: `Continuar ${inProgress} ${pluralize(inProgress, 'formulario', 'formularios')} en progreso`,
-          detail: 'Completa y registra tus observaciones pendientes.',
-          path: '/monitoreo/reportes',
-          cta: 'Continuar',
-        });
-      }
-      if (upcomingAgenda.length > 0) {
-        steps.push({
-          id: 'step-agenda',
-          title: 'Revisar agenda de la semana',
-          detail: `${upcomingAgenda.length} ${pluralize(
-            upcomingAgenda.length,
-            'actividad programada',
-            'actividades programadas',
-          )}.`,
-          path: '/monitoreo/seguimiento',
-          cta: 'Ver agenda',
-        });
-      }
-      if (activeTemplates.length > 0) {
-        steps.push({
-          id: 'step-active',
-          title: 'Iniciar un monitoreo activo',
-          detail: `${activeTemplates.length} ${pluralize(activeTemplates.length, 'monitoreo disponible', 'monitoreos disponibles')}.`,
-          path: '/monitoreo',
-          cta: 'Ir',
-        });
-      }
-    }
-
-    if (!steps.length) {
-      steps.push({
-        id: 'step-default',
-        title: 'No tienes pendientes críticos',
-        detail: 'Puedes revisar reportes o planificar nuevos monitoreos.',
-        path: '/monitoreo/reportes',
-        cta: 'Abrir reportes',
+    if (overdueTemplatesCount > 0) {
+      items.push({
+        id: 'admin-overdue',
+        priority: 1,
+        tone: 'critical',
+        title: `${overdueTemplatesCount} ${pluralize(
+          overdueTemplatesCount,
+          'monitoreo vencido en el sistema',
+          'monitoreos vencidos en el sistema',
+        )}`,
+        description: 'Requiere supervision y cierre.',
+        actionLabel: 'Ver reportes',
+        actionPath: '/monitoreo/reportes',
       });
     }
 
-    return steps.slice(0, 4);
+    if (eventsWithoutResponsibleCount > 0) {
+      items.push({
+        id: 'admin-no-responsible',
+        priority: 2,
+        tone: 'critical',
+        title: `${eventsWithoutResponsibleCount} ${pluralize(
+          eventsWithoutResponsibleCount,
+          'evento sin responsable',
+          'eventos sin responsable',
+        )}`,
+        description: 'Asigna especialista para mantener continuidad operativa.',
+        actionLabel: 'Ir a seguimiento',
+        actionPath: '/monitoreo/seguimiento',
+      });
+    }
+
+    if (dueTodayTemplatesCount > 0) {
+      items.push({
+        id: 'admin-due-today',
+        priority: 3,
+        tone: 'warning',
+        title: `${dueTodayTemplatesCount} ${pluralize(
+          dueTodayTemplatesCount,
+          'monitoreo vence hoy',
+          'monitoreos vencen hoy',
+        )}`,
+        description: 'Prioriza el seguimiento de cierre.',
+        actionLabel: 'Revisar',
+        actionPath: '/monitoreo/seguimiento',
+      });
+    }
+
+    if (pendingReportsCount > 0) {
+      items.push({
+        id: 'admin-pending-reports',
+        priority: 4,
+        tone: 'info',
+        title: `${pendingReportsCount} ${pluralize(pendingReportsCount, 'reporte pendiente', 'reportes pendientes')}`,
+        description: 'Hay reportes en curso pendientes de finalizar.',
+        actionLabel: 'Abrir reportes',
+        actionPath: '/monitoreo/reportes',
+      });
+    }
+
+    if (draftTemplatesCount > 0) {
+      items.push({
+        id: 'admin-drafts',
+        priority: 5,
+        tone: 'warning',
+        title: `${draftTemplatesCount} ${pluralize(
+          draftTemplatesCount,
+          'borrador sin publicar',
+          'borradores sin publicar',
+        )}`,
+        description: 'Completa y publica las plantillas pendientes.',
+        actionLabel: 'Ir a monitoreos',
+        actionPath: '/monitoreo',
+      });
+    }
+
+    return items.sort((a, b) => a.priority - b.priority).slice(0, 3);
   }, [
-    activeTemplates.length,
     draftTemplatesCount,
-    eventsWithoutResponsible.length,
-    expiringSoonTemplates,
-    instances,
-    isAdmin,
-    staleInProgressReports.length,
-    upcomingAgenda.length,
+    dueTodayTemplatesCount,
+    eventsWithoutResponsibleCount,
+    overdueTemplatesCount,
+    pendingReportsCount,
   ]);
 
-  const recentActivity = useMemo(() => {
-    const templateActivity = templates.map((template) => ({
-      id: `template-${template.id}`,
-      when: template.updated_at || template.created_at,
-      title: template.status === 'published' ? 'Monitoreo publicado' : 'Monitoreo actualizado',
-      detail: truncateLabel(template.title || 'Monitoreo sin título', 72),
-      path: '/monitoreo',
+  const adminMetrics = useMemo(
+    () => [
+      {
+        id: 'active-templates',
+        label: 'Monitoreos activos',
+        value: activeTemplates.length,
+        className: 'border-cyan-500/35 bg-cyan-500/10 text-cyan-100',
+      },
+      {
+        id: 'pending-reports',
+        label: 'Reportes pendientes',
+        value: pendingReportsCount,
+        className: 'border-indigo-500/35 bg-indigo-500/10 text-indigo-100',
+      },
+      {
+        id: 'overdue-templates',
+        label: 'Monitoreos vencidos',
+        value: overdueTemplatesCount,
+        className: 'border-rose-500/35 bg-rose-500/10 text-rose-100',
+      },
+      {
+        id: 'events-without-responsible',
+        label: 'Sin responsable',
+        value: eventsWithoutResponsibleCount,
+        className: 'border-amber-500/35 bg-amber-500/10 text-amber-100',
+      },
+    ],
+    [activeTemplates.length, eventsWithoutResponsibleCount, overdueTemplatesCount, pendingReportsCount],
+  );
+
+  const hasSpecialistPriorityActions = priorityActions.length > 0;
+  const hasAdminAlerts = adminAlerts.length > 0;
+  const activeHomeWidgets =
+    HOME_WIDGETS_BY_ROLE[userRole] || HOME_WIDGETS_BY_ROLE[ROLE_SPECIALIST] || [];
+  const hasWidget = (widgetKey) => activeHomeWidgets.includes(widgetKey);
+  const recommendedAction = useMemo(() => {
+    if (isAdmin) return adminAlerts[0] || null;
+    return priorityActions[0] || null;
+  }, [adminAlerts, isAdmin, priorityActions]);
+
+  const quickActions = useMemo(() => {
+    const definition = HOME_QUICK_ACTIONS_BY_ROLE[userRole] || HOME_QUICK_ACTIONS_BY_ROLE[ROLE_SPECIALIST] || [];
+    return definition.map((item) => ({
+      ...item,
+      icon: quickActionIconByKey[item.iconKey] || ClipboardList,
     }));
-
-    const eventsActivity = events.map((event) => ({
-      id: `event-${event.id}`,
-      when: event.updated_at || event.created_at,
-      title: event.event_type === 'activity' ? 'Actividad actualizada' : 'Seguimiento actualizado',
-      detail: truncateLabel(event.title || 'Evento sin título', 72),
-      path: '/monitoreo/seguimiento',
-    }));
-
-    const reportActivity = instances.map((instance) => ({
-      id: `instance-${instance.id}`,
-      when: instance.updated_at || instance.created_at,
-      title: instance.status === 'completed' ? 'Reporte completado' : 'Reporte en progreso',
-      detail: truncateLabel(instance?.data?.header?.docente || 'Formulario de monitoreo', 72),
-      path: '/monitoreo/reportes',
-    }));
-
-    return [...templateActivity, ...eventsActivity, ...reportActivity]
-      .filter((item) => Boolean(toSafeDate(item.when)))
-      .sort((left, right) => {
-        const leftTime = toSafeDate(left.when)?.getTime() || 0;
-        const rightTime = toSafeDate(right.when)?.getTime() || 0;
-        return rightTime - leftTime;
-      })
-      .slice(0, ACTIVITY_ITEMS_LIMIT);
-  }, [events, instances, templates]);
-
-  const reportCount = instances.length;
-  const hasAlerts = alerts.length > 0;
-  const healthText = hasAlerts ? 'Con alertas' : 'Listo';
-  const healthHint = hasAlerts
-    ? `${alerts.length} ${pluralize(alerts.length, 'alerta detectada', 'alertas detectadas')}`
-    : 'Sin alertas';
+  }, [userRole]);
 
   return (
     <div className="flex flex-col gap-6">
@@ -517,247 +562,189 @@ export default function MonitoreoInicio() {
         </div>
       ) : null}
 
-      <Card className="flex flex-col gap-5">
+      <Card className="flex items-end justify-between gap-3">
         <SectionHeader
-          eyebrow="Inicio"
           title="Inicio"
-          description="Resumen operativo y accesos rápidos"
           size="page"
         />
-
-        <div className="grid gap-3 md:grid-cols-3">
-          <div className="rounded-2xl border border-slate-800/70 bg-slate-900/50 p-3.5">
-            <p className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Monitoreos</p>
-            <p className="mt-2 text-3xl font-semibold leading-none text-slate-100">{activeTemplates.length}</p>
-            <p
-              title={isAdmin ? 'Plantillas activas para especialistas' : 'Monitoreos activos para ti'}
-              className="mt-2 truncate text-xs text-slate-500/90"
-            >
-              {isAdmin ? 'Activos para especialistas' : 'Activos para ti'}
-            </p>
-          </div>
-
-          <div className="rounded-2xl border border-slate-800/70 bg-slate-900/50 p-3.5">
-            <p className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Reportes</p>
-            <p className="mt-2 text-3xl font-semibold leading-none text-slate-100">{reportCount}</p>
-            <p
-              title={isAdmin ? 'Formularios totales del sistema' : 'Formularios creados por ti'}
-              className="mt-2 truncate text-xs text-slate-500/90"
-            >
-              {isAdmin ? 'Totales del sistema' : 'Generados por ti'}
-            </p>
-          </div>
-
-          <div className="rounded-2xl border border-slate-800/70 bg-slate-900/50 p-3.5">
-            <p className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Estado</p>
-            <p className="mt-2 text-3xl font-semibold leading-none text-slate-100">{healthText}</p>
-            <p className="mt-2 truncate text-xs text-slate-500/90">{healthHint}</p>
-          </div>
-        </div>
       </Card>
 
-      <div className="grid gap-4 xl:grid-cols-2">
-        <Card className="flex flex-col gap-4">
+      {hasWidget('admin_global_metrics') ? (
+        <Card className="w-full rounded-[14px] border border-white/10 bg-white/[0.03] px-3 py-2 shadow-[0_8px_24px_-20px_rgba(0,0,0,0.6)]">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="inline-flex h-7 items-center rounded-lg border border-slate-700/60 bg-slate-900/50 px-2.5 text-[10px] uppercase tracking-[0.12em] text-slate-400">
+              Estado actual
+            </p>
+            {loading ? (
+              <span className="text-sm text-slate-400">Cargando metricas...</span>
+            ) : (
+              adminMetrics.map((metric) => (
+                <span
+                  key={metric.id}
+                  className={`inline-flex h-7 items-center gap-1.5 rounded-lg border px-2.5 text-[12px] ${metric.className}`}
+                >
+                  <span className="font-semibold">{metric.value}</span>
+                  <span>{metric.label}</span>
+                </span>
+              ))
+            )}
+          </div>
+        </Card>
+      ) : null}
+
+      {(hasWidget('admin_global_alerts') || hasWidget('specialist_priority_actions')) ? (
+        <Card className="flex flex-col gap-3">
           <SectionHeader
-            eyebrow="Alertas"
-            title="Alertas prioritarias"
-            description="Elementos que requieren atención inmediata"
+            eyebrow="Prioridad"
+            title="Que revisar ahora"
+            description={loading ? 'Cargando prioridad...' : recommendedAction ? recommendedAction.title : 'Todo en orden'}
           />
+          {!loading && recommendedAction ? (
+            <p className="text-[15px] text-slate-300">{recommendedAction.description}</p>
+          ) : null}
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            {loading ? (
+              <span className="text-sm text-slate-400">Preparando accion sugerida...</span>
+            ) : recommendedAction ? (
+              <button
+                type="button"
+                onClick={() => navigate(recommendedAction.actionPath)}
+                className="ds-btn ds-btn-primary h-10 px-4"
+              >
+                {recommendedAction.actionLabel}
+                <MoveRight size={14} />
+              </button>
+            ) : (
+              <span className="ds-badge ds-badge-success">Sin urgencias</span>
+            )}
+          </div>
+        </Card>
+      ) : null}
+
+      {hasWidget('admin_global_alerts') ? (
+        <Card className="flex flex-col gap-3">
+          <SectionHeader eyebrow="Atencion" title="Lo pendiente" />
           {loading ? (
             <p className="text-sm text-slate-400">Cargando alertas...</p>
-          ) : alerts.length === 0 ? (
-            <div className="rounded-xl border border-emerald-500/25 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-100">
-              Todo en orden. No hay alertas prioritarias.
-            </div>
+          ) : !hasAdminAlerts ? (
+            <p className="text-sm text-emerald-200">No hay alertas globales activas.</p>
           ) : (
-            <div className="space-y-2.5">
-              {alerts.map((alert) => {
+            <div className="space-y-1.5">
+              {adminAlerts.map((alert) => {
                 const Icon = iconByAlert[alert.tone] || AlertTriangle;
                 return (
-                  <article
+                  <button
                     key={alert.id}
-                    className={`rounded-xl border px-3 py-2.5 ${toneClassByAlert[alert.tone] || toneClassByAlert.info}`}
+                    type="button"
+                    onClick={() => navigate(alert.actionPath)}
+                    className="flex w-full items-center gap-2 rounded-lg border border-slate-800/70 bg-slate-900/45 px-3 py-2 text-left transition-all duration-200 hover:-translate-y-[1px] hover:border-slate-600/70 hover:bg-slate-900/72"
                   >
-                    <div className="flex items-start gap-2">
-                      <Icon size={16} className="mt-0.5 shrink-0" />
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-semibold">{alert.title}</p>
-                        <p className="mt-1 text-xs text-slate-200/90">{alert.description}</p>
-                      </div>
+                    <span className={`inline-flex h-6 w-6 items-center justify-center rounded-full border ${
+                      toneClassByAlert[alert.tone] || toneClassByAlert.info
+                    }`}>
+                      <Icon size={13} />
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-semibold text-slate-100">{alert.title}</p>
+                      <p className="text-[11px] text-slate-400">{alert.description}</p>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => navigate(alert.actionPath)}
-                      className="mt-2 inline-flex items-center gap-2 rounded-lg border border-slate-600/60 bg-slate-900/35 px-3 py-1.5 text-xs font-semibold text-slate-100 transition hover:border-slate-400/70"
-                    >
+                    <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-slate-300">
                       {alert.actionLabel}
-                      <MoveRight size={13} />
-                    </button>
-                  </article>
+                      <MoveRight size={13} className="shrink-0 text-slate-400" />
+                    </span>
+                  </button>
                 );
               })}
             </div>
           )}
         </Card>
+      ) : null}
 
-        <Card className="flex flex-col gap-4">
-          <SectionHeader
-            eyebrow="Agenda"
-            title="Próximos 7 días"
-            description="Eventos y monitoreos programados"
-          />
+      {hasWidget('specialist_priority_actions') ? (
+        <Card className="flex flex-col gap-3">
+          <SectionHeader eyebrow="Atencion" title="Lo pendiente" />
+          {loading ? (
+            <p className="text-sm text-slate-400">Cargando acciones...</p>
+          ) : !hasSpecialistPriorityActions ? (
+            <p className="text-sm text-emerald-200">No tienes acciones urgentes.</p>
+          ) : (
+            <div className="space-y-1.5">
+              {priorityActions.map((action) => {
+                const Icon = iconByAlert[action.tone] || AlertTriangle;
+                return (
+                  <button
+                    key={action.id}
+                    type="button"
+                    onClick={() => navigate(action.actionPath)}
+                    className="flex w-full items-center gap-2 rounded-lg border border-slate-800/70 bg-slate-900/45 px-3 py-2 text-left transition-all duration-200 hover:-translate-y-[1px] hover:border-slate-600/70 hover:bg-slate-900/72"
+                  >
+                    <span className={`inline-flex h-6 w-6 items-center justify-center rounded-full border ${
+                      toneClassByAlert[action.tone] || toneClassByAlert.info
+                    }`}>
+                      <Icon size={13} />
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-semibold text-slate-100">{action.title}</p>
+                      <p className="text-[11px] text-slate-400">{action.description}</p>
+                    </div>
+                    <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-slate-300">
+                      {action.actionLabel}
+                      <MoveRight size={13} className="shrink-0 text-slate-400" />
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </Card>
+      ) : null}
+
+      {hasWidget('specialist_agenda') ? (
+        <Card className="flex flex-col gap-3">
+          <SectionHeader eyebrow="Agenda" title="Actividades proximas" />
           {loading ? (
             <p className="text-sm text-slate-400">Cargando agenda...</p>
           ) : upcomingAgenda.length === 0 ? (
-            <div className="rounded-xl border border-slate-800/70 bg-slate-900/45 px-4 py-3 text-sm text-slate-400">
-              No hay actividades programadas para la próxima semana.
-            </div>
+            <p className="text-sm text-slate-400">No hay eventos proximos.</p>
           ) : (
-            <div className="space-y-2.5">
+            <ul className="divide-y divide-slate-800/70 rounded-lg border border-slate-800/70 bg-slate-900/35">
               {upcomingAgenda.map((event) => (
-                <article
-                  key={event.id}
-                  className="rounded-xl border border-slate-800/70 bg-slate-900/45 px-3 py-2.5"
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <p title={event.title} className="truncate text-sm font-semibold text-slate-100">
-                      {truncateLabel(event.title, 72)}
-                    </p>
-                    <span className="rounded-full border border-cyan-500/35 bg-cyan-500/10 px-2 py-0.5 text-[11px] text-cyan-100">
-                      {eventTypeLabel(event.event_type)}
-                    </span>
-                  </div>
-                  <p className="mt-1 text-xs text-slate-400">
-                    {formatAgendaRange(event.start_at, event.end_at)}
+                <li key={event.id} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
+                  <p title={event.title} className="min-w-0 flex-1 truncate text-sm text-slate-100">
+                    {truncateLabel(event.title, 62)}
                   </p>
-                </article>
+                  <span className="text-[11px] text-slate-400">{formatAgendaRange(event.start_at, event.end_at)}</span>
+                  <span className="rounded-full border border-cyan-500/35 bg-cyan-500/10 px-2 py-0.5 text-[10px] text-cyan-100">
+                    {eventTypeLabel(event.event_type)}
+                  </span>
+                </li>
               ))}
-            </div>
+            </ul>
           )}
-          <button
-            type="button"
-            onClick={() => navigate('/monitoreo/seguimiento')}
-            className="inline-flex items-center gap-2 self-start rounded-lg border border-slate-700/60 px-3 py-1.5 text-xs font-semibold text-slate-200 transition hover:border-cyan-400/60 hover:text-cyan-100"
-          >
-            Ir a seguimiento
-            <MoveRight size={13} />
-          </button>
         </Card>
-      </div>
+      ) : null}
 
-      <div className="grid gap-4 xl:grid-cols-2">
-        <Card className="flex flex-col gap-4">
-          <SectionHeader
-            eyebrow="Sugerencias"
-            title="Próximos pasos"
-            description="Acciones recomendadas para hoy"
-          />
-          {loading ? (
-            <p className="text-sm text-slate-400">Cargando pendientes...</p>
-          ) : (
-            <div className="space-y-2.5">
-              {nextSteps.map((step) => (
-                <article
-                  key={step.id}
-                  className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-800/70 bg-slate-900/45 px-3 py-2.5"
+      {hasWidget('quick_actions') ? (
+        <Card className="flex flex-col gap-3">
+          <SectionHeader eyebrow="Acciones" title="Acciones rapidas" />
+          <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+            {quickActions.map((action) => {
+              const Icon = action.icon;
+              return (
+                <button
+                  key={action.id}
+                  type="button"
+                  onClick={() => navigate(action.path)}
+                  className="ds-btn ds-btn-secondary h-10"
                 >
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-semibold text-slate-100">{step.title}</p>
-                    <p className="mt-1 text-xs text-slate-400">{step.detail}</p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => navigate(step.path)}
-                    className="inline-flex items-center gap-2 rounded-lg border border-slate-700/60 px-3 py-1.5 text-xs font-semibold text-slate-100 transition hover:border-cyan-400/60 hover:text-cyan-100"
-                  >
-                    {step.cta}
-                    <MoveRight size={13} />
-                  </button>
-                </article>
-              ))}
-            </div>
-          )}
+                  <Icon size={14} />
+                  {action.label}
+                </button>
+              );
+            })}
+          </div>
         </Card>
-
-        <Card className="flex flex-col gap-4">
-          <SectionHeader
-            eyebrow="Actividad"
-            title="Actividad reciente"
-            description="Últimos cambios registrados en el sistema"
-          />
-          {loading ? (
-            <p className="text-sm text-slate-400">Cargando actividad...</p>
-          ) : recentActivity.length === 0 ? (
-            <div className="rounded-xl border border-slate-800/70 bg-slate-900/45 px-4 py-3 text-sm text-slate-400">
-              Aún no hay movimientos recientes para mostrar.
-            </div>
-          ) : (
-            <div className="space-y-2.5">
-              {recentActivity.map((item) => (
-                <article key={item.id} className="rounded-xl border border-slate-800/70 bg-slate-900/45 px-3 py-2.5">
-                  <div className="flex items-start gap-2">
-                    <FileClock size={15} className="mt-0.5 shrink-0 text-slate-400" />
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-semibold text-slate-100">{item.title}</p>
-                      <p className="mt-1 truncate text-xs text-slate-400">{item.detail}</p>
-                      <p className="mt-1 text-[11px] text-slate-500">{formatDateTimeShort(item.when)}</p>
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => navigate(item.path)}
-                    className="mt-2 inline-flex items-center gap-2 rounded-lg border border-slate-700/60 px-3 py-1.5 text-xs font-semibold text-slate-100 transition hover:border-cyan-400/60 hover:text-cyan-100"
-                  >
-                    Ver detalle
-                    <MoveRight size={13} />
-                  </button>
-                </article>
-              ))}
-            </div>
-          )}
-        </Card>
-      </div>
-
-      <Card className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex min-w-0 items-center gap-2 text-sm text-slate-300">
-          {hasAlerts ? (
-            <AlertTriangle size={16} className="text-amber-300" />
-          ) : (
-            <CheckCircle2 size={16} className="text-emerald-300" />
-          )}
-          <span className="truncate">
-            {hasAlerts
-              ? 'Revisa las alertas para mantener el monitoreo al día.'
-              : 'Sistema estable. Puedes continuar con tus monitoreos.'}
-          </span>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <button
-            type="button"
-            onClick={() => navigate('/monitoreo')}
-            className="inline-flex items-center gap-2 rounded-lg border border-slate-700/60 px-3 py-1.5 text-xs font-semibold text-slate-100 transition hover:border-cyan-400/60"
-          >
-            <ClipboardList size={13} />
-            Monitoreos
-          </button>
-          <button
-            type="button"
-            onClick={() => navigate('/monitoreo/reportes')}
-            className="inline-flex items-center gap-2 rounded-lg border border-slate-700/60 px-3 py-1.5 text-xs font-semibold text-slate-100 transition hover:border-cyan-400/60"
-          >
-            <FileClock size={13} />
-            Reportes
-          </button>
-          <button
-            type="button"
-            onClick={() => navigate('/monitoreo/seguimiento')}
-            className="inline-flex items-center gap-2 rounded-lg border border-slate-700/60 px-3 py-1.5 text-xs font-semibold text-slate-100 transition hover:border-cyan-400/60"
-          >
-            <CalendarDays size={13} />
-            Seguimiento
-          </button>
-        </div>
-      </Card>
+      ) : null}
     </div>
   );
 }

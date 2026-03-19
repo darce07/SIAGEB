@@ -851,6 +851,12 @@ export default function MonitoreoReportes() {
     ) || null;
   }, [groupedReports, selectedReportId]);
 
+  const isSelectedDetailVisible = Boolean(
+    selectedRow &&
+      selectedGroup &&
+      expandedGroups[selectedGroup.groupKey],
+  );
+
   const canDeleteSelected = selectedRow ? isAdmin || selectedRow.state !== 'expired' : false;
 
   const stateFilters = [
@@ -876,36 +882,38 @@ export default function MonitoreoReportes() {
     }
   };
 
-  const handleCreateFirstReport = async (template) => {
+  const handleCreateReport = async (template, { reuseExisting = true } = {}) => {
     if (!template?.id) return;
 
-    const existingQuery = supabase
-      .from('monitoring_instances')
-      .select('*')
-      .eq('template_id', template.id)
-      .order('updated_at', { ascending: false })
-      .limit(1);
+    if (reuseExisting) {
+      const existingQuery = supabase
+        .from('monitoring_instances')
+        .select('*')
+        .eq('template_id', template.id)
+        .order('updated_at', { ascending: false })
+        .limit(1);
 
-    const { data: existingData, error: existingError } = isAdmin
-      ? await existingQuery
-      : await existingQuery.eq('created_by', userId);
+      const { data: existingData, error: existingError } = isAdmin
+        ? await existingQuery
+        : await existingQuery.eq('created_by', userId);
 
-    if (existingError) {
-      console.error(existingError);
-      openNoticeModal(
-        'No se pudo continuar',
-        'No se pudieron validar los reportes existentes del monitoreo.',
-        'warning',
-      );
-      return;
-    }
+      if (existingError) {
+        console.error(existingError);
+        openNoticeModal(
+          'No se pudo continuar',
+          'No se pudieron validar los reportes existentes del monitoreo.',
+          'warning',
+        );
+        return;
+      }
 
-    const existing = existingData?.[0];
-    if (existing?.id) {
-      localStorage.setItem('monitoreoInstanceActive', existing.id);
-      localStorage.setItem('monitoreoTemplateSelected', template.id);
-      navigate('/monitoreo/ficha-escritura');
-      return;
+      const existing = existingData?.[0];
+      if (existing?.id) {
+        localStorage.setItem('monitoreoInstanceActive', existing.id);
+        localStorage.setItem('monitoreoTemplateSelected', template.id);
+        navigate('/monitoreo/ficha-escritura');
+        return;
+      }
     }
 
     const now = new Date().toISOString();
@@ -981,7 +989,7 @@ export default function MonitoreoReportes() {
   const openReport = (row) => {
     if (!row) return;
     if (!row.instance?.id) {
-      handleCreateFirstReport(row.template);
+      handleCreateReport(row.template);
       return;
     }
     localStorage.setItem('monitoreoInstanceActive', row.id);
@@ -990,6 +998,7 @@ export default function MonitoreoReportes() {
   };
 
   const toggleGroup = (groupKey) => {
+    setSelectedReportId('');
     setExpandedGroups((prev) => ({
       ...prev,
       [groupKey]: !prev[groupKey],
@@ -999,42 +1008,32 @@ export default function MonitoreoReportes() {
   return (
     <div className="flex flex-col gap-6">
       <Card className="flex flex-col gap-5">
-        <SectionHeader
-          eyebrow="Reportes"
-          title="Reportes"
-          description={
-            isAdmin
-              ? 'Consulta, revisa y exporta los reportes generados en el sistema.'
-              : 'Consulta, revisa y exporta tus reportes.'
-          }
-          size="page"
-        />
+        <SectionHeader title="Reportes" size="page" />
 
-        <div className="grid gap-2 md:grid-cols-3 xl:grid-cols-6">
-          <div className="rounded-xl border border-slate-800/70 bg-slate-900/45 px-3 py-2">
-            <p className="text-[10px] uppercase tracking-[0.2em] text-slate-500">Total</p>
-            <p className="mt-1 text-xl font-semibold text-slate-100">{summary.total}</p>
-          </div>
-          <div className="rounded-xl border border-slate-800/70 bg-slate-900/45 px-3 py-2">
-            <p className="text-[10px] uppercase tracking-[0.2em] text-slate-500">Activos</p>
-            <p className="mt-1 text-xl font-semibold text-emerald-200">{summary.active}</p>
-          </div>
-          <div className="rounded-xl border border-slate-800/70 bg-slate-900/45 px-3 py-2">
-            <p className="text-[10px] uppercase tracking-[0.2em] text-slate-500">En progreso</p>
-            <p className="mt-1 text-xl font-semibold text-cyan-200">{summary.in_progress}</p>
-          </div>
-          <div className="rounded-xl border border-slate-800/70 bg-slate-900/45 px-3 py-2">
-            <p className="text-[10px] uppercase tracking-[0.2em] text-slate-500">Completados</p>
-            <p className="mt-1 text-xl font-semibold text-indigo-200">{summary.completed}</p>
-          </div>
-          <div className="rounded-xl border border-slate-800/70 bg-slate-900/45 px-3 py-2">
-            <p className="text-[10px] uppercase tracking-[0.2em] text-slate-500">Vencidos</p>
-            <p className="mt-1 text-xl font-semibold text-amber-200">{summary.expired}</p>
-          </div>
-          <div className="rounded-xl border border-slate-800/70 bg-slate-900/45 px-3 py-2">
-            <p className="text-[10px] uppercase tracking-[0.2em] text-slate-500">Borradores</p>
-            <p className="mt-1 text-xl font-semibold text-slate-200">{summary.draft}</p>
-          </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <p className="inline-flex h-7 items-center rounded-lg border border-slate-700/60 bg-slate-900/50 px-2.5 text-[10px] uppercase tracking-[0.12em] text-slate-400">
+            Estado
+          </p>
+          <span className="inline-flex h-7 items-center gap-1.5 rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-2.5 text-[11px] text-cyan-100">
+            <span className="font-semibold">{summary.total}</span>
+            <span>Total</span>
+          </span>
+          <span className="inline-flex h-7 items-center gap-1.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-2.5 text-[11px] text-emerald-100">
+            <span className="font-semibold">{summary.in_progress}</span>
+            <span>En progreso</span>
+          </span>
+          <span className="inline-flex h-7 items-center gap-1.5 rounded-lg border border-indigo-500/30 bg-indigo-500/10 px-2.5 text-[11px] text-indigo-100">
+            <span className="font-semibold">{summary.completed}</span>
+            <span>Completados</span>
+          </span>
+          <span className="inline-flex h-7 items-center gap-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 px-2.5 text-[11px] text-amber-100">
+            <span className="font-semibold">{summary.expired}</span>
+            <span>Vencidos</span>
+          </span>
+          <span className="inline-flex h-7 items-center gap-1.5 rounded-lg border border-slate-600/70 bg-slate-800/60 px-2.5 text-[11px] text-slate-200">
+            <span className="font-semibold">{summary.draft}</span>
+            <span>Borradores</span>
+          </span>
         </div>
 
         <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_190px_220px_auto] lg:items-end">
@@ -1113,11 +1112,12 @@ export default function MonitoreoReportes() {
             No hay resultados con esos filtros.
           </div>
         ) : (
-          <div className={`grid gap-4 ${selectedRow ? 'xl:grid-cols-[minmax(0,1fr)_340px]' : ''}`}>
+          <div className={`grid gap-4 ${isSelectedDetailVisible ? 'xl:grid-cols-[minmax(0,1fr)_340px]' : ''}`}>
             <div className="space-y-3">
               {groupedReports.map((group) => {
                 const groupMeta = REPORT_STATE_META[group.groupState] || REPORT_STATE_META.active;
                 const isExpanded = Boolean(expandedGroups[group.groupKey]);
+                const templateRow = group.reports.find((row) => row?.template?.id) || null;
                 return (
                   <section key={group.groupKey} className="rounded-2xl border border-slate-800/70 bg-slate-900/45 px-3 py-3">
                     <button
@@ -1147,6 +1147,22 @@ export default function MonitoreoReportes() {
                       </div>
                     </button>
 
+                    {templateRow?.template?.id ? (
+                      <div className="mt-2.5 flex justify-end">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            handleCreateReport(templateRow.template, {
+                              reuseExisting: false,
+                            })
+                          }
+                          className="inline-flex items-center gap-2 rounded-full border border-cyan-500/35 bg-cyan-500/10 px-3 py-1.5 text-xs font-semibold text-cyan-100 transition hover:border-cyan-400/65"
+                        >
+                          Crear reporte
+                        </button>
+                      </div>
+                    ) : null}
+
                     {isExpanded ? (
                       <div className="mt-2.5 space-y-2.5">
                         {group.reports.map((row) => {
@@ -1175,10 +1191,10 @@ export default function MonitoreoReportes() {
                                 <div className="mt-2.5 flex flex-wrap gap-2">
                                   <button
                                     type="button"
-                                    onClick={() => handleCreateFirstReport(row.template)}
+                                    onClick={() => handleCreateReport(row.template, { reuseExisting: false })}
                                     className="inline-flex items-center gap-2 rounded-full border border-cyan-500/35 bg-cyan-500/10 px-3 py-1.5 text-xs font-semibold text-cyan-100 transition hover:border-cyan-400/65"
                                   >
-                                    Crear primer reporte
+                                    Crear reporte
                                   </button>
                                   <button
                                     type="button"
@@ -1267,7 +1283,7 @@ export default function MonitoreoReportes() {
               })}
             </div>
 
-            {selectedRow ? (
+            {isSelectedDetailVisible ? (
               <aside className="rounded-2xl border border-slate-800/70 bg-slate-900/45 px-4 py-4 xl:sticky xl:top-4 xl:h-fit">
                 <div className="space-y-4">
                   <div className="flex items-start justify-between gap-2">

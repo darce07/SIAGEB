@@ -13,6 +13,7 @@ import {
 import Card from '../components/ui/Card.jsx';
 import ConfirmModal from '../components/ui/ConfirmModal.jsx';
 import Input from '../components/ui/Input.jsx';
+import InlineOperationalSummary from '../components/ui/InlineOperationalSummary.jsx';
 import SectionHeader from '../components/ui/SectionHeader.jsx';
 import Select from '../components/ui/Select.jsx';
 import { supabase } from '../lib/supabase.js';
@@ -163,22 +164,119 @@ const CATEGORY_DOT_STYLES = {
   activity: { label: 'Actividad', className: 'bg-cyan-400 ring-cyan-200/60' },
   ugel: { label: 'Fecha UGEL', className: 'bg-amber-400 ring-amber-200/60' },
 };
-const CATEGORY_EVENT_CARD_STYLES = {
-  monitoring: {
-    selected:
-      'border-violet-400/70 bg-violet-500/15 text-violet-100 shadow-[0_8px_24px_-16px_rgba(139,92,246,0.9)]',
-    idle: 'border-violet-500/35 bg-violet-500/10 text-slate-200 hover:border-violet-400/60',
-  },
-  activity: {
-    selected:
-      'border-cyan-400/70 bg-cyan-500/15 text-cyan-100 shadow-[0_8px_24px_-16px_rgba(34,211,238,0.9)]',
-    idle: 'border-cyan-500/35 bg-cyan-500/10 text-slate-200 hover:border-cyan-400/60',
-  },
-  ugel: {
-    selected:
-      'border-amber-400/70 bg-amber-500/15 text-amber-100 shadow-[0_8px_24px_-16px_rgba(250,204,21,0.9)]',
-    idle: 'border-amber-500/35 bg-amber-500/10 text-slate-200 hover:border-amber-400/60',
-  },
+const DUE_SOON_DAYS = 7;
+
+const toSafeDate = (value) => {
+  const parsed = value ? new Date(value) : null;
+  return parsed && !Number.isNaN(parsed.getTime()) ? parsed : null;
+};
+
+const isMonitoringEvent = (event) => getEventCategory(event) === 'monitoring';
+
+const isDraftMonitoringEvent = (event) =>
+  isMonitoringEvent(event) && String(event?.template_status || '').toLowerCase() !== 'published';
+
+const isDueSoonEvent = (event, now = new Date()) => {
+  if (!isMonitoringEvent(event)) return false;
+  if (statusFromEvent(event) !== 'active') return false;
+  const end = toSafeDate(event.end_at);
+  if (!end) return false;
+  const limit = new Date(now);
+  limit.setHours(23, 59, 59, 999);
+  limit.setDate(limit.getDate() + DUE_SOON_DAYS);
+  return end >= now && end <= limit;
+};
+
+const isInProgressMonitoringEvent = (event, now = new Date()) => {
+  if (!isMonitoringEvent(event)) return false;
+  if (statusFromEvent(event) !== 'active') return false;
+  const start = toSafeDate(event.start_at);
+  const end = toSafeDate(event.end_at);
+  if (!start || !end) return false;
+  return start <= now && end >= now;
+};
+
+const getEventOperationalState = (event, now = new Date()) => {
+  const category = getEventCategory(event);
+  const status = statusFromEvent(event);
+  if (category === 'monitoring' && (status === 'expired' || status === 'closed')) return 'overdue';
+  if (isDueSoonEvent(event, now)) return 'due_soon';
+  if (isDraftMonitoringEvent(event)) return 'draft';
+  if (isInProgressMonitoringEvent(event, now)) return 'in_progress';
+  if (category === 'monitoring') return 'monitoring';
+  if (category === 'activity') return 'activity';
+  return 'informative';
+};
+
+const operationalStateLabel = (value) =>
+  ({
+    overdue: 'Vencido',
+    due_soon: 'Por vencer',
+    draft: 'Borrador',
+    in_progress: 'En curso',
+    monitoring: 'Monitoreo',
+    activity: 'Actividad',
+    informative: 'Informativo',
+  }[value] || 'Evento');
+
+const operationalStateBadgeClass = (value) => {
+  if (value === 'overdue') return 'border-rose-500/50 bg-rose-500/12 text-rose-100';
+  if (value === 'due_soon') return 'border-amber-500/55 bg-amber-500/12 text-amber-100';
+  if (value === 'draft') return 'border-indigo-400/45 bg-indigo-500/12 text-indigo-100';
+  if (value === 'in_progress') return 'border-emerald-500/45 bg-emerald-500/12 text-emerald-100';
+  if (value === 'activity') return 'border-cyan-500/45 bg-cyan-500/12 text-cyan-100';
+  return 'border-slate-600/70 bg-slate-800/65 text-slate-200';
+};
+
+const getEventPriorityRank = (event, now = new Date()) => {
+  const state = getEventOperationalState(event, now);
+  if (state === 'overdue') return 0;
+  if (state === 'due_soon') return 1;
+  if (state === 'draft') return 2;
+  if (state === 'in_progress') return 3;
+  if (state === 'monitoring') return 4;
+  if (state === 'activity') return 5;
+  return 6;
+};
+
+const compareEventsByPriority = (left, right, now = new Date()) => {
+  const leftRank = getEventPriorityRank(left, now);
+  const rightRank = getEventPriorityRank(right, now);
+  if (leftRank !== rightRank) return leftRank - rightRank;
+
+  const leftEnd = toSafeDate(left.end_at)?.getTime() || Number.MAX_SAFE_INTEGER;
+  const rightEnd = toSafeDate(right.end_at)?.getTime() || Number.MAX_SAFE_INTEGER;
+  if (leftEnd !== rightEnd) return leftEnd - rightEnd;
+
+  const leftStart = toSafeDate(left.start_at)?.getTime() || Number.MAX_SAFE_INTEGER;
+  const rightStart = toSafeDate(right.start_at)?.getTime() || Number.MAX_SAFE_INTEGER;
+  if (leftStart !== rightStart) return leftStart - rightStart;
+
+  return String(left.title || '').localeCompare(String(right.title || ''), 'es', {
+    sensitivity: 'base',
+  });
+};
+
+const summarizeDayRisk = (dayEvents, now = new Date()) => {
+  const summary = {
+    overdue: 0,
+    dueSoon: 0,
+    drafts: 0,
+    inProgress: 0,
+    activities: 0,
+  };
+
+  (dayEvents || []).forEach((event) => {
+    const category = getEventCategory(event);
+    const state = statusFromEvent(event);
+    if (category === 'activity' || category === 'ugel') summary.activities += 1;
+    if (category === 'monitoring' && (state === 'expired' || state === 'closed')) summary.overdue += 1;
+    if (isDueSoonEvent(event, now)) summary.dueSoon += 1;
+    if (isDraftMonitoringEvent(event)) summary.drafts += 1;
+    if (isInProgressMonitoringEvent(event, now)) summary.inProgress += 1;
+  });
+
+  return summary;
 };
 
 const truncateLabel = (value, maxChars = 70) => {
@@ -186,6 +284,15 @@ const truncateLabel = (value, maxChars = 70) => {
   if (!text) return '';
   if (text.length <= maxChars) return text;
   return `${text.slice(0, Math.max(1, maxChars - 1)).trimEnd()}...`;
+};
+
+const formatEventRangeLabel = (startAt, endAt) => {
+  const start = toSafeDate(startAt);
+  const end = toSafeDate(endAt);
+  if (!start || !end) return '-';
+  const startLabel = start.toLocaleDateString('es-PE', { day: '2-digit', month: 'short', year: 'numeric' });
+  const endLabel = end.toLocaleDateString('es-PE', { day: '2-digit', month: 'short', year: 'numeric' });
+  return `${startLabel} -> ${endLabel}`;
 };
 
 const normalizeTitle = (value) => String(value || '').trim().toLowerCase();
@@ -255,6 +362,8 @@ export default function MonitoreoSeguimiento() {
   const [showDrafts, setShowDrafts] = useState(false);
   const [isCalendarHighContrast, setIsCalendarHighContrast] = useState(false);
   const [selectedDayKey, setSelectedDayKey] = useState(() => normalizeDay(new Date()).toISOString());
+  const [isDayModalOpen, setIsDayModalOpen] = useState(false);
+  const [isObjectivesExpanded, setIsObjectivesExpanded] = useState(false);
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -320,21 +429,29 @@ export default function MonitoreoSeguimiento() {
           .filter((item) => item.status !== 'published')
           .map((item) => normalizeTitle(item.title)),
       );
-      const normalizedEvents = (eventsData || []).filter((item) => {
-        const sourceTemplate = templateById.get(item.id);
-        if (sourceTemplate) {
-          const isPublished = sourceTemplate.status === 'published';
-          return isPublished || (isAdmin && showDrafts);
-        }
+      const normalizedEvents = (eventsData || [])
+        .filter((item) => {
+          const sourceTemplate = templateById.get(item.id);
+          if (sourceTemplate) {
+            const isPublished = sourceTemplate.status === 'published';
+            return isPublished || (isAdmin && showDrafts);
+          }
 
-        if (item.event_type !== 'monitoring') return true;
-        if (isAdmin && showDrafts) return true;
-        const titleKey = normalizeTitle(item.title);
-        if (publishedTemplateTitles.has(titleKey)) return true;
-        if (draftTemplateTitles.has(titleKey)) return false;
-        // Standalone seguimiento events (without matching template title) stay visible.
-        return true;
-      });
+          if (item.event_type !== 'monitoring') return true;
+          if (isAdmin && showDrafts) return true;
+          const titleKey = normalizeTitle(item.title);
+          if (publishedTemplateTitles.has(titleKey)) return true;
+          if (draftTemplateTitles.has(titleKey)) return false;
+          // Standalone seguimiento events (without matching template title) stay visible.
+          return true;
+        })
+        .map((item) => {
+          const sourceTemplate = templateById.get(item.id);
+          return {
+            ...item,
+            template_status: sourceTemplate?.status || null,
+          };
+        });
       const existingIds = new Set(normalizedEvents.map((item) => item.id));
       const syntheticTemplateEvents = (templatesData || [])
         .filter((template) => {
@@ -355,6 +472,7 @@ export default function MonitoreoSeguimiento() {
           created_by: template.created_by || null,
           created_at: template.created_at,
           updated_at: template.updated_at,
+          template_status: template.status,
           monitoring_event_responsibles: [],
           monitoring_event_objectives: [],
         }));
@@ -447,13 +565,26 @@ export default function MonitoreoSeguimiento() {
     return normalizeDay(currentDate);
   }, [selectedDayKey, currentDate]);
 
+  const selectedDayLabel = useMemo(
+    () =>
+      selectedDay.toLocaleDateString('es-PE', {
+        weekday: 'long',
+        day: '2-digit',
+        month: 'long',
+        year: 'numeric',
+      }),
+    [selectedDay],
+  );
+
   const selectedDayEvents = useMemo(() => {
     const key = normalizeDay(selectedDay).toISOString();
     const byMap = eventsByDay.get(key);
-    if (byMap) return byMap;
-    return visibleEvents.filter((event) =>
-      isInRange(selectedDay, new Date(event.start_at), new Date(event.end_at)),
-    );
+    const baseEvents =
+      byMap ||
+      visibleEvents.filter((event) =>
+        isInRange(selectedDay, new Date(event.start_at), new Date(event.end_at)),
+      );
+    return baseEvents.slice().sort((left, right) => compareEventsByPriority(left, right));
   }, [selectedDay, eventsByDay, visibleEvents]);
 
   const selectedDayEvent = useMemo(() => {
@@ -468,6 +599,19 @@ export default function MonitoreoSeguimiento() {
     setCurrentDate(normalizeDay(base));
   };
 
+  const handleCalendarDaySelection = (day, dayKey, dayEvents) => {
+    const normalizedDay = normalizeDay(day);
+    setCurrentDate(normalizedDay);
+    setSelectedDayKey(dayKey);
+    if (dayEvents.length > 0) {
+      setSelectedEventId(dayEvents[0].id);
+      setIsDayModalOpen(true);
+    } else {
+      setSelectedEventId('');
+      setIsDayModalOpen(false);
+    }
+  };
+
   useEffect(() => {
     if (!selectedDayKey) {
       setSelectedDayKey(normalizeDay(currentDate).toISOString());
@@ -475,8 +619,21 @@ export default function MonitoreoSeguimiento() {
   }, [currentDate, selectedDayKey]);
 
   useEffect(() => {
+    if (!isDayModalOpen) return undefined;
+    const onKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        setIsDayModalOpen(false);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [isDayModalOpen]);
+
+  useEffect(() => {
     const currentKey = selectedDayKey || normalizeDay(currentDate).toISOString();
-    const currentDayEvents = eventsByDay.get(currentKey) || [];
+    const currentDayEvents = (eventsByDay.get(currentKey) || [])
+      .slice()
+      .sort((left, right) => compareEventsByPriority(left, right));
 
     if (currentDayEvents.length > 0) {
       if (!currentDayEvents.some((event) => event.id === selectedEventId)) {
@@ -485,29 +642,14 @@ export default function MonitoreoSeguimiento() {
       return;
     }
 
-    const firstCurrentMonthDay = miniCalendarDays.find((day) => {
-      if (day.getMonth() !== currentDate.getMonth()) return false;
-      const key = normalizeDay(day).toISOString();
-      return (eventsByDay.get(key) || []).length > 0;
-    });
-
-    const fallbackDay =
-      firstCurrentMonthDay ||
-      miniCalendarDays.find((day) => {
-        const key = normalizeDay(day).toISOString();
-        return (eventsByDay.get(key) || []).length > 0;
-      });
-
-    if (!fallbackDay) {
-      if (selectedEventId) setSelectedEventId('');
-      return;
+    if (selectedEventId) {
+      setSelectedEventId('');
     }
+  }, [eventsByDay, selectedDayKey, selectedEventId, currentDate]);
 
-    const fallbackKey = normalizeDay(fallbackDay).toISOString();
-    const fallbackEvents = eventsByDay.get(fallbackKey) || [];
-    setSelectedDayKey(fallbackKey);
-    setSelectedEventId(fallbackEvents[0]?.id || '');
-  }, [eventsByDay, miniCalendarDays, selectedDayKey, selectedEventId, currentDate]);
+  useEffect(() => {
+    setIsObjectivesExpanded(false);
+  }, [selectedEventId, isDayModalOpen]);
 
   const openCreateModal = () => {
     setError('');
@@ -517,6 +659,7 @@ export default function MonitoreoSeguimiento() {
   };
 
   const openEditModal = (event) => {
+    setIsDayModalOpen(false);
     const responsibles = (event.monitoring_event_responsibles || []).map((item) => ({
       id: item.id,
       userId: item.user_id,
@@ -598,7 +741,7 @@ export default function MonitoreoSeguimiento() {
     setError('');
     setSuccess('');
     if (!eventForm.title.trim()) {
-      setError('El título es obligatorio.');
+      setError('El titulo es obligatorio.');
       return;
     }
     if (!eventForm.startAt || !eventForm.endAt) {
@@ -608,7 +751,7 @@ export default function MonitoreoSeguimiento() {
     const startAt = toIsoDate(eventForm.startAt);
     const endAt = toIsoDate(eventForm.endAt);
     if (!startAt || !endAt || new Date(endAt) < new Date(startAt)) {
-      setError('Las fechas del evento no son válidas.');
+      setError('Las fechas del evento no son validas.');
       return;
     }
     if (!eventForm.responsibles.length) {
@@ -889,6 +1032,37 @@ export default function MonitoreoSeguimiento() {
     return Math.round((completed / selectedDayEvent.monitoring_event_objectives.length) * 100);
   }, [selectedDayEvent]);
 
+  const selectedDayResponsibles = selectedDayEvent?.monitoring_event_responsibles || [];
+  const selectedDayResponsiblesPreview = selectedDayResponsibles.slice(0, 2);
+  const selectedDayHiddenResponsibles = Math.max(0, selectedDayResponsibles.length - 2);
+  const selectedDayObjectives = selectedDayEvent?.monitoring_event_objectives || [];
+
+  const scopedOperationalEvents = useMemo(() => {
+    return events.filter((event) => {
+      if (!isAdmin && event.status === 'hidden') return false;
+      if (scopeFilter !== 'mine') return true;
+      return (
+        event.created_by === currentUserId ||
+        (event.monitoring_event_responsibles || []).some(
+          (responsible) => responsible.user_id === currentUserId,
+        )
+      );
+    });
+  }, [events, isAdmin, scopeFilter, currentUserId]);
+
+  const operationalSummary = useMemo(() => {
+    const monitoringEvents = scopedOperationalEvents.filter((event) => isMonitoringEvent(event));
+    const now = new Date();
+    const inProgress = monitoringEvents.filter((event) => isInProgressMonitoringEvent(event, now)).length;
+    const dueSoon = monitoringEvents.filter((event) => isDueSoonEvent(event, now)).length;
+    const overdue = monitoringEvents.filter((event) => {
+      const state = statusFromEvent(event);
+      return state === 'expired' || state === 'closed';
+    }).length;
+    const drafts = monitoringEvents.filter((event) => isDraftMonitoringEvent(event)).length;
+    return { inProgress, dueSoon, overdue, drafts };
+  }, [scopedOperationalEvents]);
+
   const selectedDayCategoryCounts = useMemo(() => {
     const counts = { monitoring: 0, activity: 0, ugel: 0 };
     selectedDayEvents.forEach((event) => {
@@ -898,21 +1072,56 @@ export default function MonitoreoSeguimiento() {
     return counts;
   }, [selectedDayEvents]);
 
+  const renderEventPriorityButton = (event) => {
+    const isSelectedEvent = selectedDayEvent?.id === event.id;
+    const operationalState = getEventOperationalState(event);
+    const eventStatus = statusFromEvent(event);
+
+    return (
+      <button
+        key={`detail-list-${event.id}`}
+        type="button"
+        onClick={() => setSelectedEventId(event.id)}
+        aria-pressed={isSelectedEvent}
+        className={`w-full rounded-lg border px-2.5 py-2 text-left transition-all duration-200 ${
+          isSelectedEvent
+            ? 'border-cyan-400/70 bg-cyan-500/14 shadow-[0_10px_22px_-16px_rgba(34,211,238,0.85)]'
+            : 'border-slate-800/70 bg-slate-900/45 hover:border-slate-600/80 hover:bg-slate-900/65'
+        }`}
+      >
+        <div className="flex items-start justify-between gap-1.5">
+          <p title={event.title} className="truncate text-[12.5px] font-semibold text-slate-100">
+            {truncateLabel(event.title, 62)}
+          </p>
+          <span
+            className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-semibold ${operationalStateBadgeClass(operationalState)}`}
+          >
+            {operationalStateLabel(operationalState)}
+          </span>
+        </div>
+        <div className="mt-1.5 flex items-center justify-between gap-2 text-[10.5px] text-slate-300/90">
+          <span className="truncate">{formatEventRangeLabel(event.start_at, event.end_at)}</span>
+          <span className="shrink-0 rounded-full border border-slate-700/70 bg-slate-900/70 px-2 py-0.5 text-[10px] text-slate-200">
+            {eventTypeLabel(event.event_type)}
+          </span>
+        </div>
+        {eventStatus === 'expired' || eventStatus === 'closed' ? (
+          <p className="mt-1 text-[10px] text-rose-200/90">Requiere atencion prioritaria.</p>
+        ) : null}
+      </button>
+    );
+  };
+
   return (
     <div className="flex flex-col gap-4">
       <Card className="flex flex-col gap-3 rounded-[18px] border border-white/10 bg-white/5 p-4 shadow-[0_10px_30px_-18px_rgba(0,0,0,0.65)]">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <SectionHeader
-            eyebrow="Seguimiento"
-            title="Seguimiento"
-            description="Visualiza actividades y vencimientos."
-            size="page"
-          />
+          <SectionHeader title="Seguimiento" size="page" />
           {isAdmin ? (
             <button
               type="button"
               onClick={openCreateModal}
-              className="inline-flex h-10 items-center gap-2 rounded-xl border border-emerald-500/40 bg-emerald-500/20 px-4 text-[14px] font-medium text-emerald-100 transition hover:border-emerald-400/70"
+              className="ds-btn ds-btn-primary h-10 px-4 text-sm"
             >
               <Plus size={15} />
               Agregar monitoreo/actividad
@@ -925,12 +1134,18 @@ export default function MonitoreoSeguimiento() {
       {error ? <p className="text-sm text-rose-400">{error}</p> : null}
       {success ? <p className="text-sm text-emerald-300">{success}</p> : null}
 
-      <Card className="w-full max-w-[980px] rounded-[18px] border border-white/10 bg-white/5 p-2.5 shadow-[0_10px_30px_-18px_rgba(0,0,0,0.65)]">
-        <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2 lg:grid-cols-[repeat(4,minmax(0,1fr))_auto]">
+      <Card className="w-full rounded-[16px] border border-white/10 bg-white/[0.04] p-2 shadow-[0_10px_30px_-18px_rgba(0,0,0,0.65)]">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="inline-flex h-8 items-center rounded-lg border border-slate-700/60 bg-slate-900/55 px-2.5 text-[11px] uppercase tracking-[0.12em] text-slate-400">
+            Filtros
+          </span>
+          <div className="min-w-[140px] flex-1 sm:flex-none sm:w-[170px]">
             <Select compact hideLabel id="scopeFilterLeft" label="Vista" value={scopeFilter} onChange={(event) => setScopeFilter(event.target.value)}>
               <option value="all">Todos</option>
-              <option value="mine">Solo míos</option>
+              <option value="mine">Solo mios</option>
             </Select>
+          </div>
+          <div className="min-w-[140px] flex-1 sm:flex-none sm:w-[170px]">
             <Select compact hideLabel id="statusFilterLeft" label="Estado" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
               <option value="all">Todos</option>
               <option value="active">Activo</option>
@@ -938,30 +1153,41 @@ export default function MonitoreoSeguimiento() {
               <option value="expired">Vencido</option>
               <option value="closed">Cerrado</option>
             </Select>
+          </div>
+          <div className="min-w-[140px] flex-1 sm:flex-none sm:w-[170px]">
             <Select compact hideLabel id="levelFilterLeft" label="Nivel" value={levelFilter} onChange={(event) => setLevelFilter(event.target.value)}>
               <option value="all">Todos</option>
               <option value="initial">Inicial</option>
               <option value="primary">Primaria</option>
               <option value="secondary">Secundaria</option>
             </Select>
+          </div>
+          <div className="min-w-[140px] flex-1 sm:flex-none sm:w-[170px]">
             <Select compact hideLabel id="modalityFilterLeft" label="Modalidad" value={modalityFilter} onChange={(event) => setModalityFilter(event.target.value)}>
               <option value="all">Todas</option>
               <option value="ebr">EBR</option>
               <option value="ebe">EBE</option>
             </Select>
-            {isAdmin ? (
-              <label className="inline-flex h-9 items-center gap-2 self-end rounded-xl border border-slate-700/60 px-2.5 text-[12px] leading-[1.4] text-slate-300">
-                <input
-                  type="checkbox"
-                  checked={showDrafts}
-                  onChange={(event) => setShowDrafts(event.target.checked)}
-                  className="h-4 w-4 rounded border-slate-500 bg-slate-900"
-                />
-                Ver borradores
-              </label>
-            ) : null}
+          </div>
+          {isAdmin ? (
+            <label className="ml-auto inline-flex h-8 items-center gap-2 rounded-lg border border-slate-700/60 bg-slate-900/50 px-2.5 text-[12px] text-slate-300">
+              <input
+                type="checkbox"
+                checked={showDrafts}
+                onChange={(event) => setShowDrafts(event.target.checked)}
+                className="h-3.5 w-3.5 rounded border-slate-500 bg-slate-900"
+              />
+              Ver borradores
+            </label>
+          ) : null}
         </div>
       </Card>
+
+      <InlineOperationalSummary
+        summary={operationalSummary}
+        collapsible
+        defaultCollapsed={false}
+      />
 
       {loading ? (
         <Card className="flex flex-col gap-4 rounded-[18px] border border-white/10 bg-white/5 p-4 shadow-[0_10px_30px_-18px_rgba(0,0,0,0.65)]">
@@ -978,16 +1204,16 @@ export default function MonitoreoSeguimiento() {
           </div>
         </Card>
       ) : (
-        <div className="grid gap-5 lg:grid-cols-[340px_minmax(0,1fr)]">
-        <Card className="order-1 min-w-0 flex h-fit flex-col gap-3 rounded-[22px] border border-white/10 bg-white/5 p-4 shadow-[0_14px_36px_-20px_rgba(0,0,0,0.72)] lg:order-1">
+        <div className="grid gap-4">
+        <Card className="min-w-0 rounded-[20px] border border-white/10 bg-white/5 p-3 shadow-[0_14px_36px_-20px_rgba(0,0,0,0.72)]">
           <div
-            className={`rounded-[24px] border p-4 transition-all duration-300 ${
+            className={`rounded-[20px] border p-3 transition-all duration-300 ${
               isCalendarHighContrast
                 ? 'border-slate-500/80 bg-slate-950/95 shadow-[0_12px_30px_-18px_rgba(2,6,23,0.95)]'
                 : 'border-slate-800/60 bg-[radial-gradient(120%_90%_at_50%_0%,rgba(56,189,248,0.10),transparent_56%),linear-gradient(180deg,rgba(15,23,42,0.88),rgba(2,6,23,0.82))]'
             }`}
           >
-            <div className="mb-3 flex items-center justify-between gap-2">
+            <div className="mb-2.5 flex items-center justify-between gap-2">
               <div className="flex min-w-0 items-center gap-2">
                 <span
                   className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border ${
@@ -1021,7 +1247,9 @@ export default function MonitoreoSeguimiento() {
                   onClick={() => {
                     const today = normalizeDay(new Date());
                     const todayKey = today.toISOString();
-                    const todayEvents = eventsByDay.get(todayKey) || [];
+                    const todayEvents = (eventsByDay.get(todayKey) || [])
+                      .slice()
+                      .sort((left, right) => compareEventsByPriority(left, right));
                     setCurrentDate(today);
                     setSelectedDayKey(todayKey);
                     setSelectedEventId(todayEvents.length ? todayEvents[0].id : '');
@@ -1048,7 +1276,7 @@ export default function MonitoreoSeguimiento() {
                 </button>
               </div>
             </div>
-            <div className="mt-3.5 grid grid-cols-7 gap-2">
+            <div className="mt-3 grid grid-cols-7 gap-1.5">
               {['L', 'M', 'X', 'J', 'V', 'S', 'D'].map((label) => (
                 <span
                   key={`mini-w-${label}`}
@@ -1060,7 +1288,7 @@ export default function MonitoreoSeguimiento() {
                 </span>
               ))}
             </div>
-            <div className="mt-2 grid grid-cols-7 gap-2">
+            <div className="mt-2 grid grid-cols-7 gap-1.5">
               {miniCalendarDays.map((day) => {
                 const dayKey = normalizeDay(day).toISOString();
                 const dayEvents = eventsByDay.get(dayKey) || [];
@@ -1080,23 +1308,33 @@ export default function MonitoreoSeguimiento() {
                   month: '2-digit',
                   year: 'numeric',
                 });
+                const dayRisk = summarizeDayRisk(dayEvents);
+                const prioritizedDayEvents = dayEvents
+                  .slice()
+                  .sort((left, right) => compareEventsByPriority(left, right));
+                const hasOverdue = dayRisk.overdue > 0;
+                const hasDueSoon = dayRisk.dueSoon > 0;
+                const hasDrafts = dayRisk.drafts > 0;
+                const riskNotes = [];
+                if (hasOverdue) riskNotes.push(`${dayRisk.overdue} vencido${dayRisk.overdue === 1 ? '' : 's'}`);
+                if (hasDueSoon) riskNotes.push(`${dayRisk.dueSoon} por vencer`);
+                if (hasDrafts) riskNotes.push(`${dayRisk.drafts} borrador${dayRisk.drafts === 1 ? '' : 'es'}`);
+                const dayRiskClass = hasOverdue
+                  ? 'border-rose-500/70 bg-rose-500/16 text-rose-50 shadow-[inset_0_1px_0_rgba(254,202,202,0.25)]'
+                  : hasDueSoon
+                    ? 'border-amber-400/70 bg-amber-500/14 text-amber-50 shadow-[inset_0_1px_0_rgba(254,243,199,0.24)]'
+                    : hasDrafts
+                      ? 'border-indigo-400/65 bg-indigo-500/14 text-indigo-50 shadow-[inset_0_1px_0_rgba(199,210,254,0.24)]'
+                      : '';
 
                 return (
                   <button
                     key={`mini-${dayKey}`}
                     type="button"
-                    onClick={() => {
-                      if (!isMiniCurrentMonth) {
-                        setCurrentDate(startOfMonth(day));
-                      } else {
-                        setCurrentDate(normalizeDay(day));
-                      }
-                      setSelectedDayKey(dayKey);
-                      setSelectedEventId(dayEvents.length ? dayEvents[0].id : '');
-                    }}
-                    aria-label={`${dayLabel}. ${dayEvents.length} evento${dayEvents.length === 1 ? '' : 's'}.`}
+                    onClick={() => handleCalendarDaySelection(day, dayKey, prioritizedDayEvents)}
+                    aria-label={`${dayLabel}. ${dayEvents.length} evento${dayEvents.length === 1 ? '' : 's'}.${riskNotes.length ? ` ${riskNotes.join('. ')}.` : ''}`}
                     title={dayTooltip || dayLabel}
-                    className={`relative inline-flex h-11 items-center justify-center rounded-full border text-[12px] font-semibold transition-all duration-200 ease-out ${
+                    className={`relative inline-flex h-10 items-center justify-center rounded-full border text-[11px] font-semibold transition-all duration-200 ease-out ${
                       isCalendarHighContrast
                         ? isMiniSelected
                           ? 'border-cyan-200 bg-cyan-300 text-slate-950 shadow-[0_10px_24px_-14px_rgba(56,189,248,0.9)]'
@@ -1110,14 +1348,25 @@ export default function MonitoreoSeguimiento() {
                           : isMiniToday
                             ? 'border-emerald-400/55 bg-emerald-500/15 text-emerald-100'
                             : isMiniCurrentMonth
-                              ? `border-slate-800/80 ${
+                              ? `${dayRiskClass || `border-slate-800/80 ${
                                   isMiniWeekend
                                     ? 'bg-slate-900/70 text-slate-300'
                                     : 'bg-slate-900/48 text-slate-200'
-                                } shadow-[inset_0_1px_0_rgba(148,163,184,0.10)] hover:-translate-y-[1px] hover:border-cyan-400/45 hover:bg-slate-800/85 hover:text-slate-100`
+                                } shadow-[inset_0_1px_0_rgba(148,163,184,0.10)]`} hover:-translate-y-[1px] hover:border-cyan-400/45 hover:bg-slate-800/85 hover:text-slate-100`
                               : 'border-slate-900/70 bg-slate-950/40 text-slate-500 hover:border-slate-700/70 hover:bg-slate-900/55'
                     }`}
                   >
+                    {hasOverdue || hasDueSoon || hasDrafts ? (
+                      <span
+                        className={`absolute left-[6px] top-[6px] h-1.5 w-1.5 rounded-full ${
+                          hasOverdue
+                            ? 'bg-rose-300'
+                            : hasDueSoon
+                              ? 'bg-amber-300'
+                              : 'bg-indigo-300'
+                        }`}
+                      />
+                    ) : null}
                     {day.getDate()}
                     {dayCategories.length ? (
                       <span className="absolute bottom-[4px] left-1/2 flex -translate-x-1/2 items-center gap-1">
@@ -1146,7 +1395,7 @@ export default function MonitoreoSeguimiento() {
                 );
               })}
             </div>
-            <div className="mt-4 flex flex-wrap gap-2 text-[11px] text-slate-300">
+            <div className="mt-3 flex flex-wrap gap-2 text-[11px] text-slate-300">
               {Object.entries(CATEGORY_DOT_STYLES).map(([key, item]) => (
                 <span
                   key={key}
@@ -1165,6 +1414,33 @@ export default function MonitoreoSeguimiento() {
               <span
                 className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 ${
                   isCalendarHighContrast
+                    ? 'border-rose-300/70 bg-rose-400/20 text-rose-100'
+                    : 'border-rose-500/35 bg-rose-500/10 text-rose-100'
+                }`}
+              >
+                Riesgo vencido
+              </span>
+              <span
+                className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 ${
+                  isCalendarHighContrast
+                    ? 'border-amber-300/70 bg-amber-400/20 text-amber-100'
+                    : 'border-amber-500/35 bg-amber-500/10 text-amber-100'
+                }`}
+              >
+                Riesgo por vencer
+              </span>
+              <span
+                className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 ${
+                  isCalendarHighContrast
+                    ? 'border-indigo-300/70 bg-indigo-400/20 text-indigo-100'
+                    : 'border-indigo-500/35 bg-indigo-500/10 text-indigo-100'
+                }`}
+              >
+                Borrador
+              </span>
+              <span
+                className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 ${
+                  isCalendarHighContrast
                     ? 'border-cyan-300/70 bg-cyan-500/25 text-cyan-100'
                     : 'border-cyan-400/25 bg-cyan-500/10 text-cyan-100/90'
                 }`}
@@ -1178,205 +1454,207 @@ export default function MonitoreoSeguimiento() {
                 >
                   {selectedDayEvents.length > 9 ? '+9' : selectedDayEvents.length}
                 </span>
-                Eventos del día
+                Eventos del dia
               </span>
+            </div>
+            <div className="mt-3 border-t border-slate-800/70 pt-3">
+              <button
+                type="button"
+                onClick={() => setIsDayModalOpen(true)}
+                disabled={selectedDayEvents.length === 0}
+                className="inline-flex h-9 items-center rounded-xl border border-cyan-500/35 bg-cyan-500/10 px-3 text-xs font-semibold text-cyan-100 transition hover:border-cyan-400/65 disabled:cursor-not-allowed disabled:border-slate-700/60 disabled:bg-slate-900/45 disabled:text-slate-500"
+              >
+                {selectedDayEvents.length > 0
+                  ? `Ver eventos del dia (${selectedDayEvents.length})`
+                  : 'Sin eventos para esta fecha'}
+              </button>
             </div>
           </div>
         </Card>
 
-        <Card className="order-2 min-w-0 flex max-h-[calc(100vh-8rem)] flex-col gap-4 overflow-y-auto rounded-[18px] border border-white/10 bg-white/5 shadow-[0_10px_30px_-18px_rgba(0,0,0,0.65)] lg:order-2 lg:sticky lg:top-6">
-          <div className="flex items-center gap-2">
-            <CalendarDays size={16} className="text-cyan-300" />
-            <p className="text-sm font-semibold text-slate-100">Detalle del evento</p>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {Object.entries(CATEGORY_DOT_STYLES).map(([key, item]) =>
-              selectedDayCategoryCounts[key] > 0 ? (
-                <span
-                  key={key}
-                  className="inline-flex items-center gap-1 rounded-full border border-slate-700/70 bg-slate-900/60 px-2 py-1 text-[11px] text-slate-200"
-                >
-                  <span
-                    className={`h-2 w-2 rounded-full ring-1 ring-offset-1 ring-offset-slate-900 ${item.className}`}
-                  />
-                  {item.label}: {selectedDayCategoryCounts[key]}
-                </span>
-              ) : null,
-            )}
-          </div>
-
-          {selectedDayEvents.length === 0 ? (
-            <p className="text-sm text-slate-400">Sin eventos para esta fecha.</p>
-          ) : (
-            <>
-              <div className="rounded-xl border border-slate-800/70 bg-slate-900/40 p-3">
-                <p className="text-xs uppercase tracking-wide text-slate-400">
-                  Eventos del día ({selectedDayEvents.length})
-                </p>
-                <div className="mt-2 space-y-2">
-                  {selectedDayEvents.map((event) => {
-                    const category = getEventCategory(event);
-                    const palette =
-                      CATEGORY_EVENT_CARD_STYLES[category] || CATEGORY_EVENT_CARD_STYLES.monitoring;
-                    const isSelectedEvent = selectedDayEvent?.id === event.id;
-                    return (
-                      <button
-                        key={`detail-list-${event.id}`}
-                        type="button"
-                        onClick={() => setSelectedEventId(event.id)}
-                        aria-pressed={isSelectedEvent}
-                        className={`w-full rounded-lg border px-3 py-2 text-left text-[13px] leading-[1.45] transition-all duration-200 ${
-                          isSelectedEvent ? palette.selected : palette.idle
-                        }`}
-                      >
-                        <p title={event.title} className="truncate font-semibold">
-                          {truncateLabel(event.title, 70)}
-                        </p>
-                        <p className="mt-1 text-[11px] opacity-70">
-                          {new Date(event.start_at).toLocaleDateString()} - {new Date(event.end_at).toLocaleDateString()}
-                        </p>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {!selectedDayEvent ? null : (
-              <div className="border-t border-slate-800/80 pt-3">
-                <p className="text-[11px] uppercase tracking-[0.14em] text-slate-400">Detalle seleccionado</p>
-                <p className="mt-1 text-[12px] text-slate-500">Ficha de solo lectura del evento elegido.</p>
-              </div>
-              )}
-
-              {!selectedDayEvent ? null : (
-              <div className="rounded-xl border border-slate-800/70 bg-slate-900/40 p-3">
-                <div className="overflow-hidden rounded-lg border border-slate-800/70 bg-slate-950/35">
-                  <div className="grid grid-cols-[120px_minmax(0,1fr)] border-b border-slate-800/70 px-3 py-2">
-                    <p className="text-[10px] uppercase tracking-[0.12em] text-slate-500">Título</p>
-                    <p title={selectedDayEvent.title} className="truncate text-sm font-semibold text-slate-100">
-                      {truncateLabel(selectedDayEvent.title, 70)}
-                    </p>
-                  </div>
-                  <div className="grid grid-cols-[120px_minmax(0,1fr)] border-b border-slate-800/70 px-3 py-2">
-                    <p className="text-[10px] uppercase tracking-[0.12em] text-slate-500">Tipo</p>
-                    <p className="text-sm text-slate-200">{eventTypeLabel(selectedDayEvent.event_type)}</p>
-                  </div>
-                  <div className="grid grid-cols-[120px_minmax(0,1fr)] border-b border-slate-800/70 px-3 py-2">
-                    <p className="text-[10px] uppercase tracking-[0.12em] text-slate-500">Inicio</p>
-                    <p className="text-sm text-slate-200">{new Date(selectedDayEvent.start_at).toLocaleString()}</p>
-                  </div>
-                  <div className="grid grid-cols-[120px_minmax(0,1fr)] border-b border-slate-800/70 px-3 py-2">
-                    <p className="text-[10px] uppercase tracking-[0.12em] text-slate-500">Fin</p>
-                    <p className="text-sm text-slate-200">{new Date(selectedDayEvent.end_at).toLocaleString()}</p>
-                  </div>
-                  <div className="grid grid-cols-[120px_minmax(0,1fr)] px-3 py-2">
-                    <p className="text-[10px] uppercase tracking-[0.12em] text-slate-500">Estado</p>
-                    <div>
-                      <span className={`inline-flex rounded-full border px-3 py-1 text-xs font-semibold ${statusBadgeClass(statusFromEvent(selectedDayEvent))}`}>
-                        {statusLabel(statusFromEvent(selectedDayEvent))}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-              )}
-
-              {!selectedDayEvent ? null : (
-              <div className="rounded-xl border border-slate-800/70 bg-slate-900/40 p-3">
-                <p className="text-xs uppercase tracking-wide text-slate-400">Responsables</p>
-                <div className="mt-2 space-y-2">
-                  {(selectedDayEvent.monitoring_event_responsibles || []).map((responsible) => {
-                    const responsibleProfile = usersById.get(responsible.user_id);
-                    const fullName =
-                      responsibleProfile?.full_name ||
-                      `${responsibleProfile?.first_name || ''} ${responsibleProfile?.last_name || ''}`.trim();
-                    return (
-                      <div key={responsible.id} className="rounded-lg border border-slate-800/70 bg-slate-950/40 p-2">
-                        <p className="text-sm text-slate-100">{fullName || 'Sin nombre'}</p>
-                        <p className="text-xs text-slate-400">
-                          {levelLabel(responsible.level)} | {modalityLabel(responsible.modality)}
-                          {responsible.level !== 'initial' && responsible.course ? ` | Curso: ${responsible.course}` : ''}
-                        </p>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-              )}
-
-              {!selectedDayEvent ? null : (
-              <div className="rounded-xl border border-slate-800/70 bg-slate-900/40 p-3">
-                <div className="flex items-center justify-between">
-                  <p className="text-xs uppercase tracking-wide text-slate-400">Objetivos</p>
-                  <span className="text-xs text-slate-300">Avance {objectiveProgress}%</span>
-                </div>
-                <div className="mt-2 space-y-2">
-                  {(selectedDayEvent.monitoring_event_objectives || []).length === 0 ? (
-                    <p className="text-xs text-slate-500">Sin objetivos registrados.</p>
-                  ) : (
-                    selectedDayEvent.monitoring_event_objectives
-                      .sort((a, b) => (a.order_index ?? a.order ?? 0) - (b.order_index ?? b.order ?? 0))
-                      .map((objective) => (
-                        <label key={objective.id} className="flex items-center gap-2 rounded-lg border border-slate-800/70 px-2 py-2 text-sm text-slate-200">
-                          <input
-                            type="checkbox"
-                            checked={objective.completed}
-                            disabled={!isAdmin}
-                            onChange={() => toggleObjective(objective)}
-                            className="h-4 w-4 rounded border-slate-500 bg-slate-900"
-                          />
-                          <span className={objective.completed ? 'line-through text-slate-400' : ''}>{getObjectiveText(objective)}</span>
-                        </label>
-                      ))
-                  )}
-                </div>
-              </div>
-              )}
-
-              {isAdmin && selectedDayEvent ? (
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    onClick={() => openEditModal(selectedDayEvent)}
-                    className="inline-flex items-center gap-2 rounded-xl border border-slate-700/70 px-3 py-2 text-xs font-semibold text-slate-200 transition hover:border-slate-500"
-                  >
-                    <Pencil size={14} />
-                    Editar
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => toggleVisibility(selectedDayEvent)}
-                    className="inline-flex items-center gap-2 rounded-xl border border-amber-500/40 px-3 py-2 text-xs font-semibold text-amber-200 transition hover:border-amber-400/70"
-                  >
-                    {selectedDayEvent.status === 'hidden' ? <Eye size={14} /> : <EyeOff size={14} />}
-                    {selectedDayEvent.status === 'hidden' ? 'Mostrar' : 'Ocultar'}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setDeleteTarget(selectedDayEvent)}
-                    className="inline-flex items-center gap-2 rounded-xl border border-rose-500/40 px-3 py-2 text-xs font-semibold text-rose-200 transition hover:border-rose-400/70"
-                  >
-                    <Trash2 size={14} />
-                    Eliminar
-                  </button>
-                </div>
-              ) : null}
-            </>
-          )}
-        </Card>
         </div>
       )}
 
+      {isDayModalOpen ? (
+        <div
+          className="ds-modal-backdrop z-40"
+          onClick={() => setIsDayModalOpen(false)}
+        >
+          <div
+            className="ds-modal-surface m-3 max-h-[88vh] max-w-[1100px] overflow-y-auto"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-800/80 px-4 py-3">
+              <div>
+                <p className="text-xs uppercase tracking-[0.14em] text-slate-400">Eventos del dia</p>
+                <p className="mt-1 text-base font-semibold capitalize text-slate-100">{selectedDayLabel}</p>
+                <p className="mt-1 text-xs text-slate-400">
+                  {`${selectedDayEvents.length} evento${selectedDayEvents.length === 1 ? '' : 's'} | ${selectedDayCategoryCounts.monitoring || 0} monitoreo${selectedDayCategoryCounts.monitoring === 1 ? '' : 's'} | ${selectedDayCategoryCounts.activity || 0} actividad${selectedDayCategoryCounts.activity === 1 ? '' : 'es'}`}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsDayModalOpen(false)}
+                className="ds-btn ds-btn-secondary h-8 px-3"
+              >
+                Cerrar
+              </button>
+            </div>
+
+            <div className="grid gap-3 p-4 lg:grid-cols-[minmax(260px,3fr)_minmax(0,7fr)]">
+              <aside className="rounded-xl border border-slate-800/70 bg-slate-900/45 p-3">
+                <p className="text-xs uppercase tracking-wide text-slate-400">Lista de eventos</p>
+                <p className="mt-1 text-[11px] text-slate-500">Selecciona un evento para ver su detalle.</p>
+
+                {selectedDayEvents.length === 0 ? (
+                  <p className="mt-3 text-sm text-slate-400">Sin eventos para esta fecha.</p>
+                ) : (
+                  <div className="mt-3 space-y-2">
+                    {selectedDayEvents.map((event) => renderEventPriorityButton(event))}
+                  </div>
+                )}
+              </aside>
+
+              <section className="rounded-xl border border-slate-800/70 bg-slate-900/45 p-3">
+                {!selectedDayEvent ? (
+                  <p className="text-sm text-slate-400">Selecciona un evento para ver su detalle.</p>
+                ) : (
+                  <>
+                    <div className="rounded-xl border border-slate-800/70 bg-slate-950/40 p-3">
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <p title={selectedDayEvent.title} className="min-w-0 flex-1 text-sm font-semibold text-slate-100">
+                          {truncateLabel(selectedDayEvent.title, 110)}
+                        </p>
+                        <div className="flex items-center gap-1.5">
+                          <span className="inline-flex rounded-full border border-slate-700/70 bg-slate-900/70 px-2 py-0.5 text-[10px] text-slate-200">
+                            {eventTypeLabel(selectedDayEvent.event_type)}
+                          </span>
+                          <span className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-semibold ${statusBadgeClass(statusFromEvent(selectedDayEvent))}`}>
+                            {statusLabel(statusFromEvent(selectedDayEvent))}
+                          </span>
+                        </div>
+                      </div>
+                      <p className="mt-2 text-xs text-slate-300">{formatEventRangeLabel(selectedDayEvent.start_at, selectedDayEvent.end_at)}</p>
+                    </div>
+
+                    <div className="mt-3 rounded-xl border border-slate-800/70 bg-slate-950/35 p-3">
+                      <div className="flex items-center justify-between">
+                        <p className="text-xs uppercase tracking-wide text-slate-400">Responsables</p>
+                        <span className="text-[11px] text-slate-400">{selectedDayResponsibles.length}</span>
+                      </div>
+                      {selectedDayResponsibles.length === 0 ? (
+                        <p className="mt-2 text-xs text-slate-500">Sin responsables asignados.</p>
+                      ) : (
+                        <div className="mt-2 space-y-1.5">
+                          {selectedDayResponsiblesPreview.map((responsible) => {
+                            const responsibleProfile = usersById.get(responsible.user_id);
+                            const fullName =
+                              responsibleProfile?.full_name ||
+                              `${responsibleProfile?.first_name || ''} ${responsibleProfile?.last_name || ''}`.trim();
+                            return (
+                              <div key={`modal-resp-${responsible.id}`} className="rounded-lg border border-slate-800/70 bg-slate-900/40 px-2 py-1.5">
+                                <p className="text-sm text-slate-100">{fullName || 'Sin nombre'}</p>
+                                <p className="text-[11px] text-slate-400">
+                                  {levelLabel(responsible.level)} | {modalityLabel(responsible.modality)}
+                                </p>
+                              </div>
+                            );
+                          })}
+                          {selectedDayHiddenResponsibles > 0 ? (
+                            <p className="text-xs text-slate-400">+{selectedDayHiddenResponsibles} mas</p>
+                          ) : null}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="mt-3 rounded-xl border border-slate-800/70 bg-slate-950/35 p-3">
+                      <button
+                        type="button"
+                        onClick={() => setIsObjectivesExpanded((prev) => !prev)}
+                        className="flex w-full items-center justify-between gap-3 text-left"
+                      >
+                        <div>
+                          <p className="text-xs uppercase tracking-wide text-slate-400">Objetivos</p>
+                          <p className="mt-1 text-[11px] text-slate-400">
+                            {selectedDayObjectives.length} registrados | Avance {objectiveProgress}%
+                          </p>
+                        </div>
+                        <span className="text-xs font-semibold text-cyan-200">
+                          {isObjectivesExpanded ? 'Ocultar' : 'Ver detalle'}
+                        </span>
+                      </button>
+
+                      {isObjectivesExpanded ? (
+                        <div className="mt-2 space-y-2">
+                          {selectedDayObjectives.length === 0 ? (
+                            <p className="text-xs text-slate-500">Sin objetivos registrados.</p>
+                          ) : (
+                            selectedDayObjectives
+                              .slice()
+                              .sort((a, b) => (a.order_index ?? a.order ?? 0) - (b.order_index ?? b.order ?? 0))
+                              .map((objective) => (
+                                <label key={`modal-obj-${objective.id}`} className="flex items-center gap-2 rounded-lg border border-slate-800/70 px-2 py-2 text-sm text-slate-200">
+                                  <input
+                                    type="checkbox"
+                                    checked={objective.completed}
+                                    disabled={!isAdmin}
+                                    onChange={() => toggleObjective(objective)}
+                                    className="h-4 w-4 rounded border-slate-500 bg-slate-900"
+                                  />
+                                  <span className={objective.completed ? 'line-through text-slate-400' : ''}>{getObjectiveText(objective)}</span>
+                                </label>
+                              ))
+                          )}
+                        </div>
+                      ) : null}
+                    </div>
+
+                    {isAdmin ? (
+                      <div className="mt-3 flex flex-wrap gap-2 border-t border-slate-800/70 pt-3">
+                        <button
+                          type="button"
+                          onClick={() => openEditModal(selectedDayEvent)}
+                          className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-slate-700/70 px-3 text-xs font-semibold text-slate-200 transition hover:border-slate-500"
+                        >
+                          <Pencil size={13} />
+                          Editar
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => toggleVisibility(selectedDayEvent)}
+                          className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-amber-500/35 px-3 text-xs font-semibold text-amber-200 transition hover:border-amber-400/70"
+                        >
+                          {selectedDayEvent.status === 'hidden' ? <Eye size={13} /> : <EyeOff size={13} />}
+                          {selectedDayEvent.status === 'hidden' ? 'Mostrar' : 'Ocultar'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setDeleteTarget(selectedDayEvent)}
+                          className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-rose-500/35 px-3 text-xs font-semibold text-rose-200 transition hover:border-rose-400/70"
+                        >
+                          <Trash2 size={13} />
+                          Eliminar
+                        </button>
+                      </div>
+                    ) : null}
+                  </>
+                )}
+              </section>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {isModalOpen ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
-          <div className="m-4 max-h-[85vh] w-full max-w-[820px] overflow-y-auto rounded-2xl border border-white/10 bg-slate-900 p-6 shadow-[0_20px_70px_-30px_rgba(0,0,0,0.75)]">
+        <div className="ds-modal-backdrop">
+          <div className="ds-modal-surface m-4 max-h-[85vh] max-w-[820px] overflow-y-auto p-6">
             <div className="mb-4 flex items-center justify-between">
               <p className="text-lg font-semibold text-slate-100">{eventForm.id ? 'Editar evento' : 'Nuevo evento'}</p>
-              <button type="button" onClick={() => setIsModalOpen(false)} className="rounded-xl border border-slate-700/70 px-3 py-1 text-xs text-slate-300">Cerrar</button>
+              <button type="button" onClick={() => setIsModalOpen(false)} className="ds-btn ds-btn-secondary h-8 px-3">Cerrar</button>
             </div>
 
             <div className="grid gap-4 md:grid-cols-2">
-              <Input id="eventTitle" label="Título / nombre" value={eventForm.title} onChange={(event) => setEventForm((prev) => ({ ...prev, title: event.target.value }))} placeholder="Título del monitoreo o actividad" />
+              <Input id="eventTitle" label="Titulo / nombre" value={eventForm.title} onChange={(event) => setEventForm((prev) => ({ ...prev, title: event.target.value }))} placeholder="Titulo del monitoreo o actividad" />
               <Select id="eventType" label="Tipo" value={eventForm.eventType} onChange={(event) => setEventForm((prev) => ({ ...prev, eventType: event.target.value }))}>
                 <option value="monitoring">Monitoreo</option>
                 <option value="activity">Actividad</option>
@@ -1390,7 +1668,7 @@ export default function MonitoreoSeguimiento() {
                 <option value="closed">Cerrado</option>
               </Select>
               <label className="flex flex-col gap-2 text-sm text-slate-200 md:col-span-2">
-                <span className="text-xs uppercase tracking-wide text-slate-400">Descripción</span>
+                <span className="text-xs uppercase tracking-wide text-slate-400">Descripcion</span>
                 <textarea
                   rows={3}
                   value={eventForm.description}
@@ -1403,7 +1681,7 @@ export default function MonitoreoSeguimiento() {
             <div className="mt-6 rounded-xl border border-slate-800/70 bg-slate-950/40 p-4">
               <div className="mb-3 flex items-center justify-between">
                 <p className="text-sm font-semibold text-slate-100">Responsables</p>
-                <button type="button" onClick={addResponsibleRow} className="inline-flex items-center gap-2 rounded-xl border border-slate-700/70 px-3 py-2 text-xs text-slate-200"><Plus size={13} />Agregar responsable</button>
+                <button type="button" onClick={addResponsibleRow} className="ds-btn ds-btn-secondary h-9 px-3"><Plus size={13} />Agregar responsable</button>
               </div>
               <div className="space-y-3">
                 {eventForm.responsibles.map((item, index) => (
@@ -1437,7 +1715,7 @@ export default function MonitoreoSeguimiento() {
                       <button
                         type="button"
                         onClick={() => removeResponsible(index)}
-                        className="inline-flex w-full items-center justify-center rounded-xl border border-rose-500/35 px-3 py-2 text-xs font-semibold text-rose-200"
+                        className="ds-btn ds-btn-danger h-9 w-full"
                       >
                         Quitar
                       </button>
@@ -1454,7 +1732,7 @@ export default function MonitoreoSeguimiento() {
             <div className="mt-6 rounded-xl border border-slate-800/70 bg-slate-950/40 p-4">
               <div className="mb-3 flex items-center justify-between">
                 <p className="text-sm font-semibold text-slate-100">Objetivos / metas</p>
-                <button type="button" onClick={addObjective} className="inline-flex items-center gap-2 rounded-xl border border-slate-700/70 px-3 py-2 text-xs text-slate-200"><Plus size={13} />Agregar objetivo</button>
+                <button type="button" onClick={addObjective} className="ds-btn ds-btn-secondary h-9 px-3"><Plus size={13} />Agregar objetivo</button>
               </div>
               <div className="space-y-2">
                 {eventForm.objectives.map((objective, index) => (
@@ -1478,7 +1756,7 @@ export default function MonitoreoSeguimiento() {
                     <button
                       type="button"
                       onClick={() => removeObjective(index)}
-                      className="mb-2 inline-flex h-10 items-center justify-center rounded-xl border border-rose-500/35 px-3 text-xs font-semibold text-rose-200"
+                      className="ds-btn ds-btn-danger mb-2 h-10"
                     >
                       Quitar
                     </button>
@@ -1491,7 +1769,7 @@ export default function MonitoreoSeguimiento() {
               <button
                 type="button"
                 onClick={() => setIsModalOpen(false)}
-                className="rounded-xl border border-slate-700/70 px-4 py-2 text-sm font-semibold text-slate-200"
+                className="ds-btn ds-btn-secondary px-4 text-sm"
               >
                 Cancelar
               </button>
@@ -1499,7 +1777,7 @@ export default function MonitoreoSeguimiento() {
                 type="button"
                 onClick={saveEvent}
                 disabled={isSaving}
-                className="inline-flex items-center gap-2 rounded-xl bg-slate-100 px-4 py-2 text-sm font-semibold text-slate-900 disabled:opacity-60"
+                className="ds-btn ds-btn-primary px-4 text-sm"
               >
                 {isSaving ? <Loader2 size={16} className="animate-spin" /> : null}
                 {eventForm.id ? 'Actualizar' : 'Guardar'}
@@ -1513,9 +1791,9 @@ export default function MonitoreoSeguimiento() {
         open={Boolean(deleteTarget)}
         tone="danger"
         title="Eliminar evento"
-        description="Esta acción es irreversible. Se eliminará el monitoreo o actividad."
+        description="Esta accion es irreversible. Se eliminara el monitoreo o actividad."
         details={deleteTarget?.title || ''}
-        confirmText={isDeleting ? 'Eliminando...' : 'Sí, eliminar'}
+        confirmText={isDeleting ? 'Eliminando...' : 'Si, eliminar'}
         onCancel={() => setDeleteTarget(null)}
         onConfirm={handleDeleteEvent}
         loading={isDeleting}
