@@ -1,4 +1,4 @@
-﻿import { createContext, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createContext, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
   BarChart3,
@@ -99,7 +99,7 @@ const ASSISTANT_WIZARD_EDIT_FIELDS = [
   { id: 'startAt', label: 'Fecha inicio', command: 'editar fecha inicio' },
   { id: 'endAt', label: 'Fecha fin', command: 'editar fecha fin' },
   { id: 'responsibles', label: 'Responsables', command: 'editar responsables' },
-  { id: 'description', label: 'DescripciÃ³n', command: 'editar descripcion' },
+  { id: 'description', label: 'Descripción', command: 'editar descripcion' },
   { id: 'objectives', label: 'Objetivos', command: 'editar objetivos' },
 ];
 const ASSISTANT_STATE_CRITICAL = 'critical';
@@ -225,7 +225,7 @@ const ASSISTANT_QUICK_ACTION_IDS_BY_ROLE_AND_STATE = {
   },
 };
 const ASSISTANT_GREETING_REGEX =
-  /^(hola|buen(?:os|as)\s+d[iÃ­]as|buen(?:as)\s+tardes|buen(?:as)\s+noches|saludos|que tal|gracias)\b/i;
+  /^(hola|buen(?:os|as)\s+d[ií]as|buen(?:as)\s+tardes|buen(?:as)\s+noches|saludos|que tal|gracias)\b/i;
 const ASSISTANT_DOMAIN_QUERY_REGEX =
   /\b(monitoreo|monitoreos|reporte|reportes|calendario|seguimiento|documento|documentos|borrador|crear|activo|activos|vencen|vencer|hoy)\b/i;
 
@@ -611,7 +611,7 @@ const parseAssistantListMessage = (rawText) => {
     const content = line.replace(/^-+\s*/, '').trim();
     if (!content) return;
 
-    const summaryMatch = content.match(/^\.{3}\s*y\s+(\d+)\s+m[aÃ¡]s\.?$/i);
+    const summaryMatch = content.match(/^\.{3}\s*y\s+(\d+)\s+m[aá]s\.?$/i);
     if (summaryMatch) {
       summarizedCount = Number(summaryMatch[1]) || 0;
       return;
@@ -762,16 +762,16 @@ const buildChoiceParseFeedback = (parsed) => {
 
   const ignored = [];
   if (invalidTokens.length) {
-    ignored.push(`${invalidTokens.join(',')} (fuera de rango/no vÃ¡lido)`);
+    ignored.push(`${invalidTokens.join(',')} (fuera de rango/no válido)`);
   }
   if (duplicateIndices.length) {
     ignored.push(`${duplicateIndices.join(',')} (duplicado)`);
   }
 
   if (picked.length) {
-    return `TomÃ©: ${picked.join(',')}. IgnorÃ©: ${ignored.join(' ; ')}.`;
+    return `Tomé: ${picked.join(',')}. Ignoré: ${ignored.join(' ; ')}.`;
   }
-  return `No se encontraron opciones vÃ¡lidas. IgnorÃ©: ${ignored.join(' ; ')}.`;
+  return `No se encontraron opciones válidas. Ignoré: ${ignored.join(' ; ')}.`;
 };
 
 const extractNumberedOptionsFromText = (text) => {
@@ -1303,8 +1303,8 @@ export default function MonitoreoLayout() {
     );
     return [
       `${getWizardStepIndicator(wizard.draft, wizard.step, wizard.currentResponsible)}`,
-      'Selecciona especialista responsable (escribe nÃºmero o correo).',
-      'Responde con nÃºmero. Si son varias opciones, usa comas.',
+      'Selecciona especialista responsable (escribe número o correo).',
+      'Responde con número. Si son varias opciones, usa comas.',
       ...lines,
     ].join('\n');
   };
@@ -1357,7 +1357,7 @@ export default function MonitoreoLayout() {
         step,
         mode: 'single',
         options: [
-          { label: 'SÃ­', value: 'yes' },
+          { label: 'Sí', value: 'yes' },
           { label: 'No', value: 'no' },
         ],
       };
@@ -1370,7 +1370,7 @@ export default function MonitoreoLayout() {
         mode: 'single',
         options: [
           { label: 'Abrir borrador', value: 'openDraft' },
-          { label: 'AÃ±adir detalles', value: 'addDetails' },
+          { label: 'Añadir detalles', value: 'addDetails' },
         ],
       };
     }
@@ -1381,7 +1381,7 @@ export default function MonitoreoLayout() {
         step,
         mode: 'single',
         options: [
-          { label: 'SÃ­', value: 'yes' },
+          { label: 'Sí', value: 'yes' },
           { label: 'No', value: 'no' },
         ],
       };
@@ -1398,10 +1398,10 @@ export default function MonitoreoLayout() {
       ? wizard.pendingResponsibleQueue.length
       : 0;
     const responsibleContextLine = currentResponsibleName
-      ? `Responsable actual: ${currentResponsibleName}${pendingCount ? ` (${pendingCount} pendiente${pendingCount === 1 ? '' : 's'} despuÃ©s de este).` : '.'}`
+      ? `Responsable actual: ${currentResponsibleName}${pendingCount ? ` (${pendingCount} pendiente${pendingCount === 1 ? '' : 's'} después de este).` : '.'}`
       : '';
     if (wizard.step === 'title') {
-      return `${progress}\nIndica el tÃ­tulo del monitoreo.`;
+      return `${progress}\nIndica el título del monitoreo.`;
     }
     if (wizard.step === 'startAt') {
       return `${progress}\nIngresa la fecha de inicio (dd/mm/yyyy o yyyy-mm-dd).`;
@@ -1413,33 +1413,33 @@ export default function MonitoreoLayout() {
       return getWizardSpecialistPrompt(wizard);
     }
     if (wizard.step === 'responsibleLevel') {
-      return `${progress}${responsibleContextLine ? `\n${responsibleContextLine}` : ''}\nSelecciona nivel del responsable.\n1) Inicial\n2) Primaria\n3) Secundaria\nResponde con nÃºmero o texto.`;
+      return `${progress}${responsibleContextLine ? `\n${responsibleContextLine}` : ''}\nSelecciona nivel del responsable.\n1) Inicial\n2) Primaria\n3) Secundaria\nResponde con número o texto.`;
     }
     if (wizard.step === 'responsibleModality') {
-      return `${progress}${responsibleContextLine ? `\n${responsibleContextLine}` : ''}\nSelecciona modalidad.\n1) EBR\n2) EBE\nResponde con nÃºmero o texto.`;
+      return `${progress}${responsibleContextLine ? `\n${responsibleContextLine}` : ''}\nSelecciona modalidad.\n1) EBR\n2) EBE\nResponde con número o texto.`;
     }
     if (wizard.step === 'responsibleCourse') {
       return `${progress}${responsibleContextLine ? `\n${responsibleContextLine}` : ''}\nEscribe el curso del responsable (obligatorio para Primaria/Secundaria).`;
     }
     if (wizard.step === 'responsibleMore') {
-      return `${progress}\nÂ¿Deseas agregar otro responsable?\n1) SÃ­\n2) No\nResponde con nÃºmero o texto.`;
+      return `${progress}\n¿Deseas agregar otro responsable?\n1) Sí\n2) No\nResponde con número o texto.`;
     }
     if (wizard.step === 'postCreateChoice') {
-      return 'Puedes continuar con:\n1) Abrir borrador\n2) AÃ±adir detalles\nResponde con nÃºmero o texto.';
+      return 'Puedes continuar con:\n1) Abrir borrador\n2) Añadir detalles\nResponde con número o texto.';
     }
     if (wizard.step === 'optionalDescription') {
-      return 'DescripciÃ³n (opcional): escribe el texto o responde "omitir".';
+      return 'Descripción (opcional): escribe el texto o responde "omitir".';
     }
     if (wizard.step === 'optionalObjective') {
       return 'Objetivos/metas (opcional): escribe un objetivo o responde "omitir".';
     }
     if (wizard.step === 'optionalObjectiveMore') {
-      return 'Â¿Deseas agregar otro objetivo?\n1) SÃ­\n2) No\nResponde con nÃºmero o texto.';
+      return '¿Deseas agregar otro objetivo?\n1) Sí\n2) No\nResponde con número o texto.';
     }
     if (wizard.step === 'completed') {
       return 'Flujo completado. Puedes abrir el borrador o crear otro monitoreo.';
     }
-    return 'Continuemos con la creaciÃ³n del monitoreo.';
+    return 'Continuemos con la creación del monitoreo.';
   };
 
   const fetchWizardSpecialists = async () => {
@@ -1653,7 +1653,7 @@ export default function MonitoreoLayout() {
 
   const startAssistantWizard = async () => {
     if (assistantWizard.active) {
-      pushAssistantWizardMessage('Ya estÃ¡s en modo asistido. Puedes continuar o usar "Cancelar".');
+      pushAssistantWizardMessage('Ya estás en modo asistido. Puedes continuar o usar "Cancelar".');
       return;
     }
 
@@ -1664,7 +1664,7 @@ export default function MonitoreoLayout() {
         setAssistantWizard(createEmptyWizardState());
         setAssistantOptionContext(buildQuickActionOptionContext(assistantQuickActionItems));
         pushAssistantWizardMessage(
-          'No hay especialistas disponibles para asignar responsables. Revisa usuarios activos e intÃ©ntalo de nuevo.',
+          'No hay especialistas disponibles para asignar responsables. Revisa usuarios activos e inténtalo de nuevo.',
         );
         return;
       }
@@ -1677,13 +1677,13 @@ export default function MonitoreoLayout() {
       };
       setAssistantWizard(nextWizard);
       pushAssistantWizardMessage(
-        'Modo asistido activado.\nTe guiarÃ© paso a paso. Responde una pregunta por vez.',
+        'Modo asistido activado.\nTe guiaré paso a paso. Responde una pregunta por vez.',
       );
       promptWizardStep(nextWizard);
     } catch (error) {
       setAssistantWizard(createEmptyWizardState());
       setAssistantOptionContext(buildQuickActionOptionContext(assistantQuickActionItems));
-      pushAssistantWizardMessage(`No se pudo iniciar el asistente de creaciÃ³n.\n- ${error.message}`);
+      pushAssistantWizardMessage(`No se pudo iniciar el asistente de creación.\n- ${error.message}`);
     }
   };
 
@@ -1719,7 +1719,7 @@ export default function MonitoreoLayout() {
     };
     const nextStep = stepByField[fieldKey];
     if (!nextStep) {
-      pushAssistantWizardMessage('Campo no reconocido. Usa: tÃ­tulo, fecha inicio, fecha fin, responsables, descripciÃ³n u objetivos.');
+      pushAssistantWizardMessage('Campo no reconocido. Usa: título, fecha inicio, fecha fin, responsables, descripción u objetivos.');
       return;
     }
 
@@ -1739,7 +1739,7 @@ export default function MonitoreoLayout() {
   const handleAssistantOpenDraft = () => {
     const templateId = assistantWizard.draft.templateId;
     if (!templateId) {
-      pushAssistantWizardMessage('AÃºn no hay un borrador para abrir.');
+      pushAssistantWizardMessage('Aún no hay un borrador para abrir.');
       return;
     }
     localStorage.setItem('monitoreoTemplateSelected', templateId);
@@ -1783,7 +1783,7 @@ export default function MonitoreoLayout() {
       handleAssistantOpenDraft();
       return;
     }
-    if (normalized === 'AÃ±adir detalles') {
+    if (normalized === 'Añadir detalles') {
       handleAssistantAddDetails();
       return;
     }
@@ -1906,13 +1906,13 @@ export default function MonitoreoLayout() {
         handleAssistantOpenDraft();
         return;
       }
-      pushAssistantWizardMessage('Responde "1" (Abrir borrador) o "2" (AÃ±adir detalles).');
+      pushAssistantWizardMessage('Responde "1" (Abrir borrador) o "2" (Añadir detalles).');
       return;
     }
 
     if (wizard.step === 'title') {
       if (!input) {
-        pushAssistantWizardMessage('El tÃ­tulo es obligatorio.');
+        pushAssistantWizardMessage('El título es obligatorio.');
         promptWizardStep(wizard);
         return;
       }
@@ -1926,7 +1926,7 @@ export default function MonitoreoLayout() {
     if (wizard.step === 'startAt') {
       const isoDate = parseWizardDateToIso(input);
       if (!isoDate) {
-        pushAssistantWizardMessage('Fecha invÃ¡lida. Usa formato dd/mm/yyyy o yyyy-mm-dd.');
+        pushAssistantWizardMessage('Fecha inválida. Usa formato dd/mm/yyyy o yyyy-mm-dd.');
         promptWizardStep(wizard);
         return;
       }
@@ -1943,7 +1943,7 @@ export default function MonitoreoLayout() {
     if (wizard.step === 'endAt') {
       const isoDate = parseWizardDateToIso(input);
       if (!isoDate) {
-        pushAssistantWizardMessage('Fecha invÃ¡lida. Usa formato dd/mm/yyyy o yyyy-mm-dd.');
+        pushAssistantWizardMessage('Fecha inválida. Usa formato dd/mm/yyyy o yyyy-mm-dd.');
         promptWizardStep(wizard);
         return;
       }
@@ -1969,14 +1969,14 @@ export default function MonitoreoLayout() {
           .map((option) => option?.value)
           .filter(Boolean);
         if (!selectedSpecialists.length) {
-          pushAssistantWizardMessage('No identifiquÃ© especialistas vÃ¡lidos. Elige Ã­ndices dentro de la lista.');
+          pushAssistantWizardMessage('No identifiqué especialistas válidos. Elige índices dentro de la lista.');
           promptWizardStep(wizard);
           return;
         }
       } else {
         const selected = resolveWizardSpecialistSelection(input, wizard.specialistOptions);
         if (!selected) {
-          pushAssistantWizardMessage('No identifiquÃ© al especialista. Elige un nÃºmero o escribe correo/nombre.');
+          pushAssistantWizardMessage('No identifiqué al especialista. Elige un número o escribe correo/nombre.');
           promptWizardStep(wizard);
           return;
         }
@@ -2039,7 +2039,7 @@ export default function MonitoreoLayout() {
       const level =
         parsedChoice?.selectedOptions?.[0]?.value || normalizeWizardLevel(input);
       if (!level) {
-        pushAssistantWizardMessage('Nivel invÃ¡lido. Usa Inicial, Primaria o Secundaria.');
+        pushAssistantWizardMessage('Nivel inválido. Usa Inicial, Primaria o Secundaria.');
         promptWizardStep(wizard);
         return;
       }
@@ -2058,7 +2058,7 @@ export default function MonitoreoLayout() {
       const modality =
         parsedChoice?.selectedOptions?.[0]?.value || normalizeWizardModality(input);
       if (!modality) {
-        pushAssistantWizardMessage('Modalidad invÃ¡lida. Usa EBR o EBE.');
+        pushAssistantWizardMessage('Modalidad inválida. Usa EBR o EBE.');
         promptWizardStep(wizard);
         return;
       }
@@ -2150,7 +2150,7 @@ export default function MonitoreoLayout() {
           wizard.objectiveTextColumn = saved.objectiveTextColumn || wizard.objectiveTextColumn;
           setAssistantWizard({ ...wizard, saving: false });
           pushAssistantWizardMessage(
-            `Listo, creÃ© el monitoreo en BORRADOR: ${wizard.draft.title}\n- Usa "Abrir borrador" o "AÃ±adir detalles".`,
+            `Listo, creé el monitoreo en BORRADOR: ${wizard.draft.title}\n- Usa "Abrir borrador" o "Añadir detalles".`,
           );
           promptWizardStep(wizard);
         } catch (error) {
@@ -2245,7 +2245,7 @@ export default function MonitoreoLayout() {
       return;
     }
 
-    pushAssistantWizardMessage('No entendÃ­ la respuesta. Vamos con el siguiente paso.');
+    pushAssistantWizardMessage('No entendí la respuesta. Vamos con el siguiente paso.');
     promptWizardStep(wizard);
   };
 
@@ -2748,7 +2748,7 @@ export default function MonitoreoLayout() {
           const isExactSingleIndex = /^\d+$/.test(trimmed);
           if (!isExactSingleIndex) {
             shortCircuitMessage =
-              `Para atajos rÃ¡pidos escribe un solo nÃºmero: ${assistantQuickActionHint}.`;
+              `Para atajos rápidos escribe un solo número: ${assistantQuickActionHint}.`;
           } else {
             const feedback = buildChoiceParseFeedback(parsedChoice);
             if (feedback) {
@@ -2756,12 +2756,12 @@ export default function MonitoreoLayout() {
             }
             if (!parsedChoice.validIndices.length) {
               shortCircuitMessage =
-                `Ãndice fuera de rango. Usa: ${assistantQuickActionHint}.`;
+                `Índice fuera de rango. Usa: ${assistantQuickActionHint}.`;
             } else {
               const actionId = parsedChoice.selectedOptions?.[0]?.value;
               const quickAction = assistantQuickActionItems.find((item) => item.id === actionId);
               if (!quickAction) {
-                shortCircuitMessage = `No pude resolver ese atajo. Intenta con un nÃºmero del 1 al ${assistantQuickActionItems.length || 1}.`;
+                shortCircuitMessage = `No pude resolver ese atajo. Intenta con un número del 1 al ${assistantQuickActionItems.length || 1}.`;
               } else if (quickAction.type === 'wizard') {
                 triggerQuickWizard = true;
               } else if (quickAction.type === 'navigate' && quickAction.path) {
@@ -2778,7 +2778,7 @@ export default function MonitoreoLayout() {
             preflightAssistantMessages.push(buildChatMessage('assistant', feedback));
           }
           if (!parsedChoice.validIndices.length) {
-            shortCircuitMessage = 'No se encontraron opciones vÃ¡lidas. Responde con un nÃºmero de la lista.';
+            shortCircuitMessage = 'No se encontraron opciones válidas. Responde con un número de la lista.';
           } else {
             effectiveMessage = String(parsedChoice.selectedOptions?.[0]?.value || trimmed).trim() || trimmed;
           }
@@ -2898,7 +2898,7 @@ export default function MonitoreoLayout() {
         buildChatMessage(
           'assistant',
           unauthorized
-            ? 'Tu sesiÃ³n venciÃ³. Cierra sesiÃ³n e ingresa nuevamente.'
+            ? 'Tu sesión venció. Cierra sesión e ingresa nuevamente.'
             : 'No se pudo contactar al asistente. Intenta de nuevo.',
         ),
       ]);
@@ -2938,7 +2938,7 @@ export default function MonitoreoLayout() {
     }
 
     if (assistantWizard.active) {
-      pushAssistantWizardMessage('EstÃ¡s en modo asistido. Usa "Cancelar" o termina el flujo actual.');
+      pushAssistantWizardMessage('Estás en modo asistido. Usa "Cancelar" o termina el flujo actual.');
       return;
     }
 
@@ -3507,7 +3507,7 @@ export default function MonitoreoLayout() {
                   mobileSidebarButtonRef.current?.focus?.();
                 }}
                 className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-700/70 bg-slate-900/55 text-slate-200 transition-all duration-200 ease-out hover:border-cyan-400/45 hover:bg-slate-800/80 hover:text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/80 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
-                aria-label="Cerrar menÃº"
+                aria-label="Cerrar menú"
               >
                 <X size={16} />
               </button>
@@ -3594,7 +3594,7 @@ export default function MonitoreoLayout() {
                 className="inline-flex h-10 items-center gap-3 rounded-xl px-3 text-sm font-medium text-slate-400 transition-all duration-200 ease-out hover:bg-amber-500/12 hover:text-amber-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300/80 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
               >
                 <LogOut size={14} />
-                Cerrar sesiÃ³n
+                Cerrar sesión
               </button>
             </div>
           </aside>
@@ -3610,7 +3610,7 @@ export default function MonitoreoLayout() {
             <div className={`flex h-full ${isSidebarCollapsed ? 'flex-col items-center justify-between' : 'items-center justify-between gap-3'}`}>
               <div
                 className={`min-w-0 items-center ${isSidebarCollapsed ? 'order-2 flex w-full justify-center' : 'order-1 flex flex-1 gap-3'}`}
-                title={isSidebarCollapsed ? `${displayName || 'Usuario'} Â· ${roleLabel}` : undefined}
+                title={isSidebarCollapsed ? `${displayName || 'Usuario'} · ${roleLabel}` : undefined}
               >
                 <div className="flex h-12 w-12 items-center justify-center overflow-hidden rounded-2xl border border-slate-700/70 bg-slate-800/80 text-sm font-semibold text-slate-200 shadow-[0_8px_20px_rgba(2,6,23,0.45)]">
                   {avatarUrl ? (
@@ -3706,12 +3706,12 @@ export default function MonitoreoLayout() {
             <button
               type="button"
               onClick={() => setIsLogoutOpen(true)}
-              aria-label="Cerrar sesiÃ³n"
-              title={isSidebarCollapsed ? 'Cerrar sesiÃ³n' : undefined}
+              aria-label="Cerrar sesión"
+              title={isSidebarCollapsed ? 'Cerrar sesión' : undefined}
               className={getSidebarDesktopButtonClass({ tone: 'warning' })}
             >
               <LogOut size={16} className={getSidebarDesktopIconClass({ tone: 'warning' })} />
-              <span className={sidebarDesktopLabelClass}>Cerrar sesiÃ³n</span>
+              <span className={sidebarDesktopLabelClass}>Cerrar sesión</span>
             </button>
           </div>
         </aside>
@@ -3723,8 +3723,8 @@ export default function MonitoreoLayout() {
                 type="button"
                 onClick={() => setIsMobileSidebarOpen(true)}
                 className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-slate-800/70 text-slate-200 transition hover:border-slate-600/70"
-                aria-label="Abrir menÃº"
-                title="MenÃº"
+                aria-label="Abrir menú"
+                title="Menú"
               >
                 <PanelLeftOpen size={16} />
               </button>
@@ -3793,7 +3793,7 @@ export default function MonitoreoLayout() {
                   </p>
                   <div className="mt-2 space-y-1.5 text-sm leading-6 text-slate-100">
                     <p>
-                      <span className="text-slate-400">TÃ­tulo:</span>{' '}
+                      <span className="text-slate-400">Título:</span>{' '}
                       {assistantWizard.draft.title || 'No registrado'}
                     </p>
                     <p>
@@ -3902,7 +3902,7 @@ export default function MonitoreoLayout() {
                               onClick={() => handleAssistantCardToggle(message.id)}
                               className="mt-1.5 text-xs font-semibold text-cyan-200 underline decoration-cyan-400/70 underline-offset-4"
                             >
-                              {isExpanded ? 'Ver menos' : `Ver mÃ¡s (${hiddenCount})`}
+                              {isExpanded ? 'Ver menos' : `Ver más (${hiddenCount})`}
                             </button>
                           ) : null}
                         </div>
@@ -4008,7 +4008,7 @@ export default function MonitoreoLayout() {
                       className="rounded-lg border border-slate-600/70 bg-slate-800/70 px-3 py-1.5 text-xs font-semibold text-slate-100 transition hover:border-cyan-400/70"
                       disabled={isAssistantLoading || assistantWizard.saving}
                     >
-                      AtrÃ¡s
+                      Atrás
                     </button>
                     <button
                       type="button"
@@ -4056,11 +4056,11 @@ export default function MonitoreoLayout() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => handleAssistantWizardControl('AÃ±adir detalles')}
+                    onClick={() => handleAssistantWizardControl('Añadir detalles')}
                     className="rounded-lg border border-slate-600/70 bg-slate-800/70 px-3 py-1.5 text-xs font-semibold text-slate-100 transition hover:border-cyan-400/70"
                     disabled={isAssistantLoading || assistantWizard.saving}
                   >
-                    AÃ±adir detalles
+                    Añadir detalles
                   </button>
                 </div>
               ) : null}
@@ -4070,7 +4070,7 @@ export default function MonitoreoLayout() {
                   onClick={handleAssistantClearConversation}
                   className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-1.5 text-xs font-semibold text-rose-200 transition hover:border-rose-400/60 hover:text-rose-100"
                 >
-                  Eliminar conversaciÃ³n
+                  Eliminar conversación
                 </button>
                 <button
                   type="button"
@@ -4078,8 +4078,8 @@ export default function MonitoreoLayout() {
                   className="rounded-lg border border-slate-600/70 bg-slate-800/70 px-3 py-1.5 text-xs font-semibold text-slate-100 transition hover:border-cyan-400/70 hover:text-cyan-100"
                 >
                   {assistantMode === ASSISTANT_MODE_PERSISTENT
-                    ? 'SesiÃ³n persistente'
-                    : 'SesiÃ³n temporal'}
+                    ? 'Sesión persistente'
+                    : 'Sesión temporal'}
                 </button>
               </div>
               {assistantMode === ASSISTANT_MODE_TEMPORARY ? (
@@ -4182,7 +4182,7 @@ export default function MonitoreoLayout() {
                 <div className="mt-3 flex flex-wrap gap-2">
                   {[
                     { id: DENSITY_COMPACT, label: 'Compacta' },
-                    { id: DENSITY_COMFORT, label: 'CÃ³moda' },
+                    { id: DENSITY_COMFORT, label: 'Cómoda' },
                   ].map((option) => (
                     <button
                       key={option.id}
@@ -4199,7 +4199,7 @@ export default function MonitoreoLayout() {
                   ))}
                 </div>
                 <p className="mt-2 text-xs text-slate-500">
-                  En escritorio se usa Compacta por defecto para mejorar lectura rÃ¡pida.
+                  En escritorio se usa Compacta por defecto para mejorar lectura rápida.
                 </p>
               </div>
 
@@ -4237,10 +4237,10 @@ export default function MonitoreoLayout() {
       <ConfirmModal
         open={isLogoutOpen}
         tone="warning"
-        title="Cerrar sesiÃ³n"
-        description="Â¿Seguro que deseas cerrar sesiÃ³n?"
-        details="TendrÃ¡s que iniciar sesiÃ³n nuevamente para continuar."
-        confirmText={isLoggingOut ? 'Cerrando sesiÃ³n...' : 'SÃ­, cerrar sesiÃ³n'}
+        title="Cerrar sesión"
+        description="¿Seguro que deseas cerrar sesión?"
+        details="Tendrás que iniciar sesión nuevamente para continuar."
+        confirmText={isLoggingOut ? 'Cerrando sesión...' : 'Sí, cerrar sesión'}
         cancelText="Cancelar"
         onCancel={() => setIsLogoutOpen(false)}
         onConfirm={handleLogout}

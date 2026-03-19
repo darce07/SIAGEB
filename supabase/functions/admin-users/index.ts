@@ -13,6 +13,10 @@ const jsonResponse = (status: number, body: Record<string, unknown>) =>
   });
 
 const buildFullName = (firstName?: string, lastName?: string) => `${firstName || ''} ${lastName || ''}`.trim();
+const normalizeRole = (value: unknown) => String(value || 'user').trim().toLowerCase();
+const normalizeStatus = (value: unknown) => String(value || 'active').trim().toLowerCase();
+const normalizeDocType = (value: unknown) => String(value || '').trim().toUpperCase();
+const normalizeDocNumber = (value: unknown) => String(value || '').trim();
 
 const getEnv = () => {
   const url = Deno.env.get('SUPABASE_URL') || '';
@@ -153,10 +157,10 @@ Deno.serve(async (req) => {
   if (action === 'create') {
     const firstName = String(payload.first_name || '').trim();
     const lastName = String(payload.last_name || '').trim();
-    const role = String(payload.role || 'user').trim();
-    const status = String(payload.status || 'active').trim();
-    const docType = String(payload.doc_type || '').trim();
-    const docNumber = String(payload.doc_number || '').trim();
+    const role = normalizeRole(payload.role);
+    const status = normalizeStatus(payload.status);
+    const docType = normalizeDocType(payload.doc_type);
+    const docNumber = normalizeDocNumber(payload.doc_number);
     const email = String(payload.email || '').trim().toLowerCase();
     const password = String(payload.password || '');
 
@@ -215,8 +219,9 @@ Deno.serve(async (req) => {
     if (currentProfileError) return jsonResponse(500, { error: currentProfileError.message });
     if (!currentProfile) return jsonResponse(404, { error: 'Usuario no encontrado.' });
 
-    const nextRole = payload.role !== undefined ? String(payload.role || 'user').trim() : currentProfile.role || 'user';
-    const nextStatus = payload.status !== undefined ? String(payload.status || 'active').trim() : currentProfile.status || 'active';
+    const nextRole = payload.role !== undefined ? normalizeRole(payload.role) : normalizeRole(currentProfile.role);
+    const nextStatus =
+      payload.status !== undefined ? normalizeStatus(payload.status) : normalizeStatus(currentProfile.status);
     const willRemainActiveAdmin = nextRole === 'admin' && nextStatus === 'active';
     if (isActiveAdminProfile(currentProfile) && !willRemainActiveAdmin) {
       const { count, error: countError } = await countActiveAdmins(adminClient);
@@ -230,10 +235,10 @@ Deno.serve(async (req) => {
     if (payload.first_name !== undefined) updates.first_name = String(payload.first_name || '');
     if (payload.last_name !== undefined) updates.last_name = String(payload.last_name || '');
     if (payload.full_name !== undefined) updates.full_name = String(payload.full_name || '');
-    if (payload.role !== undefined) updates.role = String(payload.role || 'user');
-    if (payload.status !== undefined) updates.status = String(payload.status || 'active');
-    if (payload.doc_type !== undefined) updates.doc_type = String(payload.doc_type || '');
-    if (payload.doc_number !== undefined) updates.doc_number = String(payload.doc_number || '');
+    if (payload.role !== undefined) updates.role = normalizeRole(payload.role);
+    if (payload.status !== undefined) updates.status = normalizeStatus(payload.status);
+    if (payload.doc_type !== undefined) updates.doc_type = normalizeDocType(payload.doc_type);
+    if (payload.doc_number !== undefined) updates.doc_number = normalizeDocNumber(payload.doc_number);
     if (payload.email !== undefined) updates.email = String(payload.email || '').trim().toLowerCase();
     const nextPassword = payload.password !== undefined ? String(payload.password || '') : '';
     if (nextPassword) updates.temp_credential = nextPassword;
