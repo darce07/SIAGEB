@@ -1947,7 +1947,7 @@ export default function MonitoreoGestionMonitoreos({ embedded = false, initialCr
   ];
 
   return (
-    <div className="flex min-w-0 flex-col gap-4 overflow-x-hidden">
+    <div className="flex w-full min-w-0 max-w-full touch-pan-y flex-col gap-4 overflow-x-hidden">
       <div className="border-b border-slate-800/70 pb-4">
         <SectionHeader
           eyebrow="Gestion"
@@ -1995,7 +1995,7 @@ export default function MonitoreoGestionMonitoreos({ embedded = false, initialCr
       ) : null}
 
       <div className="grid min-w-0 gap-4 xl:grid-cols-[320px_minmax(0,1fr)]">
-        <Card className={`flex min-w-0 h-full flex-col gap-3 p-3.5 ${isMobileLayout && mobilePanel !== 'requests' ? 'hidden' : ''}`}>
+        <Card className={`flex min-w-0 h-full max-w-full flex-col gap-3 overflow-hidden p-3.5 ${isMobileLayout && mobilePanel !== 'requests' ? 'hidden' : ''}`}>
           <div className="flex items-center justify-between gap-2">
             <p className="text-h3">Solicitudes</p>
             <button type="button" onClick={resetToCreateMode} className="ds-btn ds-btn-primary h-8 px-3">
@@ -2067,15 +2067,15 @@ export default function MonitoreoGestionMonitoreos({ embedded = false, initialCr
                         setMobileStage('stage1');
                       }
                     }}
-                    className={`w-full rounded-xl border px-3 py-2 text-left transition ${
+                    className={`w-full min-w-0 max-w-full overflow-hidden rounded-xl border px-3 py-2 text-left transition ${
                       selected
                         ? 'border-cyan-400/60 bg-cyan-500/12'
                         : 'border-slate-800/80 bg-slate-900/55 hover:border-slate-600/70'
                     }`}
                   >
                     <div className="flex items-start justify-between gap-2">
-                      <p className="text-sm font-semibold text-slate-100">{request.name}</p>
-                      <span className={getStatusBadgeClass(displayStatus)}>
+                      <p className="min-w-0 flex-1 truncate text-sm font-semibold text-slate-100">{request.name}</p>
+                      <span className={`${getStatusBadgeClass(displayStatus)} shrink-0`}>
                         <StatusIcon status={displayStatus} />
                         {getStatusLabel(displayStatus)}
                       </span>
