@@ -1037,6 +1037,10 @@ export default function MonitoreoLayout() {
     readBooleanSetting(ASSISTANT_CLEAR_ON_LOGOUT_KEY, false),
   );
   const [selectedTemplateSections, setSelectedTemplateSections] = useState(null);
+  const [selectedTemplateVisibleBlocks, setSelectedTemplateVisibleBlocks] = useState({
+    showHeader: true,
+    showClosing: true,
+  });
   const [navBadges, setNavBadges] = useState({});
   const [assistantGreetingContext, setAssistantGreetingContext] = useState(null);
   const [auth, setAuth] = useState(() => {
@@ -3023,25 +3027,79 @@ export default function MonitoreoLayout() {
     let active = true;
     const fetchTemplateSections = async () => {
       if (!isFicha) {
-        if (active) setSelectedTemplateSections(null);
+        if (active) {
+          setSelectedTemplateSections(null);
+          setSelectedTemplateVisibleBlocks({ showHeader: true, showClosing: true });
+        }
         return;
       }
       const selectedId = localStorage.getItem('monitoreoTemplateSelected');
       if (!selectedId) {
-        if (active) setSelectedTemplateSections(null);
+        if (active) {
+          setSelectedTemplateSections(null);
+          setSelectedTemplateVisibleBlocks({ showHeader: true, showClosing: true });
+        }
         return;
       }
       const { data, error } = await supabase
         .from('monitoring_templates')
-        .select('sections')
+        .select('sections,levels_config')
         .eq('id', selectedId)
         .single();
       if (error) {
         console.error(error);
-        if (active) setSelectedTemplateSections(null);
+        if (active) {
+          setSelectedTemplateSections(null);
+          setSelectedTemplateVisibleBlocks({ showHeader: true, showClosing: true });
+        }
         return;
       }
-      if (active) setSelectedTemplateSections(data?.sections || null);
+      if (!active) return;
+
+      let showHeader = true;
+      let showClosing = true;
+      const levelsConfig = data?.levels_config && typeof data.levels_config === 'object' ? data.levels_config : null;
+      if (levelsConfig?.type === 'request_builder') {
+        const sheets = Array.isArray(levelsConfig?.builder?.sheets) ? levelsConfig.builder.sheets : [];
+        const sections = Array.isArray(data?.sections) ? data.sections : [];
+        const sheetIdFromSections = sections.find((section) => section?.sheetId)?.sheetId;
+        const activeSheet =
+          sheets.find((sheet) => sheet.id === sheetIdFromSections) ||
+          sheets[0] ||
+          null;
+        const headerFields = activeSheet?.headerFields && typeof activeSheet.headerFields === 'object'
+          ? activeSheet.headerFields
+          : {};
+        const closingFields = activeSheet?.closingFields && typeof activeSheet.closingFields === 'object'
+          ? activeSheet.closingFields
+          : {};
+        const dynamicFields = Array.isArray(activeSheet?.dynamicFields) ? activeSheet.dynamicFields : [];
+        const metadata = levelsConfig?.metadata && typeof levelsConfig.metadata === 'object'
+          ? levelsConfig.metadata
+          : {};
+        const includeDate = Boolean(metadata.include_date);
+        const includeLocation = Boolean(metadata.include_location);
+        const includeSignatures = Boolean(metadata.include_signatures);
+        const includeLevels = Boolean(metadata.include_levels);
+        showHeader = Object.values(headerFields).some(Boolean) || dynamicFields.length > 0;
+        const hasClosingField = Object.values(closingFields).some(Boolean);
+        const hasExplicitClosingBlock =
+          includeDate ||
+          includeLocation ||
+          includeSignatures ||
+          includeLevels ||
+          Boolean(closingFields.general_observation) ||
+          Boolean(closingFields.general_commitment) ||
+          Boolean(closingFields.closing_place) ||
+          Boolean(closingFields.closing_date) ||
+          Boolean(closingFields.signature) ||
+          Boolean(closingFields.dni_monitored) ||
+          Boolean(closingFields.dni_monitor);
+        showClosing = hasClosingField && hasExplicitClosingBlock;
+      }
+
+      setSelectedTemplateSections(data?.sections || null);
+      setSelectedTemplateVisibleBlocks({ showHeader, showClosing });
     };
     fetchTemplateSections();
     return () => {
@@ -3309,13 +3367,14 @@ export default function MonitoreoLayout() {
 
     let templateSections = SIDEBAR_SECTIONS;
     if (selectedTemplateSections?.length) {
+      const sectionItems = selectedTemplateSections.map((section) => ({
+        id: section.id,
+        label: section.title,
+      }));
       templateSections = [
-        { id: 'datos', label: 'Datos generales' },
-        ...selectedTemplateSections.map((section) => ({
-          id: section.id,
-          label: section.title,
-        })),
-        { id: 'cierre', label: 'Cierre & Firmas' },
+        ...(selectedTemplateVisibleBlocks.showHeader ? [{ id: 'datos', label: 'Datos generales' }] : []),
+        ...sectionItems,
+        ...(selectedTemplateVisibleBlocks.showClosing ? [{ id: 'cierre', label: 'Cierre' }] : []),
       ];
     }
 
@@ -3337,7 +3396,7 @@ export default function MonitoreoLayout() {
         })),
       },
     ];
-  }, [isFicha, navBadges, navigate, selectedTemplateSections, userRole]);
+  }, [isFicha, navBadges, navigate, selectedTemplateSections, selectedTemplateVisibleBlocks, userRole]);
 
   const isCompactDensity = density === DENSITY_COMPACT;
   const sidebarDesktopRailClass = isSidebarCollapsed

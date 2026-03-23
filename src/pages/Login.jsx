@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Loader2 } from 'lucide-react';
-import loginHeroIllustration from '../img/ilustration-hero-crop.png';
+import { CircleCheck, Loader2, Lock } from 'lucide-react';
 import Input from '../components/ui/Input.jsx';
 import Select from '../components/ui/Select.jsx';
 import { isSupabaseConfigured, supabase } from '../lib/supabase.js';
@@ -9,6 +8,7 @@ import { isSupabaseConfigured, supabase } from '../lib/supabase.js';
 const AUTH_KEY = 'monitoreoAuth';
 const SESSION_LOGOUT_REASON_KEY = 'monitoreoSessionLogoutReason';
 const SESSION_LOGOUT_REASON_INACTIVITY = 'inactivity';
+const EMAIL_DOMAIN_OPTIONS = ['ugel.gob.pe', 'gmail.com', 'outlook.com', 'hotmail.com'];
 
 const getStoredAuth = () => {
   try {
@@ -26,7 +26,9 @@ export default function Login() {
   const [sessionNotice, setSessionNotice] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [form, setForm] = useState({
-    email: '',
+    emailUser: '',
+    emailDomain: 'ugel.gob.pe',
+    emailDomainCustom: '',
     password: '',
     docType: 'DNI',
     docNumber: '',
@@ -49,10 +51,96 @@ export default function Login() {
 
   const isAdmin = role === 'admin';
 
-  const subtitle = useMemo(
-    () => (isAdmin ? 'Acceso de administrador' : 'Acceso de especialista'),
-    [isAdmin],
+  const accessSummary = useMemo(
+    () => ({
+      roleLabel: isAdmin ? 'Administrador' : 'Especialista',
+      identityPlaceholder: form.docType === 'CORREO' ? (isAdmin ? 'usuario.admin' : 'nombre.apellido') : '',
+    }),
+    [form.docType, isAdmin],
   );
+
+  const documentMaxLength = form.docType === 'DNI' ? 8 : form.docType === 'CE' ? 9 : 0;
+  const remainingDocDigits =
+    documentMaxLength > 0 ? Math.max(documentMaxLength - String(form.docNumber || '').length, 0) : 0;
+  const shouldShowRemainingDigits = documentMaxLength > 0 && String(form.docNumber || '').length > 0 && remainingDocDigits > 0;
+  const accessTypeGuide = useMemo(() => {
+    if (form.docType === 'DNI') {
+      if (shouldShowRemainingDigits) {
+        return `Faltan ${remainingDocDigits} digito${remainingDocDigits === 1 ? '' : 's'} para completar tu DNI.`;
+      }
+      return 'Ingresa los 8 digitos de tu DNI.';
+    }
+    if (form.docType === 'CE') {
+      if (shouldShowRemainingDigits) {
+        return `Faltan ${remainingDocDigits} digito${remainingDocDigits === 1 ? '' : 's'} para completar tu CE.`;
+      }
+      return 'Ingresa los 9 digitos de tu carne de extranjeria.';
+    }
+    return 'Ingresa tu usuario y selecciona tu dominio institucional.';
+  }, [form.docType, remainingDocDigits, shouldShowRemainingDigits]);
+  const documentPlaceholder = form.docType === 'DNI' ? 'Ej. 12345678' : form.docType === 'CE' ? 'Ej. 123456789' : '';
+
+  const parseEmailForFormState = (rawEmail) => {
+    const email = String(rawEmail || '').trim().toLowerCase();
+    const [userPart = '', domainPart = ''] = email.split('@');
+    if (!domainPart) {
+      return {
+        emailUser: userPart,
+        emailDomain: 'ugel.gob.pe',
+        emailDomainCustom: '',
+      };
+    }
+    if (EMAIL_DOMAIN_OPTIONS.includes(domainPart)) {
+      return {
+        emailUser: userPart,
+        emailDomain: domainPart,
+        emailDomainCustom: '',
+      };
+    }
+    return {
+      emailUser: userPart,
+      emailDomain: 'otro',
+      emailDomainCustom: domainPart,
+    };
+  };
+
+  const buildEmailFromForm = () => {
+    const user = String(form.emailUser || '').trim().toLowerCase();
+    const selectedDomain = String(form.emailDomain || '').trim().toLowerCase();
+    const customDomain = String(form.emailDomainCustom || '').trim().toLowerCase();
+    const domain = selectedDomain === 'otro' ? customDomain : selectedDomain;
+    if (!user || !domain) {
+      return '';
+    }
+    const normalizedDomain = domain.startsWith('@') ? domain.slice(1) : domain;
+    return `${user}@${normalizedDomain}`;
+  };
+
+  const handleDocTypeChange = (nextDocType) => {
+    setForm((prev) => {
+      const nextMaxLength = nextDocType === 'DNI' ? 8 : nextDocType === 'CE' ? 9 : 0;
+      const sanitizedDoc =
+        nextDocType === 'CORREO'
+          ? ''
+          : String(prev.docNumber || '')
+              .replace(/\D/g, '')
+              .slice(0, nextMaxLength);
+      return {
+        ...prev,
+        docType: nextDocType,
+        docNumber: sanitizedDoc,
+      };
+    });
+  };
+
+  const handleDocNumberChange = (nextValue) => {
+    const numeric = String(nextValue || '').replace(/\D/g, '');
+    const maxLen = form.docType === 'DNI' ? 8 : form.docType === 'CE' ? 9 : 16;
+    setForm((prev) => ({
+      ...prev,
+      docNumber: numeric.slice(0, maxLen),
+    }));
+  };
 
   useEffect(() => {
     const stored = getStoredAuth();
@@ -70,18 +158,25 @@ export default function Login() {
   }, []);
 
   const resolveLoginEmail = async () => {
-    const loginInput = form.docType === 'CORREO' ? form.email.trim() : form.docNumber.trim();
+    const loginInput = form.docType === 'CORREO' ? buildEmailFromForm() : form.docNumber.trim();
 
     if (!loginInput) {
       return { email: '', error: 'Completa el dato de acceso.' };
     }
 
     if (form.docType === 'CORREO') {
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(loginInput)) {
+        return { email: '', error: 'Ingresa un correo valido.' };
+      }
       return { email: loginInput.toLowerCase(), error: '' };
     }
 
     if (form.docType === 'DNI' && !/^\d{8}$/.test(loginInput)) {
       return { email: '', error: 'El DNI debe tener 8 digitos.' };
+    }
+
+    if (form.docType === 'CE' && !/^\d{9}$/.test(loginInput)) {
+      return { email: '', error: 'El CE debe tener 9 digitos.' };
     }
 
     const { data: lookupData, error: lookupError } = await supabase.functions.invoke('auth-lookup', {
@@ -200,10 +295,13 @@ export default function Login() {
           : 'Acceso admin recuperado. Ahora inicia sesion con el correo recuperado.',
       );
       setRole('admin');
+      const parsedEmail = parseEmailForFormState(email);
       setForm((prev) => ({
         ...prev,
         docType: 'CORREO',
-        email,
+        emailUser: parsedEmail.emailUser,
+        emailDomain: parsedEmail.emailDomain,
+        emailDomainCustom: parsedEmail.emailDomainCustom,
         password,
         docNumber: '',
       }));
@@ -329,106 +427,166 @@ export default function Login() {
   };
 
   return (
-    <div className="login-glow h-full overflow-y-auto overscroll-contain px-4 py-6 md:py-8">
-      <div className="mx-auto flex min-h-[calc(100vh-4rem)] max-w-[920px] items-center justify-center md:min-h-[calc(100vh-4.5rem)]">
-        <div className="login-shell w-full">
-          <div className="login-shell-grid grid min-h-[500px] grid-cols-1 md:grid-cols-2 lg:grid-cols-[0.92fr_1.08fr]">
-            <section className="relative min-h-[210px] overflow-hidden bg-gradient-to-br from-slate-900/90 via-slate-950/80 to-slate-950/95 px-6 py-6 md:min-h-[500px] md:px-6 md:py-6">
+    <div className="login-glow box-border min-h-dvh overflow-y-auto overscroll-contain px-4 py-2 md:py-3">
+      <div className="login-viewport mx-auto flex min-h-[calc(100dvh-1rem)] max-w-[920px] justify-center md:min-h-[calc(100dvh-1.5rem)]">
+        <div className="login-shell login-shell-enter w-full">
+          <div className="login-shell-grid grid min-h-[430px] grid-cols-1 md:grid-cols-2 lg:grid-cols-[0.95fr_1.05fr]">
+            <section className="relative flex min-h-[210px] flex-col justify-center overflow-hidden bg-gradient-to-br from-slate-900/90 via-slate-950/80 to-slate-950/95 px-6 py-5 md:min-h-0 md:px-6 md:py-5">
               <div className="pointer-events-none absolute inset-0 z-0 bg-[radial-gradient(circle_at_45%_16%,rgba(56,189,248,0.22),transparent_54%),radial-gradient(circle_at_78%_82%,rgba(34,197,94,0.16),transparent_48%)]" />
-              <div className="relative z-20">
-                <p className="text-[10px] uppercase tracking-[0.24em] text-slate-500">Plataforma UGEL</p>
-                <h1 className="mt-2 text-[28px] font-semibold leading-tight text-slate-100 md:text-[32px]">
-                  AGEBRE Monitoreo
+
+              <div className="relative z-20 max-w-[27rem]">
+                <p className="text-[10px] uppercase tracking-[0.24em] text-slate-400">UGEL 06 - Lima</p>
+                <p className="mt-1 text-xs text-slate-500">Sistema AGEBRE Monitoreo</p>
+                <h1 className="mt-2 text-[24px] font-semibold leading-tight text-slate-100 md:text-[28px]">
+                  Sistema de Monitoreo Educativo
                 </h1>
-                <p className="mt-2 max-w-sm truncate text-xs text-slate-400 md:text-sm">
-                  Monitoreo y seguimiento institucional - UGEL
+                <p className="mt-1.5 max-w-md text-sm leading-6 text-slate-300">
+                  Gestion, seguimiento y control de monitoreos institucionales de forma centralizada y segura.
                 </p>
               </div>
 
-              <div className="relative z-20 mt-2 flex h-[210px] items-end justify-center md:mt-3 md:h-[240px] lg:h-[270px]">
-                <img
-                  src={loginHeroIllustration}
-                  alt="Ilustracion de monitoreo educativo"
-                  className="h-full w-full max-w-[520px] object-contain object-bottom"
-                  loading="eager"
-                  decoding="async"
-                />
+              <div className="relative z-20 mt-3 max-w-[25rem] space-y-1.5 text-[13px] text-slate-200 md:mt-3.5">
+                {[
+                  'Seguimiento de monitoreos en tiempo real',
+                  'Control de reportes y cumplimiento',
+                  'Gestion por especialistas y administradores',
+                ].map((item) => (
+                  <div key={item} className="flex items-start gap-2">
+                    <CircleCheck size={15} className="mt-0.5 text-emerald-300" />
+                    <span>{item}</span>
+                  </div>
+                ))}
               </div>
+
               <div className="pointer-events-none absolute inset-0 z-10 bg-gradient-to-b from-slate-950/35 via-transparent to-slate-950/8" />
               <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 h-14 bg-gradient-to-t from-slate-950/75 via-slate-950/18 to-transparent" />
             </section>
 
-            <section className="login-shell-section-right h-full px-6 py-6 md:px-6 md:py-6">
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <p className="text-[10px] uppercase tracking-[0.24em] text-slate-500">Inicio de sesion</p>
-                  <p className="mt-2 text-xl font-semibold text-slate-100">{subtitle}</p>
-                </div>
-                <div className="flex rounded-full border border-slate-800/70 bg-slate-900/80 p-1">
+            <section className="login-shell-section-right h-full px-6 py-5 md:px-6 md:py-5">
+              <div className="space-y-1.5">
+                <p className="text-[24px] font-semibold leading-tight text-slate-100">Inicio de sesion</p>
+                <p className="text-sm text-slate-400">Accede con tus credenciales para ingresar al sistema.</p>
+              </div>
+
+              <div className="mt-4 space-y-1.5 rounded-xl border border-slate-800/60 bg-slate-900/50 p-2.5">
+                <p className="text-[10px] font-medium uppercase tracking-[0.13em] text-slate-400">
+                  Selecciona tu tipo de acceso
+                </p>
+                <div className="grid gap-2 sm:grid-cols-2">
                   <button
                     type="button"
                     onClick={() => setRole('especialista')}
                     disabled={isSubmitting}
-                    className={`rounded-full px-3 py-1 text-xs font-semibold transition ${
-                      role === 'especialista' ? 'bg-slate-100 text-slate-900' : 'text-slate-300'
+                    className={`flex items-center gap-2 rounded-lg border px-3 py-1.5 text-sm transition ${
+                      role === 'especialista'
+                        ? 'border-cyan-400/45 bg-cyan-500/10 text-cyan-100'
+                        : 'border-slate-700/55 bg-slate-900/60 text-slate-300 hover:border-slate-600/80'
                     }`}
                   >
+                    <span
+                      className={`h-2.5 w-2.5 rounded-full ${role === 'especialista' ? 'bg-cyan-300' : 'bg-slate-600'}`}
+                    />
                     Especialista
                   </button>
                   <button
                     type="button"
                     onClick={() => setRole('admin')}
                     disabled={isSubmitting}
-                    className={`rounded-full px-3 py-1 text-xs font-semibold transition ${
-                      role === 'admin' ? 'bg-slate-100 text-slate-900' : 'text-slate-300'
+                    className={`flex items-center gap-2 rounded-lg border px-3 py-1.5 text-sm transition ${
+                      role === 'admin'
+                        ? 'border-emerald-400/45 bg-emerald-500/10 text-emerald-100'
+                        : 'border-slate-700/55 bg-slate-900/60 text-slate-300 hover:border-slate-600/80'
                     }`}
                   >
-                    Admin
+                    <span className={`h-2.5 w-2.5 rounded-full ${role === 'admin' ? 'bg-emerald-300' : 'bg-slate-600'}`} />
+                    Administrador
                   </button>
                 </div>
               </div>
 
-              <form onSubmit={handleSubmit} className="mt-5 flex flex-col gap-4">
-                <div className="grid gap-3 sm:grid-cols-2">
+              <form onSubmit={handleSubmit} className="mt-4 flex flex-col gap-3">
+                <div
+                  key={`access-${form.docType}`}
+                  className="login-access-variant space-y-2.5"
+                >
+                  <div className={`grid gap-3 ${form.docType === 'CORREO' ? 'grid-cols-1' : 'sm:grid-cols-2'}`}>
                   <Select
                     id="docType"
                     label="Tipo de acceso"
                     className="h-10 text-[15px]"
                     value={form.docType}
                     disabled={isSubmitting}
-                    onChange={(event) => setForm((prev) => ({ ...prev, docType: event.target.value }))}
+                    onChange={(event) => handleDocTypeChange(event.target.value)}
                   >
                     <option value="DNI">DNI</option>
                     <option value="CE">CE</option>
-                    <option value="CORREO">Correo</option>
+                    <option value="CORREO">Correo institucional</option>
                   </Select>
                   {form.docType === 'CORREO' ? (
-                    <Input
-                      id="loginEmail"
-                      label="Correo institucional"
-                      type="email"
-                      autoComplete="username"
-                      className="h-10 text-[15px]"
-                      placeholder="usuario@ugel.gob.pe"
-                      value={form.email}
-                      disabled={isSubmitting}
-                      onChange={(event) => setForm((prev) => ({ ...prev, email: event.target.value }))}
-                    />
+                    <div className="grid gap-3 sm:grid-cols-[1fr_0.85fr]">
+                      <Input
+                        id="emailUser"
+                        label="Usuario de correo"
+                        type="text"
+                        autoComplete="username"
+                        className="h-10 text-[15px]"
+                        placeholder={accessSummary.identityPlaceholder}
+                        value={form.emailUser}
+                        disabled={isSubmitting}
+                        onChange={(event) => setForm((prev) => ({ ...prev, emailUser: event.target.value }))}
+                      />
+                      <Select
+                        id="emailDomain"
+                        label="Dominio"
+                        className="h-10 text-[15px]"
+                        value={form.emailDomain}
+                        disabled={isSubmitting}
+                        onChange={(event) =>
+                          setForm((prev) => ({
+                            ...prev,
+                            emailDomain: event.target.value,
+                            emailDomainCustom: event.target.value === 'otro' ? prev.emailDomainCustom : '',
+                          }))
+                        }
+                      >
+                        {EMAIL_DOMAIN_OPTIONS.map((domain) => (
+                          <option key={domain} value={domain}>
+                            @{domain}
+                          </option>
+                        ))}
+                        <option value="otro">Otro dominio</option>
+                      </Select>
+                    </div>
                   ) : (
                     <Input
                       id="docNumber"
                       className="h-10 text-[15px]"
                       label="Numero de documento"
-                      placeholder="11111111"
+                      placeholder={documentPlaceholder}
                       value={form.docNumber}
+                      inputMode="numeric"
+                      maxLength={documentMaxLength || undefined}
                       disabled={isSubmitting}
-                      onChange={(event) => setForm((prev) => ({ ...prev, docNumber: event.target.value }))}
+                      onChange={(event) => handleDocNumberChange(event.target.value)}
                     />
                   )}
+                  </div>
+                  {form.docType === 'CORREO' && form.emailDomain === 'otro' ? (
+                    <Input
+                      id="emailDomainCustom"
+                      label="Dominio personalizado"
+                      type="text"
+                      className="h-10 text-[15px]"
+                      placeholder="dominio.org"
+                      value={form.emailDomainCustom}
+                      disabled={isSubmitting}
+                      onChange={(event) => setForm((prev) => ({ ...prev, emailDomainCustom: event.target.value }))}
+                    />
+                  ) : null}
+                  <p className={`text-xs leading-5 ${form.docType === 'CORREO' ? 'text-slate-400' : shouldShowRemainingDigits ? 'text-amber-200' : 'text-slate-400'}`}>
+                    {accessTypeGuide}
+                  </p>
                 </div>
-                <p className="text-xs leading-5 text-slate-500">
-                  Puedes ingresar con DNI, CE o correo institucional.
-                </p>
 
                 <label className="flex flex-col gap-1.5 text-sm text-slate-200" htmlFor="password">
                   <span className="text-[10px] uppercase tracking-[0.16em] text-slate-400">Contrasena</span>
@@ -440,14 +598,14 @@ export default function Login() {
                       value={form.password}
                       disabled={isSubmitting}
                       onChange={(event) => setForm((prev) => ({ ...prev, password: event.target.value }))}
-                      className="h-10 w-full rounded-xl border border-slate-700/60 bg-slate-900/70 px-3 pr-12 text-[15px] text-slate-100 placeholder:text-slate-500 focus:border-cyan-400 focus:outline-none focus:ring-2 focus:ring-cyan-500/30"
+                      className="h-10 w-full rounded-xl border border-slate-700/60 bg-slate-900/70 px-3 pr-12 text-[15px] text-slate-100 placeholder:text-slate-500 focus:border-cyan-400/65 focus:outline-none focus:ring-1 focus:ring-cyan-500/15"
                       placeholder="********"
                     />
                     <button
                       type="button"
                       onClick={() => setShowPassword((prev) => !prev)}
                       disabled={isSubmitting}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400 transition hover:text-slate-200"
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-500 transition hover:text-slate-300"
                     >
                       {showPassword ? 'Ocultar' : 'Ver'}
                     </button>
@@ -457,7 +615,7 @@ export default function Login() {
                 <button
                   type="submit"
                   disabled={!isSupabaseConfigured || isSubmitting}
-                  className="mt-1 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-slate-100 py-2.5 text-sm font-semibold text-slate-900 transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-70"
+                  className="mt-0.5 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-emerald-400/50 bg-emerald-500/20 py-2 text-sm font-semibold text-emerald-100 shadow-[0_8px_20px_rgba(16,185,129,0.2)] transition-all duration-200 hover:border-emerald-300 hover:bg-emerald-500/30 hover:shadow-[0_10px_24px_rgba(16,185,129,0.24)] disabled:cursor-not-allowed disabled:opacity-70"
                 >
                   {isSubmitting ? (
                     <>
@@ -465,9 +623,13 @@ export default function Login() {
                       Iniciando sesion...
                     </>
                   ) : (
-                    'Entrar'
+                    'Iniciar sesion'
                   )}
                 </button>
+                <p className="inline-flex items-center gap-1.5 text-[11px] text-slate-500">
+                  <Lock size={12} className="text-slate-500" />
+                  <span>Acceso seguro. Solo personal autorizado.</span>
+                </p>
                 {isSubmitting ? (
                   <div className="space-y-1" aria-live="polite">
                     <div className="h-1.5 overflow-hidden rounded-full border border-cyan-500/35 bg-slate-900/80">
@@ -480,17 +642,18 @@ export default function Login() {
                   type="button"
                   onClick={openRecoveryModal}
                   disabled={isSubmitting}
-                  className="w-full rounded-xl border border-amber-500/35 bg-amber-500/10 py-2 text-xs font-semibold text-amber-200 transition hover:border-amber-400/60"
+                  className="w-fit self-start text-xs font-medium text-slate-400 underline-offset-4 transition hover:text-cyan-200 hover:underline"
                 >
-                  Recuperar acceso admin
+                  Eres administrador? Recuperar acceso
                 </button>
+                <p className="text-xs text-slate-500">Problemas para acceder? Contacta al administrador.</p>
                 {!isSupabaseConfigured ? (
                   <p className="text-xs text-amber-300">
                     Configura en Vercel: `VITE_SUPABASE_URL` y `VITE_SUPABASE_ANON_KEY`.
                   </p>
                 ) : null}
                 {sessionNotice ? <p className="text-sm text-amber-200">{sessionNotice}</p> : null}
-                {error ? <p className="text-sm text-rose-400">{error}</p> : null}
+                {error ? <p className="text-sm text-rose-300">{error}</p> : null}
               </form>
             </section>
           </div>
@@ -541,9 +704,7 @@ export default function Login() {
                 <input
                   type="email"
                   value={recoveryForm.email}
-                  onChange={(event) =>
-                    setRecoveryForm((prev) => ({ ...prev, email: event.target.value }))
-                  }
+                  onChange={(event) => setRecoveryForm((prev) => ({ ...prev, email: event.target.value }))}
                   className="h-9 rounded-xl border border-slate-700/60 bg-slate-900/70 px-3 text-sm text-slate-100 placeholder:text-slate-500"
                   placeholder="admin@dominio.com"
                 />
@@ -554,9 +715,7 @@ export default function Login() {
                 <input
                   type="password"
                   value={recoveryForm.password}
-                  onChange={(event) =>
-                    setRecoveryForm((prev) => ({ ...prev, password: event.target.value }))
-                  }
+                  onChange={(event) => setRecoveryForm((prev) => ({ ...prev, password: event.target.value }))}
                   className="h-9 rounded-xl border border-slate-700/60 bg-slate-900/70 px-3 text-sm text-slate-100 placeholder:text-slate-500"
                   placeholder="Min. 6 caracteres"
                 />
@@ -567,9 +726,7 @@ export default function Login() {
                 <input
                   type="password"
                   value={recoveryForm.code}
-                  onChange={(event) =>
-                    setRecoveryForm((prev) => ({ ...prev, code: event.target.value }))
-                  }
+                  onChange={(event) => setRecoveryForm((prev) => ({ ...prev, code: event.target.value }))}
                   className="h-9 rounded-xl border border-slate-700/60 bg-slate-900/70 px-3 text-sm text-slate-100 placeholder:text-slate-500"
                   placeholder="Codigo secreto"
                 />

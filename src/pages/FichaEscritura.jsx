@@ -54,6 +54,120 @@ const getTemplateStatus = (template) => {
   return startAt || endAt ? 'scheduled' : 'active';
 };
 
+const BUILDER_HEADER_FIELD_LABELS = {
+  institution_name: 'Institucion educativa',
+  cod_modular: 'Codigo modular',
+  cod_local: 'Codigo local',
+  district: 'Distrito / Lugar',
+  rei: 'REI',
+  monitor_name: 'Monitor(a)',
+  monitor_doc_type: 'Tipo doc. monitor',
+  monitor_doc_number: 'Numero doc. monitor',
+  monitored_name: 'Monitoreado(a)',
+  monitored_doc_type: 'Tipo doc. monitoreado(a)',
+  monitored_doc_number: 'Numero doc. monitoreado(a)',
+  monitored_position: 'Cargo monitoreado(a)',
+  monitored_phone: 'Telefono monitoreado(a)',
+  monitored_email: 'Correo monitoreado(a)',
+  monitored_condition: 'Condicion de monitoreado(a)',
+  monitoring_area: 'Area que monitorea',
+  visit_count: 'Numero de visitas a la IE',
+  application_date: 'Fecha de aplicacion',
+  start_time: 'Hora de inicio',
+  end_time: 'Hora de fin',
+};
+
+const BUILDER_CLOSING_FIELD_LABELS = {
+  progress_level: 'Nivel de avance',
+  general_observation: 'Observacion general',
+  general_commitment: 'Compromiso general',
+  closing_place: 'Lugar',
+  closing_date: 'Fecha',
+  signature: 'Firma',
+  dni_monitored: 'DNI monitoreado(a)',
+  dni_monitor: 'DNI monitor(a)',
+};
+
+const BUILDER_HEADER_BINDINGS = {
+  institution_name: { area: 'header', key: 'institucion' },
+  district: { area: 'header', key: 'lugarIe' },
+  monitor_name: { area: 'header', key: 'director' },
+  monitored_name: { area: 'header', key: 'docente' },
+  monitored_condition: { area: 'header', key: 'condicion' },
+  monitoring_area: { area: 'header', key: 'area' },
+};
+
+const BUILDER_CLOSING_BINDINGS = {
+  general_observation: { area: 'general', key: 'observacion' },
+  general_commitment: { area: 'general', key: 'compromiso' },
+  closing_place: { area: 'cierre', key: 'lugar' },
+  closing_date: { area: 'cierre', key: 'fecha' },
+};
+
+const LEGACY_HEADER_FIELD_IDS = [
+  'institution_name',
+  'district',
+  'monitor_name',
+  'monitored_name',
+  'monitored_condition',
+  'monitoring_area',
+];
+
+const HEADER_GROUP_DEFINITIONS = [
+  {
+    id: 'institution',
+    title: 'Datos de la institucion',
+    description: 'Contexto institucional comun del monitoreo.',
+    fieldIds: ['institution_name', 'district', 'rei', 'cod_local', 'cod_modular'],
+  },
+  {
+    id: 'monitor',
+    title: 'Datos del monitor',
+    description: 'Persona responsable de realizar el monitoreo.',
+    fieldIds: ['monitor_name', 'monitor_doc_type', 'monitor_doc_number'],
+  },
+  {
+    id: 'monitored',
+    title: 'Datos del docente monitoreado',
+    description: 'Persona evaluada durante el monitoreo.',
+    fieldIds: [
+      'monitored_name',
+      'monitoring_area',
+      'monitored_condition',
+      'monitored_doc_type',
+      'monitored_doc_number',
+      'monitored_position',
+      'monitored_phone',
+      'monitored_email',
+    ],
+  },
+];
+
+const DOC_TYPE_OPTIONS = [
+  { value: 'DNI', label: 'DNI' },
+  { value: 'CE', label: 'CE' },
+  { value: 'Pasaporte', label: 'Pasaporte' },
+  { value: 'Otro', label: 'Otro' },
+];
+
+const CONDITION_OPTIONS = [
+  { value: 'Nombrado', label: 'Nombrado' },
+  { value: 'Contratado', label: 'Contratado' },
+];
+
+const MONITORING_AREA_OPTIONS = [
+  { value: 'Comunicacion', label: 'Comunicacion' },
+  { value: 'Quechua', label: 'Quechua' },
+  { value: 'Ingles', label: 'Ingles' },
+];
+
+const resolveQuestionKind = (question) => {
+  const sourceType = String(question?.sourceType || question?.type || '').trim().toLowerCase();
+  if (sourceType) return sourceType;
+  if (String(question?.responseType || '').toLowerCase() === 'scale_1_3') return 'yes_no_levels';
+  return 'yes_no';
+};
+
 const buildQuestionsState = (sections) =>
   sections.flatMap((section) => section.questions || []).reduce((acc, question) => {
     acc[question.id] = { answer: null, level: null, obs: '' };
@@ -80,6 +194,7 @@ const createInitialState = (sections) => ({
     condicion: '',
     area: '',
   },
+  headerExtras: {},
   questions: buildQuestionsState(sections),
   general: {
     observacion: '',
@@ -89,6 +204,8 @@ const createInitialState = (sections) => ({
     lugar: '',
     fecha: new Date().toISOString().split('T')[0],
   },
+  closingExtras: {},
+  dynamicFields: {},
   firmas: {
     docente: {
       firma: '',
@@ -152,6 +269,24 @@ const reducer = (state, action) => {
             ...action.payload,
           },
         },
+        meta: { ...state.meta, saved: false },
+      };
+    case 'UPDATE_HEADER_EXTRA':
+      return {
+        ...state,
+        headerExtras: { ...state.headerExtras, [action.field]: action.value },
+        meta: { ...state.meta, saved: false },
+      };
+    case 'UPDATE_CLOSING_EXTRA':
+      return {
+        ...state,
+        closingExtras: { ...state.closingExtras, [action.field]: action.value },
+        meta: { ...state.meta, saved: false },
+      };
+    case 'UPDATE_DYNAMIC_FIELD':
+      return {
+        ...state,
+        dynamicFields: { ...state.dynamicFields, [action.field]: action.value },
         meta: { ...state.meta, saved: false },
       };
     case 'SET_ERRORS':
@@ -331,6 +466,112 @@ export default function FichaEscritura() {
     () => selectedTemplate?.sections || QUESTION_SECTIONS,
     [selectedTemplate],
   );
+  const isBuilderTemplate = selectedTemplate?.levelsConfig?.type === 'request_builder';
+  const builderSheets = useMemo(() => {
+    const sheets = selectedTemplate?.levelsConfig?.builder?.sheets;
+    return Array.isArray(sheets) ? sheets : [];
+  }, [selectedTemplate]);
+  const activeBuilderSheet = useMemo(() => {
+    if (!builderSheets.length) return null;
+    const sheetIdFromSections = templateSections.find((section) => section?.sheetId)?.sheetId;
+    return builderSheets.find((sheet) => sheet.id === sheetIdFromSections) || builderSheets[0];
+  }, [builderSheets, templateSections]);
+  const activeHeaderFieldIds = useMemo(() => {
+    const fields = activeBuilderSheet?.headerFields;
+    if (!fields || typeof fields !== 'object') return [];
+    return Object.keys(fields).filter((fieldId) => Boolean(fields[fieldId]));
+  }, [activeBuilderSheet]);
+  const activeClosingFieldIds = useMemo(() => {
+    const fields = activeBuilderSheet?.closingFields;
+    if (!fields || typeof fields !== 'object') return [];
+    return Object.keys(fields).filter((fieldId) => Boolean(fields[fieldId]));
+  }, [activeBuilderSheet]);
+  const activeDynamicFields = useMemo(() => {
+    const dynamicFields = activeBuilderSheet?.dynamicFields;
+    return Array.isArray(dynamicFields) ? dynamicFields : [];
+  }, [activeBuilderSheet]);
+  const effectiveHeaderFieldIds = useMemo(
+    () => (isBuilderTemplate ? activeHeaderFieldIds : LEGACY_HEADER_FIELD_IDS),
+    [isBuilderTemplate, activeHeaderFieldIds],
+  );
+  const groupedHeaderFields = useMemo(() => {
+    const activeSet = new Set(effectiveHeaderFieldIds);
+    const groups = HEADER_GROUP_DEFINITIONS.map((group) => ({
+      ...group,
+      fields: group.fieldIds.filter((fieldId) => activeSet.has(fieldId)),
+    })).filter((group) => group.fields.length > 0);
+
+    const assigned = new Set(groups.flatMap((group) => group.fields));
+    const extras = effectiveHeaderFieldIds.filter((fieldId) => !assigned.has(fieldId));
+    if (extras.length) {
+      groups.push({
+        id: 'extra',
+        title: 'Datos complementarios',
+        description: 'Campos adicionales del encabezado.',
+        fields: extras,
+      });
+    }
+    return groups;
+  }, [effectiveHeaderFieldIds]);
+
+  const showHeaderSection = groupedHeaderFields.length > 0 || activeDynamicFields.length > 0;
+  const templateMetadata = useMemo(() => {
+    const meta = selectedTemplate?.levelsConfig?.metadata;
+    if (!meta || typeof meta !== 'object') {
+      return {
+        includeLevels: false,
+        includeDate: false,
+        includeLocation: false,
+        includeSignatures: false,
+      };
+    }
+    return {
+      includeLevels: Boolean(meta.include_levels),
+      includeDate: Boolean(meta.include_date),
+      includeLocation: Boolean(meta.include_location),
+      includeSignatures: Boolean(meta.include_signatures),
+    };
+  }, [selectedTemplate]);
+  const showGeneralSection =
+    !isBuilderTemplate ||
+    activeClosingFieldIds.includes('general_observation') ||
+    activeClosingFieldIds.includes('general_commitment');
+  const showPlaceDateSection =
+    (!isBuilderTemplate ||
+    activeClosingFieldIds.includes('closing_place') ||
+    activeClosingFieldIds.includes('closing_date')) &&
+    (!isBuilderTemplate || templateMetadata.includeDate || templateMetadata.includeLocation);
+  const showSignaturesSection =
+    (!isBuilderTemplate ||
+    activeClosingFieldIds.includes('signature') ||
+    activeClosingFieldIds.includes('dni_monitored') ||
+    activeClosingFieldIds.includes('dni_monitor')) &&
+    (!isBuilderTemplate || templateMetadata.includeSignatures);
+  const showSignaturePads = !isBuilderTemplate || activeClosingFieldIds.includes('signature');
+  const showClosingContainer = showGeneralSection || showPlaceDateSection || showSignaturesSection;
+  const extraClosingFieldIds = useMemo(
+    () =>
+      activeClosingFieldIds.filter(
+        (fieldId) =>
+          !BUILDER_CLOSING_BINDINGS[fieldId] &&
+          fieldId !== 'signature' &&
+          fieldId !== 'dni_monitored' &&
+          fieldId !== 'dni_monitor',
+      ),
+    [activeClosingFieldIds],
+  );
+  const showGeneralObservation = !isBuilderTemplate || activeClosingFieldIds.includes('general_observation');
+  const showGeneralCommitment = !isBuilderTemplate || activeClosingFieldIds.includes('general_commitment');
+  const showClosingPlace = !isBuilderTemplate || activeClosingFieldIds.includes('closing_place');
+  const showClosingDate = !isBuilderTemplate || activeClosingFieldIds.includes('closing_date');
+  const showMonitoredDni = !isBuilderTemplate || activeClosingFieldIds.includes('dni_monitored');
+  const showMonitorDni = !isBuilderTemplate || activeClosingFieldIds.includes('dni_monitor');
+  const hasLevelScaleQuestions = useMemo(
+    () => templateSections.some((section) =>
+      (section.questions || []).some((question) => resolveQuestionKind(question) === 'yes_no_levels')),
+    [templateSections],
+  );
+  const showLevelInfoCard = !isBuilderTemplate ? hasLevelScaleQuestions : templateMetadata.includeLevels;
   const formTitle = selectedTemplate?.title || FORM_TITLE;
   const defaultLevels = useMemo(
     () =>
@@ -398,29 +639,58 @@ export default function FichaEscritura() {
     return scored.slice(0, 8).map((entry) => entry.item);
   }, [institutionCatalog, state.header.institucion]);
 
-  const applyInstitutionSuggestion = (item) => {
-    if (!item) return;
+  const applyAutocompleteSelection = (item, fieldId) => {
+    if (!item || !fieldId) return;
 
-    dispatch({
-      type: 'UPDATE_HEADER',
-      field: 'institucion',
-      value: item.nombre_ie || '',
-    });
+    if (fieldId === 'institution_name') {
+      const institutionDirector = String(item.nombre_director || '').trim();
 
-    if (item.distrito) {
       dispatch({
         type: 'UPDATE_HEADER',
-        field: 'lugarIe',
-        value: item.distrito,
+        field: 'institucion',
+        value: item.nombre_ie || '',
       });
-    }
 
-    if (!state.header.director && item.nombre_director) {
-      dispatch({
-        type: 'UPDATE_HEADER',
-        field: 'director',
-        value: item.nombre_director,
-      });
+      if (item.distrito) {
+        dispatch({
+          type: 'UPDATE_HEADER',
+          field: 'lugarIe',
+          value: item.distrito,
+        });
+      }
+
+      if (effectiveHeaderFieldIds.includes('cod_local')) {
+        dispatch({
+          type: 'UPDATE_HEADER_EXTRA',
+          field: 'cod_local',
+          value: item.cod_local || '',
+        });
+      }
+
+      if (effectiveHeaderFieldIds.includes('cod_modular')) {
+        dispatch({
+          type: 'UPDATE_HEADER_EXTRA',
+          field: 'cod_modular',
+          value: item.cod_modular || '',
+        });
+      }
+
+      if (institutionDirector && effectiveHeaderFieldIds.includes('monitored_name')) {
+        dispatch({
+          type: 'UPDATE_HEADER',
+          field: 'docente',
+          value: institutionDirector,
+        });
+      }
+
+      // Evita que el nombre del director institucional quede en el campo de monitor.
+      if (institutionDirector && effectiveHeaderFieldIds.includes('monitor_name') && state.header.director === institutionDirector) {
+        dispatch({
+          type: 'UPDATE_HEADER',
+          field: 'director',
+          value: '',
+        });
+      }
     }
 
     setIsInstitutionAutocompleteOpen(false);
@@ -434,7 +704,7 @@ export default function FichaEscritura() {
 
     if (event.key === 'Enter' && institutionSuggestions.length) {
       event.preventDefault();
-      applyInstitutionSuggestion(institutionSuggestions[0]);
+      applyAutocompleteSelection(institutionSuggestions[0], 'institution_name');
     }
   };
 
@@ -553,7 +823,11 @@ export default function FichaEscritura() {
   }, [state.header.director, state.firmas.monitor.nombre]);
 
   useEffect(() => {
-    const sections = ['datos', ...templateSections.map((section) => section.id), 'cierre'];
+    const sections = [
+      ...(showHeaderSection ? ['datos'] : []),
+      ...templateSections.map((section) => section.id),
+      ...(showClosingContainer ? ['cierre'] : []),
+    ];
     const observer = new IntersectionObserver(
       (entries) => {
         entries.forEach((entry) => {
@@ -571,37 +845,100 @@ export default function FichaEscritura() {
     });
 
     return () => observer.disconnect();
-  }, [setActiveSection, templateSections]);
+  }, [setActiveSection, showClosingContainer, showHeaderSection, templateSections]);
 
   const handleSave = async () => {
     const errors = {};
     const headerErrors = {};
 
-    if (!state.header.institucion) headerErrors.institucion = 'Requerido';
-    if (!state.header.lugarIe) headerErrors.lugarIe = 'Requerido';
-    if (!state.header.director) headerErrors.director = 'Requerido';
-    if (!state.header.docente) headerErrors.docente = 'Requerido';
-    if (!state.header.condicion) headerErrors.condicion = 'Requerido';
-    if (!state.header.area) headerErrors.area = 'Requerido';
+    if (isBuilderTemplate) {
+      activeHeaderFieldIds.forEach((fieldId) => {
+        const binding = BUILDER_HEADER_BINDINGS[fieldId];
+        if (binding?.area === 'header') {
+          if (!state.header?.[binding.key]) {
+            headerErrors[binding.key] = 'Requerido';
+          }
+          return;
+        }
+        if (!state.headerExtras?.[fieldId]) {
+          headerErrors[fieldId] = 'Requerido';
+        }
+      });
+
+      activeDynamicFields.forEach((field) => {
+        if (!field?.required) return;
+        const fieldKey = String(field.id || '');
+        if (!fieldKey) return;
+        const value = state.dynamicFields?.[fieldKey];
+        const isEmpty = value === null || value === undefined || String(value).trim() === '';
+        if (isEmpty) {
+          headerErrors[`dynamic_${fieldKey}`] = 'Requerido';
+        }
+      });
+    } else {
+      if (!state.header.institucion) headerErrors.institucion = 'Requerido';
+      if (!state.header.lugarIe) headerErrors.lugarIe = 'Requerido';
+      if (!state.header.director) headerErrors.director = 'Requerido';
+      if (!state.header.docente) headerErrors.docente = 'Requerido';
+      if (!state.header.condicion) headerErrors.condicion = 'Requerido';
+      if (!state.header.area) headerErrors.area = 'Requerido';
+    }
 
     if (Object.keys(headerErrors).length > 0) errors.header = headerErrors;
 
     const questionErrors = {};
     allQuestions.forEach((question) => {
-      if (!state.questions[question.id]?.answer) {
-        questionErrors[question.id] = 'Seleccione Si o No.';
+      const data = state.questions[question.id] || {};
+      const kind = resolveQuestionKind(question);
+      const required = question.required !== false;
+      if (!required) return;
+
+      if (!data.answer && kind !== 'yes_no_levels') {
+        questionErrors[question.id] = 'Respuesta requerida.';
+        return;
+      }
+
+      if (!data.answer && kind === 'yes_no_levels') {
+        questionErrors[question.id] = 'Selecciona Si o No.';
+        return;
+      }
+
+      if (kind === 'yes_no_levels' && data.answer === 'SI' && (data.level === null || data.level === undefined || data.level === '')) {
+        questionErrors[question.id] = 'Selecciona un nivel de logro.';
       }
     });
     if (Object.keys(questionErrors).length > 0) errors.questions = questionErrors;
 
     const cierreErrors = {};
-    if (!state.cierre.lugar) cierreErrors.lugar = 'Requerido';
-    if (!state.cierre.fecha) cierreErrors.fecha = 'Requerido';
+    if (isBuilderTemplate) {
+      activeClosingFieldIds.forEach((fieldId) => {
+        const binding = BUILDER_CLOSING_BINDINGS[fieldId];
+        if (binding?.area === 'general') {
+          if (!state.general?.[binding.key]) cierreErrors[binding.key] = 'Requerido';
+          return;
+        }
+        if (binding?.area === 'cierre') {
+          if (!state.cierre?.[binding.key]) cierreErrors[binding.key] = 'Requerido';
+          return;
+        }
+        if (fieldId === 'dni_monitored' || fieldId === 'dni_monitor' || fieldId === 'signature') return;
+        if (!BUILDER_CLOSING_BINDINGS[fieldId] && !state.closingExtras?.[fieldId]) {
+          cierreErrors[fieldId] = 'Requerido';
+        }
+      });
+    } else {
+      if (!state.cierre.lugar) cierreErrors.lugar = 'Requerido';
+      if (!state.cierre.fecha) cierreErrors.fecha = 'Requerido';
+    }
     if (Object.keys(cierreErrors).length > 0) errors.cierre = cierreErrors;
 
     const firmasErrors = {};
-    if (!state.firmas.docente.dni) firmasErrors.docenteDni = 'Requerido';
-    if (!state.firmas.monitor.dni) firmasErrors.monitorDni = 'Requerido';
+    if (!isBuilderTemplate || activeClosingFieldIds.includes('dni_monitored')) {
+      if (!state.firmas.docente.dni) firmasErrors.docenteDni = 'Requerido';
+    }
+    if (!isBuilderTemplate || activeClosingFieldIds.includes('dni_monitor')) {
+      if (!state.firmas.monitor.dni) firmasErrors.monitorDni = 'Requerido';
+    }
     if (Object.keys(firmasErrors).length > 0) errors.firmas = firmasErrors;
 
     if (Object.keys(errors).length > 0) {
@@ -658,6 +995,179 @@ export default function FichaEscritura() {
     }
     dispatch({ type: 'RESET', sections: templateSections });
     setIsResetConfirmOpen(false);
+  };
+
+  const resolveHeaderFieldInputType = (fieldId) => {
+    if (fieldId === 'application_date') return 'date';
+    if (fieldId === 'start_time' || fieldId === 'end_time') return 'time';
+    if (fieldId === 'visit_count') return 'number';
+    if (fieldId === 'monitored_phone') return 'tel';
+    if (fieldId === 'monitored_email') return 'email';
+    return 'text';
+  };
+
+  const resolveHeaderFieldSelectOptions = (fieldId) => {
+    if (fieldId === 'monitor_doc_type' || fieldId === 'monitored_doc_type') return DOC_TYPE_OPTIONS;
+    if (fieldId === 'monitored_condition') return CONDITION_OPTIONS;
+    if (fieldId === 'monitoring_area') return MONITORING_AREA_OPTIONS;
+    return null;
+  };
+
+  const renderHeaderField = (fieldId) => {
+    if (fieldId === 'institution_name') {
+      return (
+        <div
+          key={fieldId}
+          ref={institutionAutocompleteRef}
+          className="flex flex-col gap-1.5 text-[14px] leading-[1.5] text-slate-200"
+        >
+          <span className="text-[10px] uppercase tracking-[0.16em] text-slate-400">
+            {BUILDER_HEADER_FIELD_LABELS[fieldId] || 'Institucion educativa'}
+          </span>
+          <div className="relative">
+            <input
+              id="institucion"
+              value={state.header.institucion}
+              onChange={(event) => {
+                dispatch({
+                  type: 'UPDATE_HEADER',
+                  field: 'institucion',
+                  value: event.target.value,
+                });
+                if (!isReadOnly) setIsInstitutionAutocompleteOpen(true);
+              }}
+              onFocus={() => {
+                if (!isReadOnly) setIsInstitutionAutocompleteOpen(true);
+              }}
+              onKeyDown={handleInstitutionKeyDown}
+              placeholder="Nombre de la I.E."
+              autoComplete="off"
+              disabled={isReadOnly}
+              className="h-9 w-full rounded-xl border border-slate-700/60 bg-slate-900/70 px-3 text-[14px] leading-[1.5] text-slate-100 placeholder:text-slate-500 focus:border-cyan-400 focus:outline-none focus:ring-2 focus:ring-cyan-500/30 disabled:cursor-not-allowed disabled:opacity-70"
+            />
+
+            {isInstitutionAutocompleteOpen && !isReadOnly && state.header.institucion.trim() ? (
+              <div className="absolute left-0 right-0 z-30 mt-1.5 overflow-hidden rounded-xl border border-slate-700/80 bg-slate-950/95 shadow-[0_12px_34px_rgba(2,6,23,0.45)]">
+                {isInstitutionCatalogLoading ? (
+                  <p className="px-3 py-2 text-sm text-slate-400">Cargando instituciones...</p>
+                ) : institutionSuggestions.length ? (
+                  <div className="max-h-72 overflow-y-auto">
+                    {institutionSuggestions.map((item) => (
+                      <button
+                        key={`ie-suggestion-${item.id}`}
+                        type="button"
+                        onClick={() => applyAutocompleteSelection(item, 'institution_name')}
+                        className="flex w-full flex-col gap-1 border-b border-slate-800/80 px-3 py-2 text-left last:border-b-0 hover:bg-slate-900/70"
+                      >
+                        <span className="truncate text-sm font-semibold text-slate-100">{item.nombre_ie}</span>
+                        <span className="truncate text-xs text-slate-400">
+                          Cod. modular: {item.cod_modular || '-'} | Cod. local: {item.cod_local || '-'} |{' '}
+                          {item.distrito || '-'} | {formatInstitutionLevel(item.nivel)} |{' '}
+                          {item.modalidad || '-'}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="px-3 py-2 text-sm text-slate-400">No se encontraron IE.</p>
+                )}
+              </div>
+            ) : null}
+          </div>
+          {state.errors?.header?.institucion ? (
+            <span className="text-xs text-rose-400">{state.errors.header.institucion}</span>
+          ) : null}
+          {institutionCatalogError ? (
+            <span className="text-xs text-amber-300">{institutionCatalogError}</span>
+          ) : null}
+        </div>
+      );
+    }
+
+    const binding = BUILDER_HEADER_BINDINGS[fieldId];
+    const selectOptions = resolveHeaderFieldSelectOptions(fieldId);
+    const errorKey = binding?.area === 'header' ? binding.key : fieldId;
+    const error = state.errors?.header?.[errorKey];
+
+    if (binding?.area === 'header') {
+      const value = state.header?.[binding.key] || '';
+      const label = BUILDER_HEADER_FIELD_LABELS[fieldId] || fieldId;
+      if (selectOptions) {
+        return (
+          <Select
+            key={fieldId}
+            id={`header-${fieldId}`}
+            label={label}
+            value={value}
+            onChange={(event) =>
+              dispatch({ type: 'UPDATE_HEADER', field: binding.key, value: event.target.value })
+            }
+            error={error}
+          >
+            <option value="">Seleccionar</option>
+            {selectOptions.map((option) => (
+              <option key={`${fieldId}-${option.value}`} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </Select>
+        );
+      }
+
+      return (
+        <Input
+          key={fieldId}
+          id={`header-${fieldId}`}
+          label={label}
+          value={value}
+          onChange={(event) =>
+            dispatch({ type: 'UPDATE_HEADER', field: binding.key, value: event.target.value })
+          }
+          error={error}
+          placeholder="Completar"
+        />
+      );
+    }
+
+    const label = BUILDER_HEADER_FIELD_LABELS[fieldId] || fieldId;
+    const value = state.headerExtras?.[fieldId] || '';
+
+    if (selectOptions) {
+      return (
+        <Select
+          key={fieldId}
+          id={`header-extra-${fieldId}`}
+          label={label}
+          value={value}
+          onChange={(event) =>
+            dispatch({ type: 'UPDATE_HEADER_EXTRA', field: fieldId, value: event.target.value })
+          }
+          error={error}
+        >
+          <option value="">Seleccionar</option>
+          {selectOptions.map((option) => (
+            <option key={`${fieldId}-${option.value}`} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </Select>
+      );
+    }
+
+    return (
+      <Input
+        key={fieldId}
+        id={`header-extra-${fieldId}`}
+        label={label}
+        type={resolveHeaderFieldInputType(fieldId)}
+        value={value}
+        onChange={(event) =>
+          dispatch({ type: 'UPDATE_HEADER_EXTRA', field: fieldId, value: event.target.value })
+        }
+        error={error}
+        placeholder="Completar"
+      />
+    );
   };
 
   if (isTemplateLoading) {
@@ -744,227 +1254,416 @@ export default function FichaEscritura() {
           <SectionHeader eyebrow="Formulario" title={formTitle} />
         </Card>
 
-      <section id="datos" className="scroll-mt-28">
-        <Card className="flex flex-col gap-6">
-          <SectionHeader
-            eyebrow="Encabezado"
-            title="Datos de identificacion"
-            description="Registra la informacion base de la institucion y del docente monitoreado."
-          />
-          <div className="grid gap-4 md:grid-cols-2">
-            <div
-              ref={institutionAutocompleteRef}
-              className="flex flex-col gap-1.5 text-[14px] leading-[1.5] text-slate-200"
-            >
-              <span className="text-[10px] uppercase tracking-[0.16em] text-slate-400">
-                Institucion Educativa
-              </span>
-              <div className="relative">
-                <input
-                  id="institucion"
-                  value={state.header.institucion}
-                  onChange={(event) => {
-                    dispatch({
-                      type: 'UPDATE_HEADER',
-                      field: 'institucion',
-                      value: event.target.value,
-                    });
-                    if (!isReadOnly) setIsInstitutionAutocompleteOpen(true);
-                  }}
-                  onFocus={() => {
-                    if (!isReadOnly) setIsInstitutionAutocompleteOpen(true);
-                  }}
-                  onKeyDown={handleInstitutionKeyDown}
-                  placeholder="Nombre de la I.E."
-                  autoComplete="off"
-                  disabled={isReadOnly}
-                  className="h-9 w-full rounded-xl border border-slate-700/60 bg-slate-900/70 px-3 text-[14px] leading-[1.5] text-slate-100 placeholder:text-slate-500 focus:border-cyan-400 focus:outline-none focus:ring-2 focus:ring-cyan-500/30 disabled:cursor-not-allowed disabled:opacity-70"
-                />
-
-                {isInstitutionAutocompleteOpen && !isReadOnly && state.header.institucion.trim() ? (
-                  <div className="absolute left-0 right-0 z-30 mt-1.5 overflow-hidden rounded-xl border border-slate-700/80 bg-slate-950/95 shadow-[0_12px_34px_rgba(2,6,23,0.45)]">
-                    {isInstitutionCatalogLoading ? (
-                      <p className="px-3 py-2 text-sm text-slate-400">Cargando instituciones...</p>
-                    ) : institutionSuggestions.length ? (
-                      <div className="max-h-72 overflow-y-auto">
-                        {institutionSuggestions.map((item) => (
-                          <button
-                            key={`ie-suggestion-${item.id}`}
-                            type="button"
-                            onClick={() => applyInstitutionSuggestion(item)}
-                            className="flex w-full flex-col gap-1 border-b border-slate-800/80 px-3 py-2 text-left last:border-b-0 hover:bg-slate-900/70"
-                          >
-                            <span className="truncate text-sm font-semibold text-slate-100">{item.nombre_ie}</span>
-                            <span className="truncate text-xs text-slate-400">
-                              Cod. modular: {item.cod_modular || '-'} | Cod. local: {item.cod_local || '-'} |{' '}
-                              {item.distrito || '-'} | {formatInstitutionLevel(item.nivel)} |{' '}
-                              {item.modalidad || '-'}
-                            </span>
-                          </button>
-                        ))}
-                      </div>
-                    ) : (
-                      <p className="px-3 py-2 text-sm text-slate-400">No se encontraron IE.</p>
-                    )}
+      {showHeaderSection ? (
+        <section id="datos" className="scroll-mt-28">
+          <Card className="flex flex-col gap-6">
+            <SectionHeader
+              eyebrow="Encabezado"
+              title="Datos de identificacion"
+              description="Registra los campos activos definidos en la ficha publicada."
+            />
+            <div className="space-y-4">
+              {groupedHeaderFields.map((group) => (
+                <div key={group.id} className="rounded-xl border border-slate-800/80 bg-slate-900/45 p-4">
+                  <p className="text-sm font-semibold text-slate-100">{group.title}</p>
+                  <p className="text-small mt-1">{group.description}</p>
+                  <div className="mt-3 grid gap-4 md:grid-cols-2">
+                    {group.fields.map((fieldId) => renderHeaderField(fieldId))}
                   </div>
-                ) : null}
-              </div>
-              {state.errors?.header?.institucion ? (
-                <span className="text-xs text-rose-400">{state.errors.header.institucion}</span>
-              ) : null}
-              {institutionCatalogError ? (
-                <span className="text-xs text-amber-300">{institutionCatalogError}</span>
+                </div>
+              ))}
+
+              {activeDynamicFields.length ? (
+                <div className="rounded-xl border border-slate-800/80 bg-slate-900/45 p-4">
+                  <p className="text-sm font-semibold text-slate-100">Campos personalizados</p>
+                  <p className="text-small mt-1">Campos adicionales definidos en la ficha.</p>
+                  <div className="mt-3 grid gap-4 md:grid-cols-2">
+                    {activeDynamicFields.map((field) => {
+                      const fieldKey = String(field.id || '');
+                      if (!fieldKey) return null;
+                      const fieldType = String(field.type || 'text').toLowerCase();
+                      const label = field.name || 'Campo personalizado';
+                      if (fieldType === 'boolean') {
+                        return (
+                          <Select
+                            key={fieldKey}
+                            id={`dynamic-${fieldKey}`}
+                            label={label}
+                            value={state.dynamicFields?.[fieldKey] || ''}
+                            onChange={(event) =>
+                              dispatch({ type: 'UPDATE_DYNAMIC_FIELD', field: fieldKey, value: event.target.value })
+                            }
+                            error={state.errors?.header?.[`dynamic_${fieldKey}`]}
+                          >
+                            <option value="">Seleccionar</option>
+                            <option value="SI">Si</option>
+                            <option value="NO">No</option>
+                          </Select>
+                        );
+                      }
+                      if (fieldType === 'select') {
+                        const options = Array.isArray(field.options) ? field.options : [];
+                        return (
+                          <Select
+                            key={fieldKey}
+                            id={`dynamic-${fieldKey}`}
+                            label={label}
+                            value={state.dynamicFields?.[fieldKey] || ''}
+                            onChange={(event) =>
+                              dispatch({ type: 'UPDATE_DYNAMIC_FIELD', field: fieldKey, value: event.target.value })
+                            }
+                            error={state.errors?.header?.[`dynamic_${fieldKey}`]}
+                          >
+                            <option value="">Seleccionar</option>
+                            {options.map((option) => {
+                              const optionValue = String(option || '').trim();
+                              return (
+                                <option key={`${fieldKey}-${optionValue}`} value={optionValue}>
+                                  {optionValue}
+                                </option>
+                              );
+                            })}
+                          </Select>
+                        );
+                      }
+                      return (
+                        <Input
+                          key={fieldKey}
+                          id={`dynamic-${fieldKey}`}
+                          label={label}
+                          type={fieldType === 'number' ? 'number' : fieldType === 'date' ? 'date' : 'text'}
+                          value={state.dynamicFields?.[fieldKey] || ''}
+                          onChange={(event) =>
+                            dispatch({ type: 'UPDATE_DYNAMIC_FIELD', field: fieldKey, value: event.target.value })
+                          }
+                          error={state.errors?.header?.[`dynamic_${fieldKey}`]}
+                          placeholder="Completar"
+                        />
+                      );
+                    })}
+                  </div>
+                </div>
               ) : null}
             </div>
-            <Input
-              id="lugarIe"
-              label="Lugar donde se encuentra la IE"
-              value={state.header.lugarIe}
-              onChange={(event) =>
-                dispatch({ type: 'UPDATE_HEADER', field: 'lugarIe', value: event.target.value })
-              }
-              error={state.errors?.header?.lugarIe}
-              placeholder="Distrito / Provincia"
-              disabled={isReadOnly}
-            />
-            <Input
-              id="director"
-              label="Director(a) o Monitor(a)"
-              value={state.header.director}
-              onChange={(event) =>
-                dispatch({ type: 'UPDATE_HEADER', field: 'director', value: event.target.value })
-              }
-              error={state.errors?.header?.director}
-              placeholder="Nombre completo"
-            />
-            <Input
-              id="docente"
-              label="Apellidos y nombres del(a) docente"
-              value={state.header.docente}
-              onChange={(event) =>
-                dispatch({ type: 'UPDATE_HEADER', field: 'docente', value: event.target.value })
-              }
-              error={state.errors?.header?.docente}
-              placeholder="Nombre completo"
-            />
-            <Select
-              id="condicion"
-              label="Condicion"
-              value={state.header.condicion}
-              onChange={(event) =>
-                dispatch({ type: 'UPDATE_HEADER', field: 'condicion', value: event.target.value })
-              }
-              error={state.errors?.header?.condicion}
-            >
-              <option value="">Seleccionar</option>
-              <option value="Nombrado">Nombrado</option>
-              <option value="Contratado">Contratado</option>
-            </Select>
-            <Select
-              id="area"
-              label="Area que monitorea"
-              value={state.header.area}
-              onChange={(event) =>
-                dispatch({ type: 'UPDATE_HEADER', field: 'area', value: event.target.value })
-              }
-              error={state.errors?.header?.area}
-            >
-              <option value="">Seleccionar</option>
-              <option value="Comunicacion">Comunicacion</option>
-              <option value="Quechua">Quechua</option>
-              <option value="Ingles">Ingles</option>
-            </Select>
+          </Card>
+        </section>
+      ) : null}
+
+      {showLevelInfoCard ? (
+        <Card>
+          <SectionHeader
+            eyebrow="Cuadro informativo"
+            title="Nivel de avance"
+            description="Estos niveles se mantienen visibles como referencia para cada item."
+          />
+          <div className="mt-4 flex flex-wrap gap-3">
+            {templateLevels.map((item, index) => (
+              <Badge
+                key={item.key || item.label || index}
+                label={`${item.label} - ${item.description}`}
+                tone={index === 0 ? 'warning' : index === 1 ? 'blue' : index === 2 ? 'success' : 'info'}
+              />
+            ))}
           </div>
         </Card>
-      </section>
-
-      <Card>
-        <SectionHeader
-          eyebrow="Cuadro informativo"
-          title="Nivel de avance"
-          description="Estos niveles se mantienen visibles como referencia para cada item."
-        />
-        <div className="mt-4 flex flex-wrap gap-3">
-          {templateLevels.map((item, index) => (
-            <Badge
-              key={item.key || item.label || index}
-              label={`${item.label} - ${item.description}`}
-              tone={index === 0 ? 'warning' : index === 1 ? 'blue' : index === 2 ? 'success' : 'info'}
-            />
-          ))}
-        </div>
-      </Card>
+      ) : null}
 
       {templateSections.map((section, index) => (
         <section key={section.id} id={section.id} className="scroll-mt-28">
           <Card className="flex flex-col gap-6">
-            <SectionHeader eyebrow={`Seccion ${section.id.toUpperCase()}`} title={section.title} />
+            <SectionHeader eyebrow={`Seccion ${index + 1}`} title={section.title} />
             <div className="flex flex-col gap-4">
               {section.questions.map((question) => {
                 const data = state.questions[question.id] || { answer: null, level: null, obs: '' };
+                const questionKind = resolveQuestionKind(question);
+                const optionValues = Array.isArray(question.sourceOptions) && question.sourceOptions.length
+                  ? question.sourceOptions
+                  : Array.isArray(question.options) && question.options.length
+                    ? question.options
+                    : [];
+                const showObservation = question.allowObservation !== false;
                 const isDisabled = data.answer !== 'SI';
                 return (
                   <div key={question.id} className="rounded-2xl border border-slate-800/70 bg-slate-950/40 p-5">
-                    <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                    <div className="flex flex-col gap-4">
                       <div className="space-y-2">
                         <p className="text-sm font-medium text-slate-100">{question.text}</p>
                         {state.errors?.questions?.[question.id] ? (
                           <p className="text-xs text-rose-400">{state.errors.questions[question.id]}</p>
                         ) : null}
                       </div>
-                      <Toggle
-                        value={data.answer}
-                        onChange={(value) =>
-                          dispatch({
-                            type: 'UPDATE_QUESTION',
-                            id: question.id,
-                            payload: {
-                              answer: value,
-                              level: value === 'NO' ? null : data.level,
-                              obs: value === 'NO' ? '' : data.obs,
-                            },
-                          })
-                        }
-                      />
                     </div>
-                    <div className={`mt-4 flex flex-col gap-4 ${isDisabled ? 'opacity-50' : ''}`}>
-                      {data.answer === 'NO' ? (
-                        <p className="text-xs text-slate-400">
-                          Selecciona "Si" para registrar nivel de logro y observacion.
-                        </p>
-                      ) : null}
-                      <div className="flex flex-col gap-2">
-                        <span className="text-xs uppercase tracking-wide text-slate-400">
-                          Nivel de logro
-                        </span>
-                        <LevelPills
-                          value={data.level}
+
+                    {questionKind === 'yes_no_levels' ? (
+                      <div className={`mt-4 flex flex-col gap-4 ${isDisabled ? 'opacity-50' : ''}`}>
+                        <Toggle
+                          value={data.answer}
                           onChange={(value) =>
                             dispatch({
                               type: 'UPDATE_QUESTION',
                               id: question.id,
-                              payload: { level: value },
+                              payload: {
+                                answer: value,
+                                level: value === 'NO' ? null : data.level,
+                                obs: value === 'NO' ? '' : data.obs,
+                              },
                             })
                           }
-                          disabled={isDisabled}
-                          levels={templateLevels}
                         />
+                        {data.answer === 'NO' ? (
+                          <p className="text-xs text-slate-400">
+                            Selecciona "Si" para registrar nivel de logro y observacion.
+                          </p>
+                        ) : null}
+                        <div className="flex flex-col gap-2">
+                          <span className="text-xs uppercase tracking-wide text-slate-400">
+                            Nivel de logro
+                          </span>
+                          <LevelPills
+                            value={data.level}
+                            onChange={(value) =>
+                              dispatch({
+                                type: 'UPDATE_QUESTION',
+                                id: question.id,
+                                payload: { level: value },
+                              })
+                            }
+                            disabled={isDisabled}
+                            levels={templateLevels}
+                          />
+                        </div>
+                        {showObservation ? (
+                          <Textarea
+                            id={`${question.id}-obs`}
+                            label="Observacion"
+                            value={data.obs}
+                            onChange={(event) =>
+                              dispatch({
+                                type: 'UPDATE_QUESTION',
+                                id: question.id,
+                                payload: { obs: event.target.value },
+                              })
+                            }
+                            disabled={isDisabled}
+                            placeholder="Registrar observaciones..."
+                          />
+                        ) : null}
                       </div>
-                      <Textarea
-                        id={`${question.id}-obs`}
-                        label="Observacion"
-                        value={data.obs}
-                        onChange={(event) =>
-                          dispatch({
-                            type: 'UPDATE_QUESTION',
-                            id: question.id,
-                            payload: { obs: event.target.value },
-                          })
-                        }
-                        disabled={isDisabled}
-                        placeholder="Registrar observaciones..."
-                      />
-                    </div>
+                    ) : null}
+
+                    {questionKind === 'yes_no' ? (
+                      <div className="mt-4 flex flex-col gap-4">
+                        <Toggle
+                          value={data.answer}
+                          onChange={(value) =>
+                            dispatch({
+                              type: 'UPDATE_QUESTION',
+                              id: question.id,
+                              payload: { answer: value },
+                            })
+                          }
+                        />
+                        {showObservation ? (
+                          <Textarea
+                            id={`${question.id}-obs`}
+                            label="Observacion"
+                            value={data.obs}
+                            onChange={(event) =>
+                              dispatch({
+                                type: 'UPDATE_QUESTION',
+                                id: question.id,
+                                payload: { obs: event.target.value },
+                              })
+                            }
+                            placeholder="Registrar observaciones..."
+                          />
+                        ) : null}
+                      </div>
+                    ) : null}
+
+                    {questionKind === 'options' ? (
+                      <div className="mt-4 flex flex-col gap-4">
+                        <div className="flex flex-wrap gap-2">
+                          {optionValues.map((option) => {
+                            const optionValue = String(option || '').trim();
+                            const selected = String(data.answer || '') === optionValue;
+                            return (
+                              <button
+                                key={`${question.id}-${optionValue}`}
+                                type="button"
+                                onClick={() =>
+                                  dispatch({
+                                    type: 'UPDATE_QUESTION',
+                                    id: question.id,
+                                    payload: { answer: optionValue },
+                                  })
+                                }
+                                className={`rounded-full border px-3 py-1 text-xs font-medium transition ${
+                                  selected
+                                    ? 'border-cyan-400/70 bg-cyan-500/20 text-cyan-100'
+                                    : 'border-slate-700/70 bg-slate-900/60 text-slate-300 hover:border-slate-500'
+                                }`}
+                              >
+                                {optionValue}
+                              </button>
+                            );
+                          })}
+                        </div>
+                        {showObservation ? (
+                          <Textarea
+                            id={`${question.id}-obs`}
+                            label="Observacion"
+                            value={data.obs}
+                            onChange={(event) =>
+                              dispatch({
+                                type: 'UPDATE_QUESTION',
+                                id: question.id,
+                                payload: { obs: event.target.value },
+                              })
+                            }
+                            placeholder="Registrar observaciones..."
+                          />
+                        ) : null}
+                      </div>
+                    ) : null}
+
+                    {questionKind === 'text' ? (
+                      <div className="mt-4 flex flex-col gap-4">
+                        <Textarea
+                          id={`${question.id}-text`}
+                          label="Respuesta"
+                          value={data.answer || ''}
+                          onChange={(event) =>
+                            dispatch({
+                              type: 'UPDATE_QUESTION',
+                              id: question.id,
+                              payload: { answer: event.target.value },
+                            })
+                          }
+                          placeholder="Escribe tu respuesta..."
+                        />
+                        {showObservation ? (
+                          <Textarea
+                            id={`${question.id}-obs`}
+                            label="Observacion"
+                            value={data.obs}
+                            onChange={(event) =>
+                              dispatch({
+                                type: 'UPDATE_QUESTION',
+                                id: question.id,
+                                payload: { obs: event.target.value },
+                              })
+                            }
+                            placeholder="Registrar observaciones..."
+                          />
+                        ) : null}
+                      </div>
+                    ) : null}
+
+                    {questionKind === 'number' ? (
+                      <div className="mt-4 flex flex-col gap-4">
+                        <Input
+                          id={`${question.id}-number`}
+                          type="number"
+                          label="Respuesta numerica"
+                          value={data.answer || ''}
+                          onChange={(event) =>
+                            dispatch({
+                              type: 'UPDATE_QUESTION',
+                              id: question.id,
+                              payload: { answer: event.target.value },
+                            })
+                          }
+                          placeholder="Ingresa un valor"
+                        />
+                        {showObservation ? (
+                          <Textarea
+                            id={`${question.id}-obs`}
+                            label="Observacion"
+                            value={data.obs}
+                            onChange={(event) =>
+                              dispatch({
+                                type: 'UPDATE_QUESTION',
+                                id: question.id,
+                                payload: { obs: event.target.value },
+                              })
+                            }
+                            placeholder="Registrar observaciones..."
+                          />
+                        ) : null}
+                      </div>
+                    ) : null}
+
+                    {questionKind === 'pdf' ? (
+                      <div className="mt-4 flex flex-col gap-4">
+                        <div className="flex flex-col gap-1.5 text-[14px] leading-[1.5] text-slate-200">
+                          <span className="text-[10px] uppercase tracking-[0.16em] text-slate-400">Archivo PDF</span>
+                          <input
+                            type="file"
+                            accept="application/pdf"
+                            onChange={(event) => {
+                              const file = event.target.files?.[0] || null;
+                              dispatch({
+                                type: 'UPDATE_QUESTION',
+                                id: question.id,
+                                payload: { answer: file ? file.name : '' },
+                              });
+                            }}
+                            className="h-9 w-full rounded-xl border border-slate-700/60 bg-slate-900/70 px-3 text-[13px] leading-[1.5] text-slate-100 file:mr-3 file:rounded-md file:border-0 file:bg-slate-800 file:px-2 file:py-1 file:text-xs file:text-slate-200"
+                          />
+                          {data.answer ? (
+                            <span className="text-xs text-slate-400">Archivo seleccionado: {data.answer}</span>
+                          ) : null}
+                        </div>
+                        {showObservation ? (
+                          <Textarea
+                            id={`${question.id}-obs`}
+                            label="Observacion"
+                            value={data.obs}
+                            onChange={(event) =>
+                              dispatch({
+                                type: 'UPDATE_QUESTION',
+                                id: question.id,
+                                payload: { obs: event.target.value },
+                              })
+                            }
+                            placeholder="Registrar observaciones..."
+                          />
+                        ) : null}
+                      </div>
+                    ) : null}
+                    {!['yes_no_levels', 'yes_no', 'options', 'text', 'number', 'pdf'].includes(questionKind) ? (
+                      <div className="mt-4 flex flex-col gap-4">
+                        <Textarea
+                          id={`${question.id}-fallback`}
+                          label="Respuesta"
+                          value={data.answer || ''}
+                          onChange={(event) =>
+                            dispatch({
+                              type: 'UPDATE_QUESTION',
+                              id: question.id,
+                              payload: { answer: event.target.value },
+                            })
+                          }
+                          placeholder="Escribe tu respuesta..."
+                        />
+                        {showObservation ? (
+                          <Textarea
+                            id={`${question.id}-obs`}
+                            label="Observacion"
+                            value={data.obs}
+                            onChange={(event) =>
+                              dispatch({
+                                type: 'UPDATE_QUESTION',
+                                id: question.id,
+                                payload: { obs: event.target.value },
+                              })
+                            }
+                            placeholder="Registrar observaciones..."
+                          />
+                        ) : null}
+                      </div>
+                    ) : null}
                   </div>
                 );
               })}
@@ -973,145 +1672,190 @@ export default function FichaEscritura() {
         </section>
       ))}
 
-      <section id="cierre" className="scroll-mt-28">
-        <div className="flex flex-col gap-6">
-          <Card className="flex flex-col gap-6">
-            <SectionHeader
-              eyebrow="Seccion general"
-              title="Observacion general y compromiso"
-              description="Sintesis del monitoreo y acuerdos con el docente monitoreado."
-            />
-            <div className="grid gap-4 md:grid-cols-2">
-              <Textarea
-                id="observacion-general"
-                label="Observacion general"
-                value={state.general.observacion}
-                onChange={(event) =>
-                  dispatch({ type: 'UPDATE_GENERAL', field: 'observacion', value: event.target.value })
-                }
-                placeholder="Resumen del monitoreo"
-              />
-              <Textarea
-                id="compromiso"
-                label="Compromiso segun resultados del monitoreo"
-                value={state.general.compromiso}
-                onChange={(event) =>
-                  dispatch({ type: 'UPDATE_GENERAL', field: 'compromiso', value: event.target.value })
-                }
-                placeholder="Compromisos establecidos"
-              />
-            </div>
-          </Card>
+      {showClosingContainer ? (
+        <section id="cierre" className="scroll-mt-28">
+          <div className="flex flex-col gap-6">
+            {showGeneralSection ? (
+              <Card className="flex flex-col gap-6">
+                <SectionHeader
+                  eyebrow="Seccion general"
+                  title="Observacion general y compromiso"
+                  description="Sintesis del monitoreo y acuerdos con el docente monitoreado."
+                />
+                <div className="grid gap-4 md:grid-cols-2">
+                  {showGeneralObservation ? (
+                    <Textarea
+                      id="observacion-general"
+                      label="Observacion general"
+                      value={state.general.observacion}
+                      onChange={(event) =>
+                        dispatch({ type: 'UPDATE_GENERAL', field: 'observacion', value: event.target.value })
+                      }
+                      placeholder="Resumen del monitoreo"
+                    />
+                  ) : null}
+                  {showGeneralCommitment ? (
+                    <Textarea
+                      id="compromiso"
+                      label="Compromiso segun resultados del monitoreo"
+                      value={state.general.compromiso}
+                      onChange={(event) =>
+                        dispatch({ type: 'UPDATE_GENERAL', field: 'compromiso', value: event.target.value })
+                      }
+                      placeholder="Compromisos establecidos"
+                    />
+                  ) : null}
+                </div>
+              </Card>
+            ) : null}
 
-          <Card className="flex flex-col gap-6">
-            <SectionHeader eyebrow="Lugar y fecha" title="Lugar y fecha" />
-            <div className="grid gap-4 md:grid-cols-2">
-              <Input
-                id="lugar"
-                label="Lugar (Distrito)"
-                value={state.cierre.lugar}
-                onChange={(event) =>
-                  dispatch({ type: 'UPDATE_CIERRE', field: 'lugar', value: event.target.value })
-                }
-                error={state.errors?.cierre?.lugar}
-                placeholder="Distrito"
-              />
-              <Input
-                id="fecha"
-                type="date"
-                label="Fecha"
-                value={state.cierre.fecha}
-                onChange={(event) =>
-                  dispatch({ type: 'UPDATE_CIERRE', field: 'fecha', value: event.target.value })
-                }
-                error={state.errors?.cierre?.fecha}
-              />
-            </div>
-          </Card>
+            {showPlaceDateSection ? (
+              <Card className="flex flex-col gap-6">
+                <SectionHeader eyebrow="Lugar y fecha" title="Lugar y fecha" />
+                <div className="grid gap-4 md:grid-cols-2">
+                  {showClosingPlace ? (
+                    <Input
+                      id="lugar"
+                      label="Lugar (Distrito)"
+                      value={state.cierre.lugar}
+                      onChange={(event) =>
+                        dispatch({ type: 'UPDATE_CIERRE', field: 'lugar', value: event.target.value })
+                      }
+                      error={state.errors?.cierre?.lugar}
+                      placeholder="Distrito"
+                    />
+                  ) : null}
+                  {showClosingDate ? (
+                    <Input
+                      id="fecha"
+                      type="date"
+                      label="Fecha"
+                      value={state.cierre.fecha}
+                      onChange={(event) =>
+                        dispatch({ type: 'UPDATE_CIERRE', field: 'fecha', value: event.target.value })
+                      }
+                      error={state.errors?.cierre?.fecha}
+                    />
+                  ) : null}
+                </div>
+              </Card>
+            ) : null}
 
-          <Card className="flex flex-col gap-6">
-            <SectionHeader eyebrow="Firmas" title="Firmas" description="Firma del docente monitoreado y del monitor." />
-            <div className="grid gap-6 lg:grid-cols-2">
-              <div className="flex flex-col gap-4">
-                <SignaturePad
-                  label="Docente monitoreado"
-                  value={state.firmas.docente.firma}
-                  onChange={(value) =>
-                    dispatch({ type: 'UPDATE_FIRMA', role: 'docente', field: 'firma', value })
-                  }
-                  disabled={isReadOnly}
-                />
-                <Input
-                  id="docente-nombre"
-                  label="Nombre"
-                  value={state.firmas.docente.nombre}
-                  onChange={(event) =>
-                    dispatch({
-                      type: 'UPDATE_FIRMA',
-                      role: 'docente',
-                      field: 'nombre',
-                      value: event.target.value,
-                    })
-                  }
-                />
-                <Input
-                  id="docente-dni"
-                  label="DNI"
-                  value={state.firmas.docente.dni}
-                  onChange={(event) =>
-                    dispatch({
-                      type: 'UPDATE_FIRMA',
-                      role: 'docente',
-                      field: 'dni',
-                      value: event.target.value,
-                    })
-                  }
-                  error={state.errors?.firmas?.docenteDni}
-                  placeholder="Documento"
-                />
-              </div>
-              <div className="flex flex-col gap-4">
-                <SignaturePad
-                  label="Monitor"
-                  value={state.firmas.monitor.firma}
-                  onChange={(value) =>
-                    dispatch({ type: 'UPDATE_FIRMA', role: 'monitor', field: 'firma', value })
-                  }
-                  disabled={isReadOnly}
-                />
-                <Input
-                  id="monitor-nombre"
-                  label="Nombre del monitor"
-                  value={state.firmas.monitor.nombre}
-                  onChange={(event) =>
-                    dispatch({
-                      type: 'UPDATE_FIRMA',
-                      role: 'monitor',
-                      field: 'nombre',
-                      value: event.target.value,
-                    })
-                  }
-                />
-                <Input
-                  id="monitor-dni"
-                  label="DNI del monitor"
-                  value={state.firmas.monitor.dni}
-                  onChange={(event) =>
-                    dispatch({
-                      type: 'UPDATE_FIRMA',
-                      role: 'monitor',
-                      field: 'dni',
-                      value: event.target.value,
-                    })
-                  }
-                  error={state.errors?.firmas?.monitorDni}
-                  placeholder="Documento"
-                />
-              </div>
-            </div>
-          </Card>
-        </div>
-      </section>
+            {extraClosingFieldIds.length ? (
+              <Card className="flex flex-col gap-6">
+                <SectionHeader eyebrow="Cierre" title="Campos adicionales de cierre" />
+                <div className="grid gap-4 md:grid-cols-2">
+                  {extraClosingFieldIds.map((fieldId) => (
+                    <Input
+                      key={fieldId}
+                      id={`closing-extra-${fieldId}`}
+                      label={BUILDER_CLOSING_FIELD_LABELS[fieldId] || fieldId}
+                      value={state.closingExtras?.[fieldId] || ''}
+                      onChange={(event) =>
+                        dispatch({ type: 'UPDATE_CLOSING_EXTRA', field: fieldId, value: event.target.value })
+                      }
+                      error={state.errors?.cierre?.[fieldId]}
+                      placeholder="Completar"
+                    />
+                  ))}
+                </div>
+              </Card>
+            ) : null}
+
+            {showSignaturesSection ? (
+              <Card className="flex flex-col gap-6">
+                <SectionHeader eyebrow="Firmas" title="Firmas" description="Firma del docente monitoreado y del monitor." />
+                <div className="grid gap-6 lg:grid-cols-2">
+                  <div className="flex flex-col gap-4">
+                    {showSignaturePads ? (
+                      <SignaturePad
+                        label="Docente monitoreado"
+                        value={state.firmas.docente.firma}
+                        onChange={(value) =>
+                          dispatch({ type: 'UPDATE_FIRMA', role: 'docente', field: 'firma', value })
+                        }
+                        disabled={isReadOnly}
+                      />
+                    ) : null}
+                    <Input
+                      id="docente-nombre"
+                      label="Nombre"
+                      value={state.firmas.docente.nombre}
+                      onChange={(event) =>
+                        dispatch({
+                          type: 'UPDATE_FIRMA',
+                          role: 'docente',
+                          field: 'nombre',
+                          value: event.target.value,
+                        })
+                      }
+                    />
+                    {showMonitoredDni ? (
+                      <Input
+                        id="docente-dni"
+                        label="DNI"
+                        value={state.firmas.docente.dni}
+                        onChange={(event) =>
+                          dispatch({
+                            type: 'UPDATE_FIRMA',
+                            role: 'docente',
+                            field: 'dni',
+                            value: event.target.value,
+                          })
+                        }
+                        error={state.errors?.firmas?.docenteDni}
+                        placeholder="Documento"
+                      />
+                    ) : null}
+                  </div>
+                  <div className="flex flex-col gap-4">
+                    {showSignaturePads ? (
+                      <SignaturePad
+                        label="Monitor"
+                        value={state.firmas.monitor.firma}
+                        onChange={(value) =>
+                          dispatch({ type: 'UPDATE_FIRMA', role: 'monitor', field: 'firma', value })
+                        }
+                        disabled={isReadOnly}
+                      />
+                    ) : null}
+                    <Input
+                      id="monitor-nombre"
+                      label="Nombre del monitor"
+                      value={state.firmas.monitor.nombre}
+                      onChange={(event) =>
+                        dispatch({
+                          type: 'UPDATE_FIRMA',
+                          role: 'monitor',
+                          field: 'nombre',
+                          value: event.target.value,
+                        })
+                      }
+                    />
+                    {showMonitorDni ? (
+                      <Input
+                        id="monitor-dni"
+                        label="DNI del monitor"
+                        value={state.firmas.monitor.dni}
+                        onChange={(event) =>
+                          dispatch({
+                            type: 'UPDATE_FIRMA',
+                            role: 'monitor',
+                            field: 'dni',
+                            value: event.target.value,
+                          })
+                        }
+                        error={state.errors?.firmas?.monitorDni}
+                        placeholder="Documento"
+                      />
+                    ) : null}
+                  </div>
+                </div>
+              </Card>
+            ) : null}
+          </div>
+        </section>
+      ) : null}
 
       </fieldset>
 

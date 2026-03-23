@@ -388,8 +388,8 @@ export default function MonitoreoSelect() {
               Monitoreos
             </h1>
           </div>
-        {isAdmin ? (
-          <div className="flex flex-wrap items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
+          {isAdmin ? (
             <label className="inline-flex h-9 items-center gap-2 rounded-xl border border-slate-700/60 bg-slate-900/45 px-3 text-xs text-slate-300">
               <input
                 type="checkbox"
@@ -399,15 +399,15 @@ export default function MonitoreoSelect() {
               />
               Ver borradores
             </label>
-            <Link
-              to="/monitoreo/plantillas/nueva"
-              className="ds-btn ds-btn-primary h-9 px-4"
-            >
-              <Plus size={14} />
-              Crear nuevo monitoreo
-            </Link>
-          </div>
-        ) : null}
+          ) : null}
+          <Link
+            to="/monitoreo/gestion"
+            className="ds-btn ds-btn-primary h-9 px-4"
+          >
+            <Plus size={14} />
+            Crear nuevo monitoreo
+          </Link>
+        </div>
       </div>
 
       {isLoading ? (
@@ -427,7 +427,7 @@ export default function MonitoreoSelect() {
       ) : visibleTemplates.length === 0 ? (
         <Card className="flex flex-col gap-3">
           <p className="text-sm text-slate-400">
-            Aun no existen plantillas de monitoreo. Contacta a un administrador.
+            Aun no existen plantillas de monitoreo. Puedes crear una nueva solicitud desde "Crear nuevo monitoreo".
           </p>
         </Card>
       ) : (
