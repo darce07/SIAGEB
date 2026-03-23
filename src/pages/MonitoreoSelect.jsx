@@ -402,14 +402,14 @@ export default function MonitoreoSelect() {
   };
 
   return (
-    <div className="flex flex-col gap-7">
-        <div className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-800/70 pb-4">
+    <div className="flex min-w-0 flex-col gap-7">
+        <div className="flex min-w-0 flex-wrap items-start justify-between gap-4 border-b border-slate-800/70 pb-4">
           <div className="flex flex-col gap-1.5">
             <h1 title="Monitoreos" className="max-w-[70ch] truncate text-3xl font-semibold text-slate-100">
               Monitoreos
             </h1>
           </div>
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="flex w-full flex-wrap items-center gap-3 sm:w-auto sm:justify-end">
           {isAdmin ? (
             <label className="inline-flex h-9 items-center gap-2 rounded-xl border border-slate-700/60 bg-slate-900/45 px-3 text-xs text-slate-300">
               <input
@@ -423,7 +423,7 @@ export default function MonitoreoSelect() {
           ) : null}
           <Link
             to="/monitoreo/gestion"
-            className="ds-btn ds-btn-primary h-9 px-4"
+            className="ds-btn ds-btn-primary h-9 w-full px-4 sm:w-auto"
           >
             <Plus size={14} />
             Crear nuevo monitoreo
