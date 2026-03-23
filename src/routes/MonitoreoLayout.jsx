@@ -3459,8 +3459,8 @@ export default function MonitoreoLayout() {
     : 'mx-auto w-full max-w-[1280px] px-3 py-3 md:px-5 md:py-5 lg:px-6 lg:py-6';
 
   const contentSurfaceClass = isCompactDensity
-    ? 'content-surface rounded-[22px] px-3 py-3 md:px-4 md:py-4'
-    : 'content-surface rounded-3xl px-3.5 py-3.5 md:px-5 md:py-5';
+    ? 'content-surface w-full min-w-0 max-w-full overflow-x-hidden rounded-[22px] px-3 py-3 md:px-4 md:py-4'
+    : 'content-surface w-full min-w-0 max-w-full overflow-x-hidden rounded-3xl px-3.5 py-3.5 md:px-5 md:py-5';
 
   const assistantPanelClass = isCompactDensity
     ? 'flex w-[min(90vw,408px)] max-h-[calc(100vh-5.5rem)] flex-col overflow-hidden rounded-2xl border border-slate-800/70 bg-slate-900/70 font-sans text-[13px] leading-5 text-slate-200 shadow-[0_20px_60px_-30px_rgba(0,0,0,0.75)] backdrop-blur'

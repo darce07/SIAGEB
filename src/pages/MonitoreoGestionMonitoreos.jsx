@@ -1947,7 +1947,7 @@ export default function MonitoreoGestionMonitoreos({ embedded = false, initialCr
   ];
 
   return (
-    <div className="flex w-full min-w-0 max-w-full touch-pan-y flex-col gap-4 overflow-x-hidden">
+    <div className="flex w-full min-w-0 max-w-full max-w-[100vw] touch-pan-y flex-col gap-4 overflow-x-hidden">
       <div className="border-b border-slate-800/70 pb-4">
         <SectionHeader
           eyebrow="Gestion"
@@ -1994,11 +1994,11 @@ export default function MonitoreoGestionMonitoreos({ embedded = false, initialCr
         </div>
       ) : null}
 
-      <div className="grid min-w-0 gap-4 xl:grid-cols-[320px_minmax(0,1fr)]">
-        <Card className={`flex min-w-0 h-full max-w-full flex-col gap-3 overflow-hidden p-3.5 ${isMobileLayout && mobilePanel !== 'requests' ? 'hidden' : ''}`}>
-          <div className="flex items-center justify-between gap-2">
+      <div className="grid min-w-0 grid-cols-1 gap-4 overflow-x-hidden xl:grid-cols-[320px_minmax(0,1fr)]">
+        <Card className={`flex h-full w-full min-w-0 max-w-full flex-col gap-3 overflow-hidden p-3.5 ${isMobileLayout && mobilePanel !== 'requests' ? 'hidden' : ''}`}>
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="text-h3">Solicitudes</p>
-            <button type="button" onClick={resetToCreateMode} className="ds-btn ds-btn-primary h-8 px-3">
+            <button type="button" onClick={resetToCreateMode} className="ds-btn ds-btn-primary h-8 w-full shrink-0 px-3 sm:w-auto">
               <Plus size={13} />
               Nueva
             </button>
@@ -2017,7 +2017,7 @@ export default function MonitoreoGestionMonitoreos({ embedded = false, initialCr
             />
           </label>
 
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
             <Select
               id="requestStatusFilter"
               label="Estado"
@@ -2045,7 +2045,7 @@ export default function MonitoreoGestionMonitoreos({ embedded = false, initialCr
             </Select>
           </div>
 
-          <div className="max-h-[58vh] space-y-2 overflow-y-auto pr-1 scrollbar-thin">
+          <div className="max-h-[58vh] space-y-2 overflow-y-auto pr-0 sm:pr-1 scrollbar-thin">
             {isRequestsLoading ? (
               <div className="rounded-xl border border-slate-800/80 bg-slate-900/55 px-3 py-4">
                 <p className="text-small">Cargando solicitudes...</p>
@@ -2098,7 +2098,7 @@ export default function MonitoreoGestionMonitoreos({ embedded = false, initialCr
             )}
           </div>
 
-          <div className="mt-auto flex items-center justify-between gap-2 border-t border-slate-800/70 pt-3">
+          <div className="mt-auto flex flex-wrap items-center justify-between gap-2 border-t border-slate-800/70 pt-3">
             <button
               type="button"
               onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
@@ -2107,7 +2107,7 @@ export default function MonitoreoGestionMonitoreos({ embedded = false, initialCr
             >
               <ChevronLeft size={13} />
             </button>
-            <p className="text-small">
+            <p className="text-small w-full text-center sm:w-auto">
               Pagina {safePage} de {totalPages}
             </p>
             <button
@@ -2121,7 +2121,7 @@ export default function MonitoreoGestionMonitoreos({ embedded = false, initialCr
           </div>
         </Card>
 
-        <div className={`min-w-0 space-y-4 ${isMobileLayout && mobilePanel !== 'editor' ? 'hidden' : ''}`}>
+        <div className={`w-full min-w-0 space-y-4 ${isMobileLayout && mobilePanel !== 'editor' ? 'hidden' : ''}`}>
           {isMobileLayout ? (
             <div className="rounded-xl border border-slate-800/80 bg-slate-900/45 p-2.5">
               <Select
@@ -2141,7 +2141,7 @@ export default function MonitoreoGestionMonitoreos({ embedded = false, initialCr
           ) : null}
 
           {showStage('stage1') ? (
-          <Card className="min-w-0 space-y-4">
+          <Card className="w-full min-w-0 max-w-full space-y-4 overflow-hidden">
             <div className="flex items-start justify-between gap-3">
               <SectionHeader
                 eyebrow="Etapa 1"
