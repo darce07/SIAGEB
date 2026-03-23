@@ -11,6 +11,7 @@ import MonitoreoSelect from './pages/MonitoreoSelect.jsx';
 import FichaEscritura from './pages/FichaEscritura.jsx';
 import MonitoreoUsuarios from './pages/MonitoreoUsuarios.jsx';
 import MonitoreoInstituciones from './pages/MonitoreoInstituciones.jsx';
+import MonitoreoGestionMonitoreos from './pages/MonitoreoGestionMonitoreos.jsx';
 import {
   applyVisualPreferences,
   resolveDensityPreference,
@@ -88,6 +89,7 @@ export default function App() {
             </RequireAdmin>
           )}
         />
+        <Route path="gestion" element={<MonitoreoGestionMonitoreos />} />
         <Route
           path="plantillas/:templateId"
           element={(

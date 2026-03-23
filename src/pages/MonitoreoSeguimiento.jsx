@@ -14,6 +14,7 @@ import Card from '../components/ui/Card.jsx';
 import ConfirmModal from '../components/ui/ConfirmModal.jsx';
 import Input from '../components/ui/Input.jsx';
 import InlineOperationalSummary from '../components/ui/InlineOperationalSummary.jsx';
+import MonitoreoGestionMonitoreos from './MonitoreoGestionMonitoreos.jsx';
 import SectionHeader from '../components/ui/SectionHeader.jsx';
 import Select from '../components/ui/Select.jsx';
 import { supabase } from '../lib/supabase.js';
@@ -110,6 +111,33 @@ const toIsoDate = (value) => {
   if (!value) return '';
   const d = new Date(value);
   return Number.isNaN(d.getTime()) ? '' : d.toISOString();
+};
+
+const toDateTimeInputAtHour = (baseDate, hour) => {
+  const base = normalizeDay(baseDate || new Date());
+  base.setHours(hour, 0, 0, 0);
+  const offset = base.getTimezoneOffset() * 60000;
+  return new Date(base.getTime() - offset).toISOString().slice(0, 16);
+};
+
+const toDateParam = (value) => {
+  const date = normalizeDay(value || new Date());
+  const yyyy = date.getFullYear();
+  const mm = `${date.getMonth() + 1}`.padStart(2, '0');
+  const dd = `${date.getDate()}`.padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+};
+
+const formatDateContextLabel = (value) => {
+  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return 'Sin fecha seleccionada';
+  const safeDate = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(safeDate.getTime())) return 'Sin fecha seleccionada';
+  return safeDate.toLocaleDateString('es-PE', {
+    weekday: 'long',
+    day: '2-digit',
+    month: 'long',
+    year: 'numeric',
+  });
 };
 
 const statusFromEvent = (event) => {
@@ -368,6 +396,8 @@ export default function MonitoreoSeguimiento() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [eventForm, setEventForm] = useState(EVENT_EMPTY);
+  const [isMonitoringBuilderModalOpen, setIsMonitoringBuilderModalOpen] = useState(false);
+  const [monitoringBuilderDate, setMonitoringBuilderDate] = useState('');
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [objectiveTextColumn, setObjectiveTextColumn] = useState('objective_text');
@@ -593,6 +623,9 @@ export default function MonitoreoSeguimiento() {
     return found || selectedDayEvents[0];
   }, [selectedDayEvents, selectedEventId]);
 
+  const selectedDayEventsPreview = useMemo(() => selectedDayEvents.slice(0, 3), [selectedDayEvents]);
+  const selectedDayEventsHiddenCount = Math.max(0, selectedDayEvents.length - selectedDayEventsPreview.length);
+
   const navigateCalendar = (direction) => {
     const base = new Date(currentDate);
     base.setMonth(base.getMonth() + direction);
@@ -605,11 +638,10 @@ export default function MonitoreoSeguimiento() {
     setSelectedDayKey(dayKey);
     if (dayEvents.length > 0) {
       setSelectedEventId(dayEvents[0].id);
-      setIsDayModalOpen(true);
     } else {
       setSelectedEventId('');
-      setIsDayModalOpen(false);
     }
+    setIsDayModalOpen(false);
   };
 
   useEffect(() => {
@@ -650,13 +682,6 @@ export default function MonitoreoSeguimiento() {
   useEffect(() => {
     setIsObjectivesExpanded(false);
   }, [selectedEventId, isDayModalOpen]);
-
-  const openCreateModal = () => {
-    setError('');
-    setSuccess('');
-    setEventForm(EVENT_EMPTY);
-    setIsModalOpen(true);
-  };
 
   const openEditModal = (event) => {
     setIsDayModalOpen(false);
@@ -1072,6 +1097,64 @@ export default function MonitoreoSeguimiento() {
     return counts;
   }, [selectedDayEvents]);
 
+  const baseEvents = useMemo(
+    () => events.filter((event) => isAdmin || event.status !== 'hidden'),
+    [events, isAdmin],
+  );
+
+  const monthRange = useMemo(
+    () => ({ start: startOfMonth(currentDate), end: endOfMonth(currentDate) }),
+    [currentDate],
+  );
+
+  const hasVisibleEventsInCurrentMonth = useMemo(
+    () =>
+      visibleEvents.some((event) => {
+        const start = toSafeDate(event.start_at);
+        const end = toSafeDate(event.end_at);
+        if (!start || !end) return false;
+        return end >= monthRange.start && start <= monthRange.end;
+      }),
+    [visibleEvents, monthRange],
+  );
+
+  const isOperationalSummaryEmpty = useMemo(
+    () => Object.values(operationalSummary).every((value) => Number(value || 0) === 0),
+    [operationalSummary],
+  );
+
+  const areFiltersActive =
+    scopeFilter !== 'all' || levelFilter !== 'all' || modalityFilter !== 'all' || statusFilter !== 'all';
+  const hasNoGlobalEvents = baseEvents.length === 0;
+  const hasNoEventsByFilters = !hasNoGlobalEvents && visibleEvents.length === 0;
+  const hasNoEventsInCurrentMonth = !hasNoEventsByFilters && visibleEvents.length > 0 && !hasVisibleEventsInCurrentMonth;
+
+  const resetFilters = () => {
+    setScopeFilter('all');
+    setLevelFilter('all');
+    setModalityFilter('all');
+    setStatusFilter('all');
+  };
+
+  const openCreateModalWithPreset = (eventType = 'monitoring', date = null) => {
+    setError('');
+    setSuccess('');
+    const hasDate = Boolean(date);
+    setEventForm({
+      ...EVENT_EMPTY,
+      eventType,
+      startAt: hasDate ? toDateTimeInputAtHour(date, 8) : '',
+      endAt: hasDate ? toDateTimeInputAtHour(date, 9) : '',
+    });
+    setIsModalOpen(true);
+  };
+
+  const handleCreateMonitoringFromDate = (date) => {
+    const selectedDate = toDateParam(date || selectedDay || new Date());
+    setMonitoringBuilderDate(selectedDate);
+    setIsMonitoringBuilderModalOpen(true);
+  };
+
   const renderEventPriorityButton = (event) => {
     const isSelectedEvent = selectedDayEvent?.id === event.id;
     const operationalState = getEventOperationalState(event);
@@ -1113,64 +1196,48 @@ export default function MonitoreoSeguimiento() {
   };
 
   return (
-    <div className="flex flex-col gap-4">
-      <Card className="flex flex-col gap-3 rounded-[18px] border border-white/10 bg-white/5 p-4 shadow-[0_10px_30px_-18px_rgba(0,0,0,0.65)]">
-        <div className="flex flex-wrap items-center justify-between gap-3">
+    <div className="flex flex-col gap-3">
+      <Card className="w-full rounded-[16px] border border-white/10 bg-white/[0.04] p-3 shadow-[0_10px_30px_-18px_rgba(0,0,0,0.65)]">
+        <div className="flex flex-wrap items-center gap-2.5">
           <SectionHeader title="Seguimiento" size="page" />
-          {isAdmin ? (
-            <button
-              type="button"
-              onClick={openCreateModal}
-              className="ds-btn ds-btn-primary h-10 px-4 text-sm"
-            >
-              <Plus size={15} />
-              Agregar monitoreo/actividad
-            </button>
-          ) : null}
         </div>
 
-      </Card>
-
-      {error ? <p className="text-sm text-rose-400">{error}</p> : null}
-      {success ? <p className="text-sm text-emerald-300">{success}</p> : null}
-
-      <Card className="w-full rounded-[16px] border border-white/10 bg-white/[0.04] p-2 shadow-[0_10px_30px_-18px_rgba(0,0,0,0.65)]">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="inline-flex h-8 items-center rounded-lg border border-slate-700/60 bg-slate-900/55 px-2.5 text-[11px] uppercase tracking-[0.12em] text-slate-400">
+        <div className="mt-2.5 flex flex-wrap items-center gap-2">
+          <span className="inline-flex h-7 items-center rounded-lg border border-slate-700/60 bg-slate-900/55 px-2 text-[10px] uppercase tracking-[0.12em] text-slate-400">
             Filtros
           </span>
-          <div className="min-w-[140px] flex-1 sm:flex-none sm:w-[170px]">
+          <div className="min-w-[150px] flex-1 sm:flex-none sm:w-[180px]">
             <Select compact hideLabel id="scopeFilterLeft" label="Vista" value={scopeFilter} onChange={(event) => setScopeFilter(event.target.value)}>
-              <option value="all">Todos</option>
-              <option value="mine">Solo mios</option>
+              <option value="all">Vista: todos</option>
+              <option value="mine">Vista: solo asignados</option>
             </Select>
           </div>
-          <div className="min-w-[140px] flex-1 sm:flex-none sm:w-[170px]">
+          <div className="min-w-[150px] flex-1 sm:flex-none sm:w-[180px]">
             <Select compact hideLabel id="statusFilterLeft" label="Estado" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
-              <option value="all">Todos</option>
-              <option value="active">Activo</option>
-              <option value="hidden">Oculto</option>
-              <option value="expired">Vencido</option>
-              <option value="closed">Cerrado</option>
+              <option value="all">Estado: todos</option>
+              <option value="active">Estado: activo</option>
+              <option value="hidden">Estado: oculto</option>
+              <option value="expired">Estado: vencido</option>
+              <option value="closed">Estado: cerrado</option>
             </Select>
           </div>
-          <div className="min-w-[140px] flex-1 sm:flex-none sm:w-[170px]">
+          <div className="min-w-[150px] flex-1 sm:flex-none sm:w-[180px]">
             <Select compact hideLabel id="levelFilterLeft" label="Nivel" value={levelFilter} onChange={(event) => setLevelFilter(event.target.value)}>
-              <option value="all">Todos</option>
-              <option value="initial">Inicial</option>
-              <option value="primary">Primaria</option>
-              <option value="secondary">Secundaria</option>
+              <option value="all">Nivel: todos</option>
+              <option value="initial">Nivel: inicial</option>
+              <option value="primary">Nivel: primaria</option>
+              <option value="secondary">Nivel: secundaria</option>
             </Select>
           </div>
-          <div className="min-w-[140px] flex-1 sm:flex-none sm:w-[170px]">
+          <div className="min-w-[150px] flex-1 sm:flex-none sm:w-[180px]">
             <Select compact hideLabel id="modalityFilterLeft" label="Modalidad" value={modalityFilter} onChange={(event) => setModalityFilter(event.target.value)}>
-              <option value="all">Todas</option>
-              <option value="ebr">EBR</option>
-              <option value="ebe">EBE</option>
+              <option value="all">Modalidad: todas</option>
+              <option value="ebr">Modalidad: EBR</option>
+              <option value="ebe">Modalidad: EBE</option>
             </Select>
           </div>
           {isAdmin ? (
-            <label className="ml-auto inline-flex h-8 items-center gap-2 rounded-lg border border-slate-700/60 bg-slate-900/50 px-2.5 text-[12px] text-slate-300">
+            <label className="ml-auto inline-flex h-7 items-center gap-2 rounded-lg border border-slate-700/60 bg-slate-900/50 px-2 text-[11px] text-slate-300">
               <input
                 type="checkbox"
                 checked={showDrafts}
@@ -1181,16 +1248,20 @@ export default function MonitoreoSeguimiento() {
             </label>
           ) : null}
         </div>
+
+        <div className="mt-2">
+          <InlineOperationalSummary summary={operationalSummary} collapsible defaultCollapsed />
+          {isOperationalSummaryEmpty ? (
+            <p className="mt-1.5 text-[11px] text-slate-400">No hay monitoreos activos en este momento.</p>
+          ) : null}
+        </div>
       </Card>
 
-      <InlineOperationalSummary
-        summary={operationalSummary}
-        collapsible
-        defaultCollapsed={false}
-      />
+      {error ? <p className="text-sm text-rose-400">{error}</p> : null}
+      {success ? <p className="text-sm text-emerald-300">{success}</p> : null}
 
       {loading ? (
-        <Card className="flex flex-col gap-4 rounded-[18px] border border-white/10 bg-white/5 p-4 shadow-[0_10px_30px_-18px_rgba(0,0,0,0.65)]">
+        <Card className="flex flex-col gap-4 rounded-[18px] border border-white/10 bg-white/5 p-3 shadow-[0_10px_30px_-18px_rgba(0,0,0,0.65)]">
           <div className="flex items-center gap-2 text-sm text-cyan-200">
             <Loader2 size={16} className="animate-spin" />
             <p>Cargando seguimiento...</p>
@@ -1205,6 +1276,28 @@ export default function MonitoreoSeguimiento() {
         </Card>
       ) : (
         <div className="grid gap-4">
+        {hasNoEventsByFilters ? (
+          <Card className="rounded-[16px] border border-amber-500/30 bg-amber-500/10 p-3">
+            <p className="text-sm font-semibold text-amber-100">
+              No encontramos resultados con los filtros actuales.
+            </p>
+            <p className="mt-1 text-xs text-amber-200/90">
+              {areFiltersActive
+                ? 'Prueba cambiando el estado, nivel o modalidad.'
+                : 'Intenta actualizar la vista para cargar nuevos registros.'}
+            </p>
+            <div className="mt-2.5 flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={resetFilters}
+                className="ds-btn ds-btn-secondary h-8 px-3 text-xs"
+              >
+                Limpiar filtros
+              </button>
+            </div>
+          </Card>
+        ) : null}
+
         <Card className="min-w-0 rounded-[20px] border border-white/10 bg-white/5 p-3 shadow-[0_14px_36px_-20px_rgba(0,0,0,0.72)]">
           <div
             className={`rounded-[20px] border p-3 transition-all duration-300 ${
@@ -1276,143 +1369,24 @@ export default function MonitoreoSeguimiento() {
                 </button>
               </div>
             </div>
-            <div className="mt-3 grid grid-cols-7 gap-1.5">
-              {['L', 'M', 'X', 'J', 'V', 'S', 'D'].map((label) => (
-                <span
-                  key={`mini-w-${label}`}
-                  className={`text-center text-[10px] font-semibold uppercase tracking-[0.12em] ${
-                    isCalendarHighContrast ? 'text-slate-300' : 'text-slate-500'
-                  }`}
-                >
-                  {label}
-                </span>
-              ))}
-            </div>
-            <div className="mt-2 grid grid-cols-7 gap-1.5">
-              {miniCalendarDays.map((day) => {
-                const dayKey = normalizeDay(day).toISOString();
-                const dayEvents = eventsByDay.get(dayKey) || [];
-                const isMiniToday = isSameDay(day, new Date());
-                const isMiniSelected = selectedDayKey === dayKey;
-                const isMiniCurrentMonth = day.getMonth() === currentDate.getMonth();
-                const isMiniWeekend = day.getDay() === 0 || day.getDay() === 6;
-                const dayCategories = Array.from(
-                  new Set(dayEvents.map((event) => getEventCategory(event)).filter(Boolean)),
-                ).slice(0, 3);
-                const dayTooltip = dayCategories
-                  .map((category) => CATEGORY_DOT_STYLES[category]?.label)
-                  .filter(Boolean)
-                  .join(' / ');
-                const dayLabel = day.toLocaleDateString('es-PE', {
-                  day: '2-digit',
-                  month: '2-digit',
-                  year: 'numeric',
-                });
-                const dayRisk = summarizeDayRisk(dayEvents);
-                const prioritizedDayEvents = dayEvents
-                  .slice()
-                  .sort((left, right) => compareEventsByPriority(left, right));
-                const hasOverdue = dayRisk.overdue > 0;
-                const hasDueSoon = dayRisk.dueSoon > 0;
-                const hasDrafts = dayRisk.drafts > 0;
-                const riskNotes = [];
-                if (hasOverdue) riskNotes.push(`${dayRisk.overdue} vencido${dayRisk.overdue === 1 ? '' : 's'}`);
-                if (hasDueSoon) riskNotes.push(`${dayRisk.dueSoon} por vencer`);
-                if (hasDrafts) riskNotes.push(`${dayRisk.drafts} borrador${dayRisk.drafts === 1 ? '' : 'es'}`);
-                const dayRiskClass = hasOverdue
-                  ? 'border-rose-500/70 bg-rose-500/16 text-rose-50 shadow-[inset_0_1px_0_rgba(254,202,202,0.25)]'
-                  : hasDueSoon
-                    ? 'border-amber-400/70 bg-amber-500/14 text-amber-50 shadow-[inset_0_1px_0_rgba(254,243,199,0.24)]'
-                    : hasDrafts
-                      ? 'border-indigo-400/65 bg-indigo-500/14 text-indigo-50 shadow-[inset_0_1px_0_rgba(199,210,254,0.24)]'
-                      : '';
-
-                return (
-                  <button
-                    key={`mini-${dayKey}`}
-                    type="button"
-                    onClick={() => handleCalendarDaySelection(day, dayKey, prioritizedDayEvents)}
-                    aria-label={`${dayLabel}. ${dayEvents.length} evento${dayEvents.length === 1 ? '' : 's'}.${riskNotes.length ? ` ${riskNotes.join('. ')}.` : ''}`}
-                    title={dayTooltip || dayLabel}
-                    className={`relative inline-flex h-10 items-center justify-center rounded-full border text-[11px] font-semibold transition-all duration-200 ease-out ${
-                      isCalendarHighContrast
-                        ? isMiniSelected
-                          ? 'border-cyan-200 bg-cyan-300 text-slate-950 shadow-[0_10px_24px_-14px_rgba(56,189,248,0.9)]'
-                          : isMiniToday
-                            ? 'border-emerald-200 bg-emerald-300 text-slate-950'
-                            : isMiniCurrentMonth
-                              ? 'border-slate-500/80 bg-slate-950 text-slate-100 hover:-translate-y-[1px] hover:border-cyan-300'
-                              : 'border-slate-800 bg-slate-950/70 text-slate-500'
-                        : isMiniSelected
-                          ? 'border-cyan-300/80 bg-gradient-to-r from-cyan-400/30 via-sky-400/20 to-indigo-500/25 text-slate-50 shadow-[0_12px_24px_-16px_rgba(56,189,248,0.95),inset_0_1px_0_rgba(186,230,253,0.45)]'
-                          : isMiniToday
-                            ? 'border-emerald-400/55 bg-emerald-500/15 text-emerald-100'
-                            : isMiniCurrentMonth
-                              ? `${dayRiskClass || `border-slate-800/80 ${
-                                  isMiniWeekend
-                                    ? 'bg-slate-900/70 text-slate-300'
-                                    : 'bg-slate-900/48 text-slate-200'
-                                } shadow-[inset_0_1px_0_rgba(148,163,184,0.10)]`} hover:-translate-y-[1px] hover:border-cyan-400/45 hover:bg-slate-800/85 hover:text-slate-100`
-                              : 'border-slate-900/70 bg-slate-950/40 text-slate-500 hover:border-slate-700/70 hover:bg-slate-900/55'
-                    }`}
-                  >
-                    {hasOverdue || hasDueSoon || hasDrafts ? (
-                      <span
-                        className={`absolute left-[6px] top-[6px] h-1.5 w-1.5 rounded-full ${
-                          hasOverdue
-                            ? 'bg-rose-300'
-                            : hasDueSoon
-                              ? 'bg-amber-300'
-                              : 'bg-indigo-300'
-                        }`}
-                      />
-                    ) : null}
-                    {day.getDate()}
-                    {dayCategories.length ? (
-                      <span className="absolute bottom-[4px] left-1/2 flex -translate-x-1/2 items-center gap-1">
-                        {dayCategories.map((category) => (
-                          <span
-                            key={`${dayKey}-${category}`}
-                            className={`h-1.5 w-1.5 rounded-full ring-1 ${
-                              isCalendarHighContrast ? 'ring-slate-900/90' : 'ring-slate-300/50'
-                            } ${CATEGORY_DOT_STYLES[category]?.className || 'bg-slate-400'}`}
-                          />
-                        ))}
-                      </span>
-                    ) : null}
-                    {dayEvents.length > 1 ? (
-                      <span
-                        className={`absolute -right-1 -top-1 inline-flex min-w-[16px] items-center justify-center rounded-full border px-1 text-[9px] font-semibold leading-4 ${
-                          isCalendarHighContrast
-                            ? 'border-cyan-300/70 bg-cyan-200 text-slate-950'
-                            : 'border-cyan-400/30 bg-slate-950/95 text-cyan-100 shadow-[0_0_0_1px_rgba(15,23,42,0.65)]'
-                        }`}
-                      >
-                        {dayEvents.length > 9 ? '+9' : dayEvents.length}
-                      </span>
-                    ) : null}
-                  </button>
-                );
-              })}
-            </div>
-            <div className="mt-3 flex flex-wrap gap-2 text-[11px] text-slate-300">
+            <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[10.5px] text-slate-300">
               {Object.entries(CATEGORY_DOT_STYLES).map(([key, item]) => (
                 <span
                   key={key}
-                  className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 ${
+                  className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 ${
                     isCalendarHighContrast
                       ? 'border-slate-600/90 bg-slate-950 text-slate-100'
-                      : 'border-slate-700/70 bg-slate-900/75 shadow-[inset_0_1px_0_rgba(148,163,184,0.12)]'
+                      : 'border-slate-700/70 bg-slate-900/75'
                   }`}
                 >
                   <span
-                    className={`h-2 w-2 rounded-full ring-1 ring-offset-1 ring-offset-slate-900 ${item.className}`}
+                    className={`h-1.5 w-1.5 rounded-full ring-1 ring-offset-1 ring-offset-slate-900 ${item.className}`}
                   />
                   {item.label}
                 </span>
               ))}
               <span
-                className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 ${
+                className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 ${
                   isCalendarHighContrast
                     ? 'border-rose-300/70 bg-rose-400/20 text-rose-100'
                     : 'border-rose-500/35 bg-rose-500/10 text-rose-100'
@@ -1421,7 +1395,7 @@ export default function MonitoreoSeguimiento() {
                 Riesgo vencido
               </span>
               <span
-                className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 ${
+                className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 ${
                   isCalendarHighContrast
                     ? 'border-amber-300/70 bg-amber-400/20 text-amber-100'
                     : 'border-amber-500/35 bg-amber-500/10 text-amber-100'
@@ -1429,45 +1403,218 @@ export default function MonitoreoSeguimiento() {
               >
                 Riesgo por vencer
               </span>
-              <span
-                className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 ${
-                  isCalendarHighContrast
-                    ? 'border-indigo-300/70 bg-indigo-400/20 text-indigo-100'
-                    : 'border-indigo-500/35 bg-indigo-500/10 text-indigo-100'
-                }`}
-              >
-                Borrador
-              </span>
-              <span
-                className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 ${
-                  isCalendarHighContrast
-                    ? 'border-cyan-300/70 bg-cyan-500/25 text-cyan-100'
-                    : 'border-cyan-400/25 bg-cyan-500/10 text-cyan-100/90'
-                }`}
-              >
-                <span
-                  className={`inline-flex min-w-[16px] items-center justify-center rounded-full border px-1 py-0.5 text-[9px] font-semibold leading-none ${
-                    isCalendarHighContrast
-                      ? 'border-cyan-300/70 bg-cyan-100 text-slate-950'
-                      : 'border-cyan-400/30 bg-slate-950/95 text-cyan-100'
-                  }`}
-                >
-                  {selectedDayEvents.length > 9 ? '+9' : selectedDayEvents.length}
-                </span>
-                Eventos del dia
+              <span className="ml-auto inline-flex items-center gap-1 rounded-full border border-cyan-400/30 bg-cyan-500/10 px-2 py-0.5 text-cyan-100">
+                {selectedDayEvents.length} eventos seleccionados
               </span>
             </div>
-            <div className="mt-3 border-t border-slate-800/70 pt-3">
-              <button
-                type="button"
-                onClick={() => setIsDayModalOpen(true)}
-                disabled={selectedDayEvents.length === 0}
-                className="inline-flex h-9 items-center rounded-xl border border-cyan-500/35 bg-cyan-500/10 px-3 text-xs font-semibold text-cyan-100 transition hover:border-cyan-400/65 disabled:cursor-not-allowed disabled:border-slate-700/60 disabled:bg-slate-900/45 disabled:text-slate-500"
-              >
-                {selectedDayEvents.length > 0
-                  ? `Ver eventos del dia (${selectedDayEvents.length})`
-                  : 'Sin eventos para esta fecha'}
-              </button>
+            {hasNoEventsInCurrentMonth ? (
+              <div className="mt-2 rounded-lg border border-slate-700/70 bg-slate-900/50 px-2.5 py-2 text-[11px] text-slate-300">
+                Este mes aun no tiene eventos registrados.
+              </div>
+            ) : null}
+            <div className="mt-2.5 grid gap-2.5 lg:grid-cols-[minmax(0,7fr)_minmax(260px,3fr)] lg:items-start">
+              <div className="min-w-0">
+                <div className="grid grid-cols-7 gap-1.5">
+                  {['L', 'M', 'X', 'J', 'V', 'S', 'D'].map((label) => (
+                    <span
+                      key={`mini-w-${label}`}
+                      className={`text-center text-[10px] font-semibold uppercase tracking-[0.12em] ${
+                        isCalendarHighContrast ? 'text-slate-300' : 'text-slate-500'
+                      }`}
+                    >
+                      {label}
+                    </span>
+                  ))}
+                </div>
+                <div className="mt-1.5 grid grid-cols-7 gap-1.5">
+                  {miniCalendarDays.map((day) => {
+                    const dayKey = normalizeDay(day).toISOString();
+                    const dayEvents = eventsByDay.get(dayKey) || [];
+                    const isMiniToday = isSameDay(day, new Date());
+                    const isMiniSelected = selectedDayKey === dayKey;
+                    const isMiniCurrentMonth = day.getMonth() === currentDate.getMonth();
+                    const isMiniWeekend = day.getDay() === 0 || day.getDay() === 6;
+                    const dayCategories = Array.from(
+                      new Set(dayEvents.map((event) => getEventCategory(event)).filter(Boolean)),
+                    ).slice(0, 3);
+                    const dayTooltip = dayCategories
+                      .map((category) => CATEGORY_DOT_STYLES[category]?.label)
+                      .filter(Boolean)
+                      .join(' / ');
+                    const dayLabel = day.toLocaleDateString('es-PE', {
+                      day: '2-digit',
+                      month: '2-digit',
+                      year: 'numeric',
+                    });
+                    const dayRisk = summarizeDayRisk(dayEvents);
+                    const prioritizedDayEvents = dayEvents
+                      .slice()
+                      .sort((left, right) => compareEventsByPriority(left, right));
+                    const hasOverdue = dayRisk.overdue > 0;
+                    const hasDueSoon = dayRisk.dueSoon > 0;
+                    const hasDrafts = dayRisk.drafts > 0;
+                    const riskNotes = [];
+                    if (hasOverdue) riskNotes.push(`${dayRisk.overdue} vencido${dayRisk.overdue === 1 ? '' : 's'}`);
+                    if (hasDueSoon) riskNotes.push(`${dayRisk.dueSoon} por vencer`);
+                    if (hasDrafts) riskNotes.push(`${dayRisk.drafts} borrador${dayRisk.drafts === 1 ? '' : 'es'}`);
+                    const dayRiskClass = hasOverdue
+                      ? 'border-rose-500/70 bg-rose-500/16 text-rose-50 shadow-[inset_0_1px_0_rgba(254,202,202,0.25)]'
+                      : hasDueSoon
+                        ? 'border-amber-400/70 bg-amber-500/14 text-amber-50 shadow-[inset_0_1px_0_rgba(254,243,199,0.24)]'
+                        : hasDrafts
+                          ? 'border-indigo-400/65 bg-indigo-500/14 text-indigo-50 shadow-[inset_0_1px_0_rgba(199,210,254,0.24)]'
+                          : '';
+
+                    return (
+                      <button
+                        key={`mini-${dayKey}`}
+                        type="button"
+                        onClick={() => handleCalendarDaySelection(day, dayKey, prioritizedDayEvents)}
+                        aria-label={`${dayLabel}. ${dayEvents.length} evento${dayEvents.length === 1 ? '' : 's'}.${riskNotes.length ? ` ${riskNotes.join('. ')}.` : ''}`}
+                        title={dayTooltip || dayLabel}
+                        className={`relative inline-flex h-10 items-center justify-center rounded-full border text-[11px] font-semibold transition-all duration-200 ease-out ${
+                          isCalendarHighContrast
+                            ? isMiniSelected
+                              ? 'border-cyan-200 bg-cyan-300 text-slate-950 shadow-[0_10px_24px_-14px_rgba(56,189,248,0.9)]'
+                              : isMiniToday
+                                ? 'border-emerald-200 bg-emerald-300 text-slate-950'
+                                : isMiniCurrentMonth
+                                  ? 'border-slate-500/80 bg-slate-950 text-slate-100 hover:-translate-y-[1px] hover:border-cyan-300'
+                                  : 'border-slate-800 bg-slate-950/70 text-slate-500'
+                            : isMiniSelected
+                              ? 'border-cyan-300/80 bg-gradient-to-r from-cyan-400/30 via-sky-400/20 to-indigo-500/25 text-slate-50 shadow-[0_12px_24px_-16px_rgba(56,189,248,0.95),inset_0_1px_0_rgba(186,230,253,0.45)]'
+                              : isMiniToday
+                                ? 'border-emerald-400/55 bg-emerald-500/15 text-emerald-100'
+                                : isMiniCurrentMonth
+                                  ? `${dayRiskClass || `border-slate-800/80 ${
+                                      isMiniWeekend
+                                        ? 'bg-slate-900/70 text-slate-300'
+                                        : 'bg-slate-900/48 text-slate-200'
+                                    } shadow-[inset_0_1px_0_rgba(148,163,184,0.10)]`} hover:-translate-y-[1px] hover:border-cyan-400/45 hover:bg-slate-800/85 hover:text-slate-100`
+                                  : 'border-slate-900/70 bg-slate-950/40 text-slate-500 hover:border-slate-700/70 hover:bg-slate-900/55'
+                        }`}
+                      >
+                        {hasOverdue || hasDueSoon || hasDrafts ? (
+                          <span
+                            className={`absolute left-[6px] top-[6px] h-1.5 w-1.5 rounded-full ${
+                              hasOverdue
+                                ? 'bg-rose-300'
+                                : hasDueSoon
+                                  ? 'bg-amber-300'
+                                  : 'bg-indigo-300'
+                            }`}
+                          />
+                        ) : null}
+                        {day.getDate()}
+                        {dayCategories.length ? (
+                          <span className="absolute bottom-[4px] left-1/2 flex -translate-x-1/2 items-center gap-1">
+                            {dayCategories.map((category) => (
+                              <span
+                                key={`${dayKey}-${category}`}
+                                className={`h-1.5 w-1.5 rounded-full ring-1 ${
+                                  isCalendarHighContrast ? 'ring-slate-900/90' : 'ring-slate-300/50'
+                                } ${CATEGORY_DOT_STYLES[category]?.className || 'bg-slate-400'}`}
+                              />
+                            ))}
+                          </span>
+                        ) : null}
+                        {dayEvents.length > 1 ? (
+                          <span
+                            className={`absolute -right-1 -top-1 inline-flex min-w-[16px] items-center justify-center rounded-full border px-1 text-[9px] font-semibold leading-4 ${
+                              isCalendarHighContrast
+                                ? 'border-cyan-300/70 bg-cyan-200 text-slate-950'
+                                : 'border-cyan-400/30 bg-slate-950/95 text-cyan-100 shadow-[0_0_0_1px_rgba(15,23,42,0.65)]'
+                            }`}
+                          >
+                            {dayEvents.length > 9 ? '+9' : dayEvents.length}
+                          </span>
+                        ) : null}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <aside className="rounded-xl border border-slate-800/70 bg-slate-950/35 p-2.5 lg:sticky lg:top-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.12em] text-slate-400">Dia seleccionado</p>
+                    <p className="mt-0.5 text-sm font-semibold capitalize text-slate-100">{selectedDayLabel}</p>
+                    <p className="mt-0.5 text-[11px] text-slate-400">
+                      {`${selectedDayEvents.length} evento${selectedDayEvents.length === 1 ? '' : 's'} | ${selectedDayCategoryCounts.monitoring || 0} monitoreo${selectedDayCategoryCounts.monitoring === 1 ? '' : 's'} | ${selectedDayCategoryCounts.activity || 0} actividad${selectedDayCategoryCounts.activity === 1 ? '' : 'es'}`}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setIsDayModalOpen(true)}
+                    disabled={selectedDayEvents.length === 0}
+                    className="inline-flex h-8 items-center rounded-xl border border-cyan-500/35 bg-cyan-500/10 px-3 text-[11px] font-semibold text-cyan-100 transition hover:border-cyan-400/65 disabled:cursor-not-allowed disabled:border-slate-700/60 disabled:bg-slate-900/45 disabled:text-slate-500"
+                  >
+                    {selectedDayEvents.length > 0
+                      ? `Ver detalle (${selectedDayEvents.length})`
+                      : 'Dia sin eventos'}
+                  </button>
+                </div>
+
+                {selectedDayEvents.length > 0 ? (
+                  <div className="mt-2 space-y-1.5">
+                    {selectedDayEventsPreview.map((event) => (
+                      <button
+                        key={`day-preview-${event.id}`}
+                        type="button"
+                        onClick={() => {
+                          setSelectedEventId(event.id);
+                          setIsDayModalOpen(true);
+                        }}
+                        className="flex w-full items-center justify-between gap-2 rounded-lg border border-slate-800/70 bg-slate-900/45 px-2.5 py-2 text-left transition hover:border-slate-700/80 hover:bg-slate-900/70"
+                      >
+                        <div className="min-w-0">
+                          <p title={event.title} className="truncate text-[12.5px] font-semibold text-slate-100">
+                            {truncateLabel(event.title, 64)}
+                          </p>
+                          <p className="mt-0.5 text-[10.5px] text-slate-400">
+                            {formatEventRangeLabel(event.start_at, event.end_at)}
+                          </p>
+                        </div>
+                        <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-semibold ${operationalStateBadgeClass(getEventOperationalState(event))}`}>
+                          {operationalStateLabel(getEventOperationalState(event))}
+                        </span>
+                      </button>
+                    ))}
+
+                    {selectedDayEventsHiddenCount > 0 ? (
+                      <p className="text-[11px] text-slate-400">+{selectedDayEventsHiddenCount} evento(s) adicional(es)</p>
+                    ) : null}
+                  </div>
+                ) : (
+                  <div className="mt-2 rounded-lg border border-slate-800/70 bg-slate-900/40 p-2.5">
+                    <p className="text-xs text-slate-300">No hay eventos registrados para este dia.</p>
+                    <p className="mt-1 text-[11px] text-slate-500">
+                      Puedes agregar un monitoreo o actividad si lo necesitas.
+                    </p>
+                  </div>
+                )}
+                {isAdmin ? (
+                  <div className="mt-2 flex flex-wrap gap-2 border-t border-slate-800/70 pt-2">
+                    <button
+                      type="button"
+                      onClick={() => handleCreateMonitoringFromDate(selectedDay)}
+                      className="ds-btn ds-btn-primary h-8 px-3 text-xs"
+                    >
+                      <Plus size={13} />
+                      Crear monitoreo
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => openCreateModalWithPreset('activity', selectedDay)}
+                      className="ds-btn ds-btn-secondary h-8 px-3 text-xs"
+                    >
+                      <Plus size={13} />
+                      Registrar actividad
+                    </button>
+                  </div>
+                ) : null}
+              </aside>
             </div>
           </div>
         </Card>
@@ -1640,6 +1787,40 @@ export default function MonitoreoSeguimiento() {
                   </>
                 )}
               </section>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {isMonitoringBuilderModalOpen ? (
+        <div
+          className="ds-modal-backdrop z-50"
+          onClick={() => setIsMonitoringBuilderModalOpen(false)}
+        >
+          <div
+            className="ds-modal-surface m-2 max-h-[94vh] w-full max-w-[1480px] overflow-y-auto"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-800/80 bg-slate-950/95 px-4 py-3 backdrop-blur">
+              <div>
+                <p className="text-xs uppercase tracking-[0.12em] text-slate-400">Creacion de monitoreo</p>
+                <p className="mt-0.5 text-sm font-semibold text-slate-100">
+                  Contexto desde Seguimiento: {formatDateContextLabel(monitoringBuilderDate)}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsMonitoringBuilderModalOpen(false)}
+                className="ds-btn ds-btn-secondary h-8 px-3"
+              >
+                Cerrar
+              </button>
+            </div>
+            <div className="p-4">
+              <MonitoreoGestionMonitoreos
+                embedded
+                initialCreationDate={monitoringBuilderDate}
+              />
             </div>
           </div>
         </div>

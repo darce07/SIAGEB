@@ -324,7 +324,22 @@ select option:checked {
     radial-gradient(900px 620px at 20% 60%, rgba(15, 23, 42, 0.35), transparent 70%),
     linear-gradient(160deg, rgba(2, 6, 23, 0.98) 0%, rgba(2, 6, 23, 0.92) 45%, rgba(2, 6, 23, 1) 100%);
   position: relative;
-  overflow: hidden;
+  height: 100%;
+  min-height: 100dvh;
+  overflow-x: hidden;
+}
+
+.login-viewport {
+  min-height: 100%;
+  align-items: center;
+}
+
+@media (max-height: 760px) {
+  .login-viewport {
+    align-items: flex-start;
+    padding-top: 0.5rem;
+    padding-bottom: 0.5rem;
+  }
 }
 
 .login-glow::after {
@@ -342,13 +357,17 @@ select option:checked {
   isolation: isolate;
   overflow: hidden;
   border-radius: 1.25rem;
-  border: 1px solid rgba(148, 163, 184, 0.42);
-  border-bottom-color: rgba(226, 232, 240, 0.64);
+  border: 1px solid rgba(148, 163, 184, 0.32);
+  border-bottom-color: rgba(226, 232, 240, 0.52);
   background: linear-gradient(160deg, rgba(7, 13, 30, 0.94) 0%, rgba(5, 11, 27, 0.9) 100%);
   box-shadow:
-    0 20px 48px rgba(2, 6, 23, 0.54),
+    0 18px 40px rgba(2, 6, 23, 0.48),
     0 6px 18px rgba(2, 6, 23, 0.36),
     0 0 0 1px rgba(148, 163, 184, 0.08);
+}
+
+.login-shell-enter {
+  animation: login-shell-enter 320ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .login-shell::before {
@@ -356,7 +375,7 @@ select option:checked {
   position: absolute;
   inset: 1px;
   border-radius: calc(1.25rem - 1px);
-  border: 1px solid rgba(148, 163, 184, 0.18);
+  border: 1px solid rgba(148, 163, 184, 0.14);
   pointer-events: none;
   z-index: 30;
 }
@@ -367,9 +386,9 @@ select option:checked {
   inset: 0;
   border-radius: inherit;
   box-shadow:
-    inset 0 1px 0 rgba(226, 232, 240, 0.28),
-    inset 0 -1px 0 rgba(226, 232, 240, 0.72),
-    inset 0 -2px 0 rgba(148, 163, 184, 0.42);
+    inset 0 1px 0 rgba(226, 232, 240, 0.2),
+    inset 0 -1px 0 rgba(226, 232, 240, 0.52),
+    inset 0 -2px 0 rgba(148, 163, 184, 0.28);
   pointer-events: none;
   z-index: 31;
 }
@@ -382,9 +401,13 @@ select option:checked {
   bottom: 0.5rem;
   height: 1px;
   border-radius: 999px;
-  background: rgba(226, 232, 240, 0.52);
+  background: rgba(226, 232, 240, 0.38);
   pointer-events: none;
   z-index: 26;
+}
+
+.login-access-variant {
+  animation: login-access-variant-enter 180ms ease-out;
 }
 
 .login-shell-grid {
@@ -637,6 +660,28 @@ html[data-theme='light'] .border-amber-500\/40 {
     inset 0 1px 0 rgba(148, 163, 184, 0.08),
     0 22px 55px -34px rgba(2, 6, 23, 0.95);
   backdrop-filter: blur(8px);
+}
+
+@keyframes login-shell-enter {
+  0% {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes login-access-variant-enter {
+  0% {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 @keyframes login-progress-sweep {
