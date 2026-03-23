@@ -548,21 +548,38 @@ export default function MonitoreoInicio() {
     }));
   }, [userRole]);
 
+  const showUnifiedEmptyState = useMemo(() => {
+    if (loading) return false;
+    const hasAnyOperationalWidget =
+      hasWidget('admin_global_alerts') ||
+      hasWidget('specialist_priority_actions') ||
+      hasWidget('specialist_agenda');
+    if (!hasAnyOperationalWidget) return false;
+    return !recommendedAction && !hasAdminAlerts && !hasSpecialistPriorityActions && upcomingAgenda.length === 0;
+  }, [
+    hasAdminAlerts,
+    hasSpecialistPriorityActions,
+    loading,
+    recommendedAction,
+    upcomingAgenda.length,
+    hasWidget,
+  ]);
+
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col gap-4 md:gap-6">
       {showDenied ? (
-        <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
+        <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2.5 text-xs text-amber-200 md:px-4 md:py-3 md:text-sm">
           No tienes permisos para acceder.
         </div>
       ) : null}
 
       {loadError ? (
-        <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
+        <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-3 py-2.5 text-xs text-rose-200 md:px-4 md:py-3 md:text-sm">
           {loadError}
         </div>
       ) : null}
 
-      <Card className="flex items-end justify-between gap-3">
+      <Card className="flex items-center justify-between gap-2 px-3 py-2.5 md:gap-3 md:px-4 md:py-3">
         <SectionHeader
           title="Inicio"
           size="page"
@@ -593,41 +610,44 @@ export default function MonitoreoInicio() {
       ) : null}
 
       {(hasWidget('admin_global_alerts') || hasWidget('specialist_priority_actions')) ? (
-        <Card className="flex flex-col gap-3">
+        <Card className="flex flex-col gap-2.5 px-3 py-3 md:gap-3 md:px-4 md:py-4">
           <SectionHeader
             eyebrow="Prioridad"
             title="Que revisar ahora"
             description={loading ? 'Cargando prioridad...' : recommendedAction ? recommendedAction.title : 'Todo en orden'}
           />
-          {!loading && recommendedAction ? (
-            <p className="text-[15px] text-slate-300">{recommendedAction.description}</p>
+          {!loading && recommendedAction && !showUnifiedEmptyState ? (
+            <p className="text-sm text-slate-300 md:text-[15px]">{recommendedAction.description}</p>
           ) : null}
-          <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center justify-between gap-2.5">
             {loading ? (
-              <span className="text-sm text-slate-400">Preparando accion sugerida...</span>
-            ) : recommendedAction ? (
+              <span className="text-xs text-slate-400 md:text-sm">Preparando accion sugerida...</span>
+            ) : recommendedAction && !showUnifiedEmptyState ? (
               <button
                 type="button"
                 onClick={() => navigate(recommendedAction.actionPath)}
-                className="ds-btn ds-btn-primary h-10 px-4"
+                className="ds-btn ds-btn-primary h-9 px-3.5 md:h-10 md:px-4"
               >
                 {recommendedAction.actionLabel}
                 <MoveRight size={14} />
               </button>
             ) : (
-              <span className="ds-badge ds-badge-success">Sin urgencias</span>
+              <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/35 bg-emerald-500/10 px-2.5 py-1 text-xs font-medium text-emerald-100">
+                <span className="text-sm leading-none">✔</span>
+                Todo en orden
+              </span>
             )}
           </div>
         </Card>
       ) : null}
 
-      {hasWidget('admin_global_alerts') ? (
-        <Card className="flex flex-col gap-3">
+      {hasWidget('admin_global_alerts') && !showUnifiedEmptyState ? (
+        <Card className="flex flex-col gap-2.5 px-3 py-3 md:gap-3 md:px-4 md:py-4">
           <SectionHeader eyebrow="Atencion" title="Lo pendiente" />
           {loading ? (
-            <p className="text-sm text-slate-400">Cargando alertas...</p>
+            <p className="text-xs text-slate-400 md:text-sm">Cargando alertas...</p>
           ) : !hasAdminAlerts ? (
-            <p className="text-sm text-emerald-200">No hay alertas globales activas.</p>
+            <p className="text-xs text-emerald-200 md:text-sm">No hay alertas globales activas.</p>
           ) : (
             <div className="space-y-1.5">
               {adminAlerts.map((alert) => {
@@ -660,13 +680,13 @@ export default function MonitoreoInicio() {
         </Card>
       ) : null}
 
-      {hasWidget('specialist_priority_actions') ? (
-        <Card className="flex flex-col gap-3">
+      {hasWidget('specialist_priority_actions') && !showUnifiedEmptyState ? (
+        <Card className="flex flex-col gap-2.5 px-3 py-3 md:gap-3 md:px-4 md:py-4">
           <SectionHeader eyebrow="Atencion" title="Lo pendiente" />
           {loading ? (
-            <p className="text-sm text-slate-400">Cargando acciones...</p>
+            <p className="text-xs text-slate-400 md:text-sm">Cargando acciones...</p>
           ) : !hasSpecialistPriorityActions ? (
-            <p className="text-sm text-emerald-200">No tienes acciones urgentes.</p>
+            <p className="text-xs text-emerald-200 md:text-sm">No tienes acciones urgentes.</p>
           ) : (
             <div className="space-y-1.5">
               {priorityActions.map((action) => {
@@ -699,17 +719,17 @@ export default function MonitoreoInicio() {
         </Card>
       ) : null}
 
-      {hasWidget('specialist_agenda') ? (
-        <Card className="flex flex-col gap-3">
+      {hasWidget('specialist_agenda') && !showUnifiedEmptyState ? (
+        <Card className="flex flex-col gap-2.5 px-3 py-3 md:gap-3 md:px-4 md:py-4">
           <SectionHeader eyebrow="Agenda" title="Actividades proximas" />
           {loading ? (
-            <p className="text-sm text-slate-400">Cargando agenda...</p>
+            <p className="text-xs text-slate-400 md:text-sm">Cargando agenda...</p>
           ) : upcomingAgenda.length === 0 ? (
-            <p className="text-sm text-slate-400">No hay eventos proximos.</p>
+            <p className="text-xs text-slate-400 md:text-sm">No hay eventos proximos.</p>
           ) : (
             <ul className="divide-y divide-slate-800/70 rounded-lg border border-slate-800/70 bg-slate-900/35">
               {upcomingAgenda.map((event) => (
-                <li key={event.id} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
+                <li key={event.id} className="flex flex-wrap items-center justify-between gap-2 px-3 py-1.5 md:py-2">
                   <p title={event.title} className="min-w-0 flex-1 truncate text-sm text-slate-100">
                     {truncateLabel(event.title, 62)}
                   </p>
@@ -724,8 +744,31 @@ export default function MonitoreoInicio() {
         </Card>
       ) : null}
 
+      {showUnifiedEmptyState ? (
+        <Card className="flex flex-col gap-2.5 px-3 py-3 md:gap-3 md:px-4 md:py-4">
+          <p className="text-sm font-medium text-slate-200 md:text-base">No hay monitoreos ni actividades pendientes.</p>
+          <p className="text-xs text-slate-400 md:text-sm">Todo en orden para el periodo actual.</p>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => navigate('/monitoreo/seguimiento')}
+              className="ds-btn ds-btn-secondary h-8 px-3 text-xs md:h-9"
+            >
+              Ir a seguimiento
+            </button>
+            <button
+              type="button"
+              onClick={() => navigate('/monitoreo/gestion')}
+              className="ds-btn ds-btn-primary h-8 px-3 text-xs md:h-9"
+            >
+              Crear monitoreo
+            </button>
+          </div>
+        </Card>
+      ) : null}
+
       {hasWidget('quick_actions') ? (
-        <Card className="flex flex-col gap-3">
+        <Card className="flex flex-col gap-2.5 px-3 py-3 md:gap-3 md:px-4 md:py-4">
           <SectionHeader eyebrow="Acciones" title="Acciones rapidas" />
           <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
             {quickActions.map((action) => {
@@ -735,7 +778,7 @@ export default function MonitoreoInicio() {
                   key={action.id}
                   type="button"
                   onClick={() => navigate(action.path)}
-                  className="ds-btn ds-btn-secondary h-10"
+                  className="ds-btn ds-btn-secondary h-9 text-xs md:h-10 md:text-sm"
                 >
                   <Icon size={14} />
                   {action.label}

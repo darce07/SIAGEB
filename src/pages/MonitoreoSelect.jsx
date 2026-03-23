@@ -147,6 +147,27 @@ export default function MonitoreoSelect() {
           availability: row.availability,
         }));
 
+        // Safety filter: if a template is linked to an event that is not "monitoring",
+        // it must not appear in Monitoreos.
+        const mappedIds = mapped.map((item) => item.id).filter(Boolean);
+        if (mappedIds.length) {
+          const { data: linkedEvents, error: linkedEventsError } = await supabase
+            .from('monitoring_events')
+            .select('id,event_type')
+            .in('id', mappedIds);
+
+          if (!linkedEventsError) {
+            const excludedIds = new Set(
+              (linkedEvents || [])
+                .filter((event) => event?.event_type && event.event_type !== 'monitoring')
+                .map((event) => event.id),
+            );
+            if (excludedIds.size) {
+              mapped = mapped.filter((item) => !excludedIds.has(item.id));
+            }
+          }
+        }
+
         // Ensure monitoring events created from Seguimiento also exist as draft templates.
         const { data: monitoringEvents, error: eventsError } = await supabase
           .from('monitoring_events')

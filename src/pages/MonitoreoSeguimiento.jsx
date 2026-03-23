@@ -39,6 +39,8 @@ const EVENT_EMPTY = {
   objectives: [{ text: '', completed: false }],
 };
 
+const EVENT_TYPE_OPTIONS = ['monitoring', 'activity', 'ugel_date'];
+
 const SPECIALIST_ROLES = ['user', 'especialista'];
 const OBJECTIVE_TEXT_CANDIDATES = ['objective_text', 'text', 'description', 'label', 'objective'];
 const OBJECTIVE_ORDER_CANDIDATES = ['order_index', 'order', 'position', null];
@@ -800,9 +802,12 @@ export default function MonitoreoSeguimiento() {
     setIsSaving(true);
     try {
       let eventId = eventForm.id;
+      const normalizedEventType = EVENT_TYPE_OPTIONS.includes(eventForm.eventType)
+        ? eventForm.eventType
+        : 'monitoring';
       const basePayload = {
         title: eventForm.title.trim(),
-        event_type: eventForm.eventType,
+        event_type: normalizedEventType,
         description: eventForm.description.trim() || null,
         start_at: startAt,
         end_at: endAt,
@@ -823,7 +828,7 @@ export default function MonitoreoSeguimiento() {
       if (upsertEventError) throw upsertEventError;
       eventId = upsertedEvent.id;
 
-      if (eventForm.eventType === 'monitoring') {
+      if (normalizedEventType === 'monitoring') {
         const { data: existingTemplate, error: existingTemplateError } = await supabase
           .from('monitoring_templates')
           .select('id,status,description,levels_config,sections,availability,created_by,created_at')
@@ -857,6 +862,14 @@ export default function MonitoreoSeguimiento() {
           .from('monitoring_templates')
           .upsert(templatePayload, { onConflict: 'id' });
         if (upsertTemplateError) throw upsertTemplateError;
+      } else {
+        // If an event changes from monitoring to activity/fecha UGEL, remove linked template
+        // so it no longer appears in Monitoreos.
+        const { error: deleteTemplateError } = await supabase
+          .from('monitoring_templates')
+          .delete()
+          .eq('id', eventId);
+        if (deleteTemplateError) throw deleteTemplateError;
       }
 
       const { error: clearResponsiblesError } = await supabase

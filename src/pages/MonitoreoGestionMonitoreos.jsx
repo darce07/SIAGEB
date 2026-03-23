@@ -872,6 +872,11 @@ export default function MonitoreoGestionMonitoreos({ embedded = false, initialCr
   const [dbMode, setDbMode] = useState('loading');
   const [authUserId, setAuthUserId] = useState('');
   const [creationContextDate, setCreationContextDate] = useState('');
+  const [isMobileLayout, setIsMobileLayout] = useState(() =>
+    typeof window !== 'undefined' ? window.innerWidth < 1280 : false,
+  );
+  const [mobilePanel, setMobilePanel] = useState('requests');
+  const [mobileStage, setMobileStage] = useState('stage1');
 
   const selectedRequest = useMemo(
     () => requests.find((item) => item.id === selectedRequestId) || null,
@@ -924,6 +929,21 @@ export default function MonitoreoGestionMonitoreos({ embedded = false, initialCr
   }, [isAdmin, selectedRequest, selectedRequestQuestionCount]);
   const canPublishRequest = publishBlockedReason.length === 0;
   const creationContextLabel = useMemo(() => formatDateFromParam(creationContextDate), [creationContextDate]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+    const handleResize = () => setIsMobileLayout(window.innerWidth < 1280);
+    handleResize();
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  useEffect(() => {
+    if (!isMobileLayout) return;
+    if (selectedRequestId) {
+      setMobilePanel('editor');
+    }
+  }, [isMobileLayout, selectedRequestId]);
 
   useEffect(() => {
     let active = true;
@@ -1158,6 +1178,10 @@ export default function MonitoreoGestionMonitoreos({ embedded = false, initialCr
     setQuestionDraft(createEmptyQuestionDraft());
     setNotice({ tone: 'neutral', message: '' });
     setCreationContextDate(contextDate);
+    if (isMobileLayout) {
+      setMobilePanel('editor');
+      setMobileStage('stage1');
+    }
   };
 
   useEffect(() => {
@@ -1911,8 +1935,19 @@ export default function MonitoreoGestionMonitoreos({ embedded = false, initialCr
     return <p className={`text-small ${className}`}>{notice.message}</p>;
   };
 
+  const showStage = (stageId) => !isMobileLayout || mobileStage === stageId;
+  const mobileStageOptions = [
+    { value: 'stage1', label: 'Etapa 1: Solicitud' },
+    { value: 'stage2', label: 'Etapa 2: Revision' },
+    { value: 'stage3', label: 'Etapa 3: Fichas' },
+    { value: 'stage4', label: 'Etapa 4: Encabezado y cierre' },
+    { value: 'stage5', label: 'Etapa 5: Campos personalizados' },
+    { value: 'stage6', label: 'Etapa 6: Secciones' },
+    { value: 'stage7', label: 'Etapa 7: Preguntas' },
+  ];
+
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex min-w-0 flex-col gap-4 overflow-x-hidden">
       <div className="border-b border-slate-800/70 pb-4">
         <SectionHeader
           eyebrow="Gestion"
@@ -1932,8 +1967,35 @@ export default function MonitoreoGestionMonitoreos({ embedded = false, initialCr
         </div>
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-[320px_minmax(0,1fr)]">
-        <Card className="flex h-full flex-col gap-3 p-3.5">
+      {isMobileLayout ? (
+        <div className="inline-flex w-full rounded-xl border border-slate-800/80 bg-slate-900/45 p-1">
+          <button
+            type="button"
+            onClick={() => setMobilePanel('requests')}
+            className={`flex-1 rounded-lg px-3 py-2 text-xs font-medium transition ${
+              mobilePanel === 'requests'
+                ? 'border border-cyan-400/50 bg-cyan-500/15 text-cyan-100'
+                : 'text-slate-300 hover:bg-slate-800/60'
+            }`}
+          >
+            Solicitudes
+          </button>
+          <button
+            type="button"
+            onClick={() => setMobilePanel('editor')}
+            className={`flex-1 rounded-lg px-3 py-2 text-xs font-medium transition ${
+              mobilePanel === 'editor'
+                ? 'border border-cyan-400/50 bg-cyan-500/15 text-cyan-100'
+                : 'text-slate-300 hover:bg-slate-800/60'
+            }`}
+          >
+            Edicion
+          </button>
+        </div>
+      ) : null}
+
+      <div className="grid min-w-0 gap-4 xl:grid-cols-[320px_minmax(0,1fr)]">
+        <Card className={`flex min-w-0 h-full flex-col gap-3 p-3.5 ${isMobileLayout && mobilePanel !== 'requests' ? 'hidden' : ''}`}>
           <div className="flex items-center justify-between gap-2">
             <p className="text-h3">Solicitudes</p>
             <button type="button" onClick={resetToCreateMode} className="ds-btn ds-btn-primary h-8 px-3">
@@ -2000,6 +2062,10 @@ export default function MonitoreoGestionMonitoreos({ embedded = false, initialCr
                     onClick={() => {
                       setSelectedRequestId(request.id);
                       setNotice({ tone: 'neutral', message: '' });
+                      if (isMobileLayout) {
+                        setMobilePanel('editor');
+                        setMobileStage('stage1');
+                      }
                     }}
                     className={`w-full rounded-xl border px-3 py-2 text-left transition ${
                       selected
@@ -2055,8 +2121,27 @@ export default function MonitoreoGestionMonitoreos({ embedded = false, initialCr
           </div>
         </Card>
 
-        <div className="space-y-4">
-          <Card className="space-y-4">
+        <div className={`min-w-0 space-y-4 ${isMobileLayout && mobilePanel !== 'editor' ? 'hidden' : ''}`}>
+          {isMobileLayout ? (
+            <div className="rounded-xl border border-slate-800/80 bg-slate-900/45 p-2.5">
+              <Select
+                id="mobileStageSelector"
+                label="Paso"
+                compact
+                value={mobileStage}
+                onChange={(event) => setMobileStage(event.target.value)}
+              >
+                {mobileStageOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </Select>
+            </div>
+          ) : null}
+
+          {showStage('stage1') ? (
+          <Card className="min-w-0 space-y-4">
             <div className="flex items-start justify-between gap-3">
               <SectionHeader
                 eyebrow="Etapa 1"
@@ -2350,8 +2435,10 @@ export default function MonitoreoGestionMonitoreos({ embedded = false, initialCr
               {renderNotice()}
             </div>
           </Card>
+          ) : null}
 
-          <Card className="space-y-3">
+          {showStage('stage2') ? (
+          <Card className="min-w-0 space-y-3">
             <SectionHeader
               eyebrow="Etapa 2"
               title={isAdmin ? 'Edicion y aprobacion de solicitud' : 'Estado de revision de la solicitud'}
@@ -2479,9 +2566,10 @@ export default function MonitoreoGestionMonitoreos({ embedded = false, initialCr
               <p className="text-small">Crea o selecciona una solicitud para habilitar esta etapa.</p>
             )}
           </Card>
+          ) : null}
 
-          {selectedRequest ? (
-            <Card className="space-y-4">
+          {showStage('stage3') ? (selectedRequest ? (
+            <Card className="min-w-0 space-y-4">
               <SectionHeader
                 eyebrow="Etapa 3"
                 title="Fichas"
@@ -2545,10 +2633,10 @@ export default function MonitoreoGestionMonitoreos({ embedded = false, initialCr
               title="Etapa 3 - Fichas"
               description="Primero crea o selecciona una solicitud valida para habilitar fichas."
             />
-          )}
+          )) : null}
 
-          {selectedSheet ? (
-            <Card className="space-y-4">
+          {showStage('stage4') ? (selectedSheet ? (
+            <Card className="min-w-0 space-y-4">
               <SectionHeader
                 eyebrow="Etapa 4"
                 title="Encabezado y cierre"
@@ -2594,10 +2682,10 @@ export default function MonitoreoGestionMonitoreos({ embedded = false, initialCr
               title="Etapa 4 - Encabezado y cierre"
               description="Selecciona una ficha para configurar los campos predefinidos."
             />
-          )}
+          )) : null}
 
-          {selectedSheet ? (
-            <Card className="space-y-4">
+          {showStage('stage5') ? (selectedSheet ? (
+            <Card className="min-w-0 space-y-4">
               <SectionHeader
                 eyebrow="Etapa 5"
                 title="Campos personalizados"
@@ -2709,10 +2797,10 @@ export default function MonitoreoGestionMonitoreos({ embedded = false, initialCr
               title="Etapa 5 - Campos personalizados"
               description="Selecciona una ficha para agregar campos dinamicos del encabezado."
             />
-          )}
+          )) : null}
 
-          {selectedSheet ? (
-            <Card className="space-y-4">
+          {showStage('stage6') ? (selectedSheet ? (
+            <Card className="min-w-0 space-y-4">
               <SectionHeader
                 eyebrow="Etapa 6"
                 title="Secciones"
@@ -2765,10 +2853,10 @@ export default function MonitoreoGestionMonitoreos({ embedded = false, initialCr
               title="Etapa 6 - Secciones"
               description="Selecciona una ficha para crear secciones de preguntas."
             />
-          )}
+          )) : null}
 
-          {selectedSection ? (
-            <Card className="space-y-4">
+          {showStage('stage7') ? (selectedSection ? (
+            <Card className="min-w-0 space-y-4">
               <SectionHeader
                 eyebrow="Etapa 7"
                 title="Preguntas"
@@ -2964,7 +3052,7 @@ export default function MonitoreoGestionMonitoreos({ embedded = false, initialCr
               title="Etapa 7 - Preguntas"
               description="Selecciona una seccion para registrar preguntas con tipos de respuesta."
             />
-          )}
+          )) : null}
         </div>
       </div>
 
