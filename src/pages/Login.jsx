@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { CircleCheck, Loader2, Lock } from 'lucide-react';
 import Input from '../components/ui/Input.jsx';
@@ -16,6 +16,18 @@ const getStoredAuth = () => {
   } catch {
     return null;
   }
+};
+
+const resolveEffectiveTheme = (themePreference) => {
+  if (themePreference !== 'system') return themePreference;
+  if (typeof window !== 'undefined') {
+    try {
+      return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+    } catch {
+      // noop
+    }
+  }
+  return 'dark';
 };
 
 export default function Login() {
@@ -48,6 +60,21 @@ export default function Login() {
     password: '',
     code: '',
   });
+
+  useLayoutEffect(() => {
+    const root = document.documentElement;
+    const previousTheme = root.dataset.theme;
+    root.dataset.theme = 'dark';
+
+    return () => {
+      try {
+        const storedThemePreference = localStorage.getItem('monitoreoTheme') || root.dataset.themePreference || 'dark';
+        root.dataset.theme = resolveEffectiveTheme(storedThemePreference);
+      } catch {
+        root.dataset.theme = previousTheme || 'dark';
+      }
+    };
+  }, []);
 
   const isAdmin = role === 'admin';
 

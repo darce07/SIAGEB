@@ -1311,12 +1311,12 @@ export default function MonitoreoSeguimiento() {
           </Card>
         ) : null}
 
-        <Card className="min-w-0 rounded-[20px] border border-white/10 bg-white/5 p-3 shadow-[0_14px_36px_-20px_rgba(0,0,0,0.72)]">
+        <Card className="seguimiento-calendar-card min-w-0 rounded-[20px] border border-white/10 bg-white/5 p-3 shadow-[0_14px_36px_-20px_rgba(0,0,0,0.72)]">
           <div
             className={`rounded-[20px] border p-3 transition-all duration-300 ${
               isCalendarHighContrast
-                ? 'border-slate-500/80 bg-slate-950/95 shadow-[0_12px_30px_-18px_rgba(2,6,23,0.95)]'
-                : 'border-slate-800/60 bg-[radial-gradient(120%_90%_at_50%_0%,rgba(56,189,248,0.10),transparent_56%),linear-gradient(180deg,rgba(15,23,42,0.88),rgba(2,6,23,0.82))]'
+                ? 'seguimiento-calendar-surface calendar-high-contrast border-slate-500/80 bg-slate-950/95 shadow-[0_12px_30px_-18px_rgba(2,6,23,0.95)]'
+                : 'seguimiento-calendar-surface border-slate-800/60 bg-[radial-gradient(120%_90%_at_50%_0%,rgba(56,189,248,0.10),transparent_56%),linear-gradient(180deg,rgba(15,23,42,0.88),rgba(2,6,23,0.82))]'
             }`}
           >
             <div className="mb-2.5 flex items-center justify-between gap-2">

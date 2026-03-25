@@ -94,6 +94,14 @@ const formatDateTime = (value) => {
   });
 };
 
+const getThemeLabel = (themeId) => {
+  if (themeId === 'dark') return 'Oscuro';
+  if (themeId === 'light') return 'Claro';
+  if (themeId === 'pink') return 'Rosado';
+  if (themeId === 'system') return 'Automatico';
+  return themeId || 'Oscuro';
+};
+
 const readVisualDraft = () => ({
   theme: resolveThemePreference(),
   fontSize: resolveFontSizePreference(),
@@ -726,7 +734,7 @@ export default function MonitoreoConfiguracion() {
                 <div className="rounded-2xl border border-slate-800/70 bg-slate-900/55 p-4">
                   <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Resumen rapido</p>
                   <ul className="mt-2 space-y-1.5 text-xs leading-5 text-slate-300">
-                    <li>Tema: {visualPrefs.theme === 'system' ? 'Automatico' : visualPrefs.theme}</li>
+                    <li>Tema: {getThemeLabel(visualPrefs.theme)}</li>
                     <li>Densidad: {visualPrefs.density === DENSITY_COMPACT ? 'Compacta' : 'Comoda'}</li>
                     <li>Texto: {visualPrefs.fontSize === 'xlarge' ? 'Muy grande' : visualPrefs.fontSize}</li>
                     <li>Ultimo acceso: {formatDateTime(lastSignInAt)}</li>
@@ -743,6 +751,7 @@ export default function MonitoreoConfiguracion() {
                     {[
                       { id: 'dark', label: 'Oscuro' },
                       { id: 'light', label: 'Claro' },
+                      { id: 'pink', label: 'Rosado' },
                       { id: 'system', label: 'Automatico' },
                     ].map((option) => (
                       <OptionButton

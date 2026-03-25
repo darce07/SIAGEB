@@ -2,6 +2,8 @@
 import {
   AlertTriangle,
   CheckCircle2,
+  ChevronDown,
+  ChevronUp,
   Copy,
   Eye,
   EyeOff,
@@ -112,6 +114,7 @@ export default function MonitoreoUsuarios() {
   const [success, setSuccess] = useState('');
   const [tempPassword, setTempPassword] = useState('');
   const [copied, setCopied] = useState(false);
+  const [isFormExpanded, setIsFormExpanded] = useState(false);
   const [toast, setToast] = useState({
     show: false,
     visible: false,
@@ -384,6 +387,10 @@ export default function MonitoreoUsuarios() {
       document.body.style.overflow = previousOverflow;
     };
   }, [detailsTarget]);
+
+  useEffect(() => {
+    if (form.id) setIsFormExpanded(true);
+  }, [form.id]);
 
   const filteredUsers = useMemo(() => {
     return users.filter((user) => {
@@ -818,106 +825,137 @@ export default function MonitoreoUsuarios() {
         </Card>
       ) : (
         <>
-            <Card className="flex flex-col gap-6">
+            <Card className="flex flex-col gap-5">
               <SectionHeader title="Equipo" size="page" />
-            <div
-              className={`rounded-xl border px-4 py-3 text-sm ${
-                activeAdminCount <= 1
-                  ? 'border-amber-500/35 bg-amber-500/10 text-amber-200'
-                  : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200'
-              }`}
-            >
-              <p className="font-semibold">Admins activos: {activeAdminCount}</p>
-              <p className="mt-1 text-xs">
-                {activeAdminCount <= 1
-                  ? 'Protección activa: no se puede eliminar, desactivar o degradar al último admin.'
-                  : 'Estado saludable: hay más de un administrador activo.'}
-              </p>
-            </div>
-            {isSubmitting ? (
-              <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-800/60">
-                <div className="h-full w-1/3 animate-pulse rounded-full bg-cyan-400/70" />
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="ds-badge ds-badge-info">Miembros: {users.length}</span>
+                <span className={activeAdminCount <= 1 ? 'ds-badge ds-badge-warning' : 'ds-badge ds-badge-success'}>
+                  Admins activos: {activeAdminCount}
+                </span>
               </div>
-            ) : null}
 
-            <form onSubmit={handleSubmit}>
-              <fieldset disabled={isSubmitting} className="grid gap-4 md:grid-cols-2 disabled:opacity-80">
-                <Input id="firstName" label="Nombres" value={form.firstName} onChange={(event) => setForm((prev) => ({ ...prev, firstName: event.target.value }))} placeholder="Nombres" />
-                <Input id="lastName" label="Apellidos" value={form.lastName} onChange={(event) => setForm((prev) => ({ ...prev, lastName: event.target.value }))} placeholder="Apellidos" />
-                <Select
-                  id="role"
-                  label="Rol"
-                  value={form.role}
-                  onChange={(event) => setForm((prev) => ({ ...prev, role: event.target.value }))}
-                  disabled={isEditingLastActiveAdmin}
-                >
-                  <option value="user">Especialista</option>
-                  <option value="admin">Administrador</option>
-                </Select>
-                <Input id="email" label="Correo institucional" value={form.email} onChange={(event) => setForm((prev) => ({ ...prev, email: event.target.value }))} placeholder="usuario@ugel.gob.pe" />
+              <button
+                type="button"
+                onClick={() => {
+                  setIsFormExpanded((current) => {
+                    const next = !current;
+                    if (!next && form.id) resetForm();
+                    return next;
+                  });
+                }}
+                className={`inline-flex h-10 w-full items-center justify-between rounded-xl border px-4 text-sm font-semibold transition ${
+                  isFormExpanded
+                    ? 'border-cyan-500/40 bg-cyan-500/10 text-cyan-100'
+                    : 'border-slate-700/60 bg-slate-900/45 text-slate-200 hover:border-slate-500'
+                }`}
+              >
+                <span>{isFormExpanded ? (form.id ? 'Edicion de usuario' : 'Registro de usuario') : '+ Registrar usuario'}</span>
+                {isFormExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+              </button>
 
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <Select id="docType" label="Tipo documento" value={form.docType} onChange={(event) => setForm((prev) => ({ ...prev, docType: event.target.value }))}>
-                    <option value="DNI">DNI</option>
-                    <option value="CE">CE</option>
-                  </Select>
-                  <Input id="docNumber" label="Documento" value={form.docNumber} onChange={(event) => setForm((prev) => ({ ...prev, docNumber: event.target.value }))} placeholder={form.docType === 'DNI' ? '8 dígitos' : 'Documento'} />
-                </div>
-
-                <label className="flex flex-col gap-2 text-sm text-slate-200">
-                  <span className="text-xs uppercase tracking-wide text-slate-400">{form.id ? 'Nueva contraseña (opcional)' : 'Contraseña temporal'}</span>
-                  <div className="flex items-center gap-2">
-                    <input id="tempPassword" value={form.password} onChange={(event) => setForm((prev) => ({ ...prev, password: event.target.value }))} placeholder="Min. 6 caracteres" className="w-full rounded-xl border border-slate-700/60 bg-slate-900/70 px-4 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus:border-cyan-400 focus:outline-none focus:ring-2 focus:ring-cyan-500/30" />
-                    <button type="button" onClick={handleGeneratePassword} className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-700/60 text-slate-200 transition hover:border-cyan-400/60 hover:text-cyan-200" title="Generar contraseña">
-                      <RefreshCw size={16} />
-                    </button>
-                    <button type="button" onClick={handleCopyPassword} disabled={!form.password} className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-700/60 text-slate-200 transition hover:border-cyan-400/60 hover:text-cyan-200 disabled:cursor-not-allowed disabled:opacity-40" title="Copiar contraseña">
-                      <Copy size={16} />
-                    </button>
+              {isFormExpanded ? (
+                <>
+                  <div
+                    className={`rounded-xl border px-4 py-2.5 text-xs ${
+                      activeAdminCount <= 1
+                        ? 'border-amber-500/35 bg-amber-500/10 text-amber-200'
+                        : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200'
+                    }`}
+                  >
+                    <p className="font-semibold">Proteccion administrativa</p>
+                    <p className="mt-1">
+                      {activeAdminCount <= 1
+                        ? 'No se puede eliminar, desactivar o degradar al ultimo admin activo.'
+                        : 'Hay mas de un administrador activo en el sistema.'}
+                    </p>
                   </div>
-                  <span className="text-xs text-slate-400">Minimo 6 caracteres. El boton generar crea una clave robusta de 9 caracteres.</span>
-                </label>
 
-                <Select
-                  id="status"
-                  label="Estado"
-                  value={form.status}
-                  onChange={(event) => setForm((prev) => ({ ...prev, status: event.target.value }))}
-                  disabled={isEditingLastActiveAdmin}
-                >
-                  <option value="active">Activo</option>
-                  <option value="disabled">Desactivado</option>
-                </Select>
-
-                {isEditingLastActiveAdmin ? (
-                  <p className="text-xs text-amber-300">
-                    Este usuario es el último administrador activo. El rol y estado están protegidos.
-                  </p>
-                ) : null}
-
-                <div className="flex flex-wrap items-end gap-3">
-                  <button type="submit" className="inline-flex items-center justify-center gap-2 rounded-xl bg-slate-100 px-6 py-3 text-sm font-semibold text-slate-900 transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-70" disabled={isSubmitting}>
-                    {isSubmitting ? <Loader2 size={16} className="animate-spin" /> : null}
-                    {isSubmitting ? (form.id ? 'Actualizando...' : 'Guardando...') : form.id ? 'Actualizar usuario' : 'Crear usuario'}
-                  </button>
-                  {form.id ? (
-                    <button type="button" onClick={resetForm} className="inline-flex items-center justify-center rounded-xl border border-slate-700/60 px-6 py-3 text-sm font-semibold text-slate-200 disabled:cursor-not-allowed disabled:opacity-60" disabled={isSubmitting}>
-                      Cancelar edicion
-                    </button>
+                  {isSubmitting ? (
+                    <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-800/60">
+                      <div className="h-full w-1/3 animate-pulse rounded-full bg-cyan-400/70" />
+                    </div>
                   ) : null}
-                </div>
-              </fieldset>
-            </form>
 
-            {error ? <p className="text-sm text-rose-400">{error}</p> : null}
-            {success ? <p className="text-sm text-emerald-300">{success}</p> : null}
-            {tempPassword ? (
-              <p className="text-xs text-amber-200">
-                Contraseña temporal asignada: <span className="font-semibold">{tempPassword}</span>
-                {copied ? <span className="ml-2 text-emerald-300">Copiada</span> : null}
-              </p>
-            ) : null}
-          </Card>
+                  <form onSubmit={handleSubmit}>
+                    <fieldset disabled={isSubmitting} className="grid gap-4 md:grid-cols-2 disabled:opacity-80">
+                      <Input id="firstName" label="Nombres" value={form.firstName} onChange={(event) => setForm((prev) => ({ ...prev, firstName: event.target.value }))} placeholder="Nombres" />
+                      <Input id="lastName" label="Apellidos" value={form.lastName} onChange={(event) => setForm((prev) => ({ ...prev, lastName: event.target.value }))} placeholder="Apellidos" />
+                      <Select
+                        id="role"
+                        label="Rol"
+                        value={form.role}
+                        onChange={(event) => setForm((prev) => ({ ...prev, role: event.target.value }))}
+                        disabled={isEditingLastActiveAdmin}
+                      >
+                        <option value="user">Especialista</option>
+                        <option value="admin">Administrador</option>
+                      </Select>
+                      <Input id="email" label="Correo institucional" value={form.email} onChange={(event) => setForm((prev) => ({ ...prev, email: event.target.value }))} placeholder="usuario@ugel.gob.pe" />
+
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <Select id="docType" label="Tipo documento" value={form.docType} onChange={(event) => setForm((prev) => ({ ...prev, docType: event.target.value }))}>
+                          <option value="DNI">DNI</option>
+                          <option value="CE">CE</option>
+                        </Select>
+                        <Input id="docNumber" label="Documento" value={form.docNumber} onChange={(event) => setForm((prev) => ({ ...prev, docNumber: event.target.value }))} placeholder={form.docType === 'DNI' ? '8 dígitos' : 'Documento'} />
+                      </div>
+
+                      <label className="flex flex-col gap-2 text-sm text-slate-200">
+                        <span className="text-xs uppercase tracking-wide text-slate-400">{form.id ? 'Nueva contraseña (opcional)' : 'Contraseña temporal'}</span>
+                        <div className="flex items-center gap-2">
+                          <input id="tempPassword" value={form.password} onChange={(event) => setForm((prev) => ({ ...prev, password: event.target.value }))} placeholder="Min. 6 caracteres" className="w-full rounded-xl border border-slate-700/60 bg-slate-900/70 px-4 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus:border-cyan-400 focus:outline-none focus:ring-2 focus:ring-cyan-500/30" />
+                          <button type="button" onClick={handleGeneratePassword} className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-700/60 text-slate-200 transition hover:border-cyan-400/60 hover:text-cyan-200" title="Generar contraseña">
+                            <RefreshCw size={16} />
+                          </button>
+                          <button type="button" onClick={handleCopyPassword} disabled={!form.password} className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-700/60 text-slate-200 transition hover:border-cyan-400/60 hover:text-cyan-200 disabled:cursor-not-allowed disabled:opacity-40" title="Copiar contraseña">
+                            <Copy size={16} />
+                          </button>
+                        </div>
+                        <span className="text-xs text-slate-400">Minimo 6 caracteres. El boton generar crea una clave robusta de 9 caracteres.</span>
+                      </label>
+
+                      <Select
+                        id="status"
+                        label="Estado"
+                        value={form.status}
+                        onChange={(event) => setForm((prev) => ({ ...prev, status: event.target.value }))}
+                        disabled={isEditingLastActiveAdmin}
+                      >
+                        <option value="active">Activo</option>
+                        <option value="disabled">Desactivado</option>
+                      </Select>
+
+                      {isEditingLastActiveAdmin ? (
+                        <p className="text-xs text-amber-300">
+                          Este usuario es el último administrador activo. El rol y estado están protegidos.
+                        </p>
+                      ) : null}
+
+                      <div className="flex flex-wrap items-end gap-3">
+                        <button type="submit" className="inline-flex items-center justify-center gap-2 rounded-xl bg-slate-100 px-6 py-3 text-sm font-semibold text-slate-900 transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-70" disabled={isSubmitting}>
+                          {isSubmitting ? <Loader2 size={16} className="animate-spin" /> : null}
+                          {isSubmitting ? (form.id ? 'Actualizando...' : 'Guardando...') : form.id ? 'Actualizar usuario' : 'Crear usuario'}
+                        </button>
+                        {form.id ? (
+                          <button type="button" onClick={resetForm} className="inline-flex items-center justify-center rounded-xl border border-slate-700/60 px-6 py-3 text-sm font-semibold text-slate-200 disabled:cursor-not-allowed disabled:opacity-60" disabled={isSubmitting}>
+                            Cancelar edicion
+                          </button>
+                        ) : null}
+                      </div>
+                    </fieldset>
+                  </form>
+
+                  {error ? <p className="text-sm text-rose-400">{error}</p> : null}
+                  {success ? <p className="text-sm text-emerald-300">{success}</p> : null}
+                  {tempPassword ? (
+                    <p className="text-xs text-amber-200">
+                      Contraseña temporal asignada: <span className="font-semibold">{tempPassword}</span>
+                      {copied ? <span className="ml-2 text-emerald-300">Copiada</span> : null}
+                    </p>
+                  ) : null}
+                </>
+              ) : null}
+            </Card>
 
             <Card className="flex flex-col gap-6">
               <SectionHeader eyebrow="Listado" title="Miembros" />
