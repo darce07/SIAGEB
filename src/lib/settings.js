@@ -24,7 +24,7 @@ const DEFAULT_NOTIFICATIONS = {
   channel: 'system',
 };
 
-const THEME_OPTIONS = ['dark', 'light', 'system'];
+const THEME_OPTIONS = ['dark', 'light', 'pink', 'system'];
 const FONT_OPTIONS = ['normal', 'large', 'xlarge'];
 const DENSITY_OPTIONS = [DENSITY_COMPACT, DENSITY_COMFORT];
 

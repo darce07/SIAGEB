@@ -278,7 +278,7 @@ const resolveDensityPreference = () => {
 const resolveThemePreference = () => {
   try {
     const storedTheme = localStorage.getItem('monitoreoTheme');
-    if (['dark', 'light', 'system'].includes(storedTheme)) {
+    if (['dark', 'light', 'pink', 'system'].includes(storedTheme)) {
       return storedTheme;
     }
   } catch {
@@ -3542,7 +3542,7 @@ export default function MonitoreoLayout() {
           />
           <aside
             ref={mobileSidebarRef}
-            className="absolute inset-y-0 left-0 flex w-[272px] flex-col border-r border-slate-700/50 bg-gradient-to-b from-slate-950/95 via-slate-950/90 to-slate-900/80 p-4 shadow-[22px_0_55px_rgba(2,6,23,0.55)] backdrop-blur-xl"
+            className="monitoreo-sidebar absolute inset-y-0 left-0 flex w-[272px] flex-col border-r border-slate-700/50 bg-gradient-to-b from-slate-950/95 via-slate-950/90 to-slate-900/80 p-4 shadow-[22px_0_55px_rgba(2,6,23,0.55)] backdrop-blur-xl"
             onClick={(event) => event.stopPropagation()}
           >
             <div className="flex items-center justify-between gap-3">
@@ -3661,10 +3661,10 @@ export default function MonitoreoLayout() {
       ) : null}
       <div className="flex h-screen overflow-hidden bg-transparent">
         <aside
-          className={`hidden flex-col border-r border-slate-700/45 bg-gradient-to-b from-slate-950/95 via-slate-950/90 to-slate-900/82 shadow-[20px_0_50px_rgba(2,6,23,0.45)] backdrop-blur-xl transition-[width,padding,box-shadow,background-color] duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] lg:sticky lg:top-0 lg:flex lg:h-screen lg:overflow-visible lg:overscroll-contain ${sidebarDesktopRailClass}`}
+          className={`monitoreo-sidebar hidden flex-col border-r border-slate-700/45 bg-gradient-to-b from-slate-950/95 via-slate-950/90 to-slate-900/82 shadow-[20px_0_50px_rgba(2,6,23,0.45)] backdrop-blur-xl transition-[width,padding,box-shadow,background-color] duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] lg:sticky lg:top-0 lg:flex lg:h-screen lg:overflow-visible lg:overscroll-contain ${sidebarDesktopRailClass}`}
         >
           <div
-            className={`mb-4 rounded-2xl border border-slate-700/45 bg-slate-900/42 shadow-[inset_0_0_0_1px_rgba(15,23,42,0.35)] transition-all duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] ${sidebarProfileCardClass}`}
+            className={`monitoreo-sidebar-profile mb-4 rounded-2xl border border-slate-700/45 bg-slate-900/42 shadow-[inset_0_0_0_1px_rgba(15,23,42,0.35)] transition-all duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] ${sidebarProfileCardClass}`}
           >
             <div className={`flex h-full ${isSidebarCollapsed ? 'flex-col items-center justify-between' : 'items-center justify-between gap-3'}`}>
               <div
@@ -3776,7 +3776,7 @@ export default function MonitoreoLayout() {
         </aside>
         <div className="login-glow flex flex-1 flex-col overflow-hidden">
           <div className="lg:hidden">
-            <div className="glass-panel sticky top-0 z-40 flex items-center justify-between px-3 py-2">
+            <div className="monitoreo-topbar glass-panel sticky top-0 z-40 flex items-center justify-between px-3 py-2">
               <button
                 ref={mobileSidebarButtonRef}
                 type="button"
@@ -4218,6 +4218,7 @@ export default function MonitoreoLayout() {
                   {[
                     { id: 'dark', label: 'Oscuro' },
                     { id: 'light', label: 'Claro' },
+                    { id: 'pink', label: 'Rosado' },
                     { id: 'system', label: 'Automatico' },
                   ].map((option) => (
                     <button
