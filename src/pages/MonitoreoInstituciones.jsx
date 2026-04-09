@@ -957,7 +957,7 @@ export default function MonitoreoInstituciones() {
           <p className="text-sm text-slate-400">No se encontraron IE con los filtros actuales.</p>
         ) : (
           <>
-            <div className="space-y-3 md:hidden">
+            <div className="space-y-3 lg:hidden">
               {paginatedInstitutions.map((item) => (
                 <div
                   key={item.id}
@@ -965,7 +965,7 @@ export default function MonitoreoInstituciones() {
                     if (node) rowRefs.current.set(item.id, node);
                     else rowRefs.current.delete(item.id);
                   }}
-                  className={`rounded-xl border border-slate-800/70 bg-slate-950/35 p-4 ${
+                  className={`rounded-2xl border border-slate-800/70 bg-slate-950/35 p-4 shadow-[0_10px_30px_rgba(2,6,23,0.35)] ${
                     item.id === highlightedInstitutionId ? 'ring-1 ring-cyan-400/60' : ''
                   }`}
                 >
@@ -977,7 +977,7 @@ export default function MonitoreoInstituciones() {
                     </div>
                   </div>
 
-                  <div className="mt-3 grid grid-cols-2 gap-2">
+                  <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
                     <div className="rounded-lg border border-slate-800/70 bg-slate-900/60 px-2.5 py-2">
                       <p className="text-[10px] uppercase tracking-[0.14em] text-slate-500">Cod. modular</p>
                       <p className="mt-1 text-xs text-slate-200">{item.cod_modular || '-'}</p>
@@ -1008,7 +1008,7 @@ export default function MonitoreoInstituciones() {
                     </span>
                   </div>
 
-                  <div className="mt-3 grid grid-cols-2 gap-2">
+                  <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
                     <button
                       type="button"
                       onClick={() => setDetailTarget(item)}
@@ -1055,7 +1055,7 @@ export default function MonitoreoInstituciones() {
               ))}
             </div>
 
-            <div className="hidden overflow-x-auto rounded-xl border border-slate-800/70 bg-slate-950/35 md:block">
+            <div className="hidden overflow-x-auto rounded-xl border border-slate-800/70 bg-slate-950/35 lg:block">
               <table className="min-w-[1180px] w-full text-left text-sm">
                 <thead className="border-b border-slate-800/70 text-[11px] uppercase tracking-[0.14em] text-slate-400">
                   <tr>
