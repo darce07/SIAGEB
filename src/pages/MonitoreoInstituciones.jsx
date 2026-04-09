@@ -957,7 +957,105 @@ export default function MonitoreoInstituciones() {
           <p className="text-sm text-slate-400">No se encontraron IE con los filtros actuales.</p>
         ) : (
           <>
-            <div className="overflow-x-auto rounded-xl border border-slate-800/70 bg-slate-950/35">
+            <div className="space-y-3 md:hidden">
+              {paginatedInstitutions.map((item) => (
+                <div
+                  key={item.id}
+                  ref={(node) => {
+                    if (node) rowRefs.current.set(item.id, node);
+                    else rowRefs.current.delete(item.id);
+                  }}
+                  className={`rounded-xl border border-slate-800/70 bg-slate-950/35 p-4 ${
+                    item.id === highlightedInstitutionId ? 'ring-1 ring-cyan-400/60' : ''
+                  }`}
+                >
+                  <div className="flex items-start gap-2">
+                    <Building2 size={14} className="mt-0.5 text-slate-400" />
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-slate-100">{item.nombre_ie || '-'}</p>
+                      <p className="mt-1 text-xs text-slate-400">{item.modalidad || '-'} | {formatLevelLabel(item.nivel)}</p>
+                    </div>
+                  </div>
+
+                  <div className="mt-3 grid grid-cols-2 gap-2">
+                    <div className="rounded-lg border border-slate-800/70 bg-slate-900/60 px-2.5 py-2">
+                      <p className="text-[10px] uppercase tracking-[0.14em] text-slate-500">Cod. modular</p>
+                      <p className="mt-1 text-xs text-slate-200">{item.cod_modular || '-'}</p>
+                    </div>
+                    <div className="rounded-lg border border-slate-800/70 bg-slate-900/60 px-2.5 py-2">
+                      <p className="text-[10px] uppercase tracking-[0.14em] text-slate-500">Cod. local</p>
+                      <p className="mt-1 text-xs text-slate-200">{item.cod_local || '-'}</p>
+                    </div>
+                    <div className="rounded-lg border border-slate-800/70 bg-slate-900/60 px-2.5 py-2">
+                      <p className="text-[10px] uppercase tracking-[0.14em] text-slate-500">Distrito</p>
+                      <p className="mt-1 text-xs text-slate-200">{item.distrito || '-'}</p>
+                    </div>
+                    <div className="rounded-lg border border-slate-800/70 bg-slate-900/60 px-2.5 py-2">
+                      <p className="text-[10px] uppercase tracking-[0.14em] text-slate-500">REI</p>
+                      <p className="mt-1 text-xs text-slate-200">{item.rei || '-'}</p>
+                    </div>
+                  </div>
+
+                  <div className="mt-3 flex items-center gap-2">
+                    <span
+                      className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${
+                        item.estado === 'inactive'
+                          ? 'border-amber-500/40 bg-amber-500/10 text-amber-200'
+                          : 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200'
+                      }`}
+                    >
+                      {formatStatusLabel(item.estado)}
+                    </span>
+                  </div>
+
+                  <div className="mt-3 grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setDetailTarget(item)}
+                      className="inline-flex items-center justify-center gap-1 rounded-xl border border-slate-700/60 px-3 py-2 text-xs font-semibold text-slate-200 transition hover:border-slate-500"
+                    >
+                      <Eye size={13} />
+                      Ver
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleEdit(item)}
+                      className="inline-flex items-center justify-center gap-1 rounded-xl border border-slate-700/60 px-3 py-2 text-xs font-semibold text-slate-200 transition hover:border-slate-500"
+                    >
+                      <Pencil size={13} />
+                      Editar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleToggleStatus(item)}
+                      disabled={isTogglingStatusId === item.id}
+                      className={`inline-flex items-center justify-center gap-1 rounded-xl border px-3 py-2 text-xs font-semibold transition ${
+                        item.estado === 'inactive'
+                          ? 'border-emerald-500/35 text-emerald-200 hover:border-emerald-400/60'
+                          : 'border-amber-500/35 text-amber-200 hover:border-amber-400/60'
+                      } disabled:cursor-not-allowed disabled:opacity-70`}
+                    >
+                      {isTogglingStatusId === item.id ? (
+                        <Loader2 size={13} className="animate-spin" />
+                      ) : (
+                        <Power size={13} />
+                      )}
+                      {item.estado === 'inactive' ? 'Activar' : 'Desactivar'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setDeleteTarget(item)}
+                      className="inline-flex items-center justify-center gap-1 rounded-xl border border-rose-500/35 px-3 py-2 text-xs font-semibold text-rose-200 transition hover:border-rose-400/60"
+                    >
+                      <Trash2 size={13} />
+                      Eliminar
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="hidden overflow-x-auto rounded-xl border border-slate-800/70 bg-slate-950/35 md:block">
               <table className="min-w-[1180px] w-full text-left text-sm">
                 <thead className="border-b border-slate-800/70 text-[11px] uppercase tracking-[0.14em] text-slate-400">
                   <tr>
