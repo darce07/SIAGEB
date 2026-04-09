@@ -16,7 +16,17 @@ const buildFullName = (firstName?: string, lastName?: string) => `${firstName ||
 const normalizeRole = (value: unknown) => String(value || 'user').trim().toLowerCase();
 const normalizeStatus = (value: unknown) => String(value || 'active').trim().toLowerCase();
 const normalizeDocType = (value: unknown) => String(value || '').trim().toUpperCase();
-const normalizeDocNumber = (value: unknown) => String(value || '').trim();
+const normalizeDocNumber = (docType: string, value: unknown) => {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  if (docType === 'DNI' || docType === 'CE') return raw.replace(/\D/g, '');
+  return raw;
+};
+const normalizeComparableDoc = (value: unknown) =>
+  String(value || '')
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '');
 
 const getEnv = () => {
   const url = Deno.env.get('SUPABASE_URL') || '';
@@ -50,6 +60,11 @@ const getBearerToken = (req: Request) => {
   return fallback.split(',')[0]?.trim() || '';
 };
 
+const getBodyToken = (payload: Record<string, unknown>) => {
+  const raw = String(payload.access_token || '').trim().replace(/^"+|"+$/g, '');
+  return raw.split('.').length === 3 ? raw : '';
+};
+
 const isActiveAdminProfile = (profile: { role?: string | null; status?: string | null } | null | undefined) =>
   profile?.role === 'admin' && profile?.status === 'active';
 
@@ -67,19 +82,43 @@ const countActiveAdmins = async (adminClient: ReturnType<typeof createClient>) =
 const getProfileById = async (adminClient: ReturnType<typeof createClient>, id: string) => {
   const { data, error } = await adminClient
     .from('profiles')
-    .select('id,role,status')
+    .select('id,role,status,doc_type,doc_number')
     .eq('id', id)
     .maybeSingle();
 
   return { data, error };
 };
 
+const hasConflictingActiveDocument = async (
+  adminClient: ReturnType<typeof createClient>,
+  params: { idToExclude?: string; docType: string; docNumber: string },
+) => {
+  const target = normalizeComparableDoc(params.docNumber);
+  if (!target) return { exists: false, error: null };
+
+  let query = adminClient
+    .from('profiles')
+    .select('id,doc_number,status')
+    .eq('doc_type', params.docType)
+    .eq('status', 'active')
+    .limit(200);
+
+  if (params.idToExclude) query = query.neq('id', params.idToExclude);
+
+  const { data, error } = await query;
+  if (error) return { exists: false, error };
+
+  const exists = (data || []).some((row) => normalizeComparableDoc(row?.doc_number) === target);
+  return { exists, error: null };
+};
+
 const ensureAdmin = async (
   req: Request,
   adminClient: ReturnType<typeof createClient>,
   authClient: ReturnType<typeof createClient>,
+  payload: Record<string, unknown>,
 ) => {
-  const token = getBearerToken(req);
+  const token = getBearerToken(req) || getBodyToken(payload);
   if (!token) return { ok: false, status: 401, error: 'Falta token de sesion.' };
 
   let { data: userData, error: userError } = await authClient.auth.getUser(token);
@@ -130,16 +169,16 @@ Deno.serve(async (req) => {
   const adminClient = createClient(url, serviceRoleKey);
   const authClient = createClient(url, anonKey);
 
-  const adminCheck = await ensureAdmin(req, adminClient, authClient);
-  if (!adminCheck.ok) {
-    return jsonResponse(adminCheck.status, { error: adminCheck.error });
-  }
-
   let payload: Record<string, unknown> = {};
   try {
     payload = await req.json();
   } catch {
     return jsonResponse(400, { error: 'Body invalido.' });
+  }
+
+  const adminCheck = await ensureAdmin(req, adminClient, authClient, payload);
+  if (!adminCheck.ok) {
+    return jsonResponse(adminCheck.status, { error: adminCheck.error });
   }
 
   const action = String(payload.action || '');
@@ -160,12 +199,30 @@ Deno.serve(async (req) => {
     const role = normalizeRole(payload.role);
     const status = normalizeStatus(payload.status);
     const docType = normalizeDocType(payload.doc_type);
-    const docNumber = normalizeDocNumber(payload.doc_number);
+    const docNumber = normalizeDocNumber(docType, payload.doc_number);
     const email = String(payload.email || '').trim().toLowerCase();
     const password = String(payload.password || '');
 
     if (!firstName || !lastName || !email || !password) {
       return jsonResponse(400, { error: 'Nombres, apellidos, correo y contrasena son obligatorios.' });
+    }
+    if (!docType || !docNumber) {
+      return jsonResponse(400, { error: 'Tipo y numero de documento son obligatorios.' });
+    }
+    if (docType === 'DNI' && !/^\d{8}$/.test(docNumber)) {
+      return jsonResponse(400, { error: 'El DNI debe tener 8 digitos.' });
+    }
+    if (docType === 'CE' && !/^\d{9}$/.test(docNumber)) {
+      return jsonResponse(400, { error: 'El CE debe tener 9 digitos.' });
+    }
+
+    const conflictingDocument = await hasConflictingActiveDocument(adminClient, {
+      docType,
+      docNumber,
+    });
+    if (conflictingDocument.error) return jsonResponse(500, { error: conflictingDocument.error.message });
+    if (conflictingDocument.exists) {
+      return jsonResponse(400, { error: 'Ya existe un usuario activo con ese documento.' });
     }
 
     const { data: createData, error: createError } = await adminClient.auth.admin.createUser({
@@ -184,6 +241,12 @@ Deno.serve(async (req) => {
 
     if (createError || !createData?.user?.id) {
       return jsonResponse(500, { error: createError?.message || 'No se pudo crear el usuario en Auth.' });
+    }
+
+    if (status === 'disabled') {
+      await adminClient.auth.admin.updateUserById(createData.user.id, { ban_duration: '87600h' });
+    } else {
+      await adminClient.auth.admin.updateUserById(createData.user.id, { ban_duration: 'none' });
     }
 
     const profilePayload = {
@@ -222,12 +285,39 @@ Deno.serve(async (req) => {
     const nextRole = payload.role !== undefined ? normalizeRole(payload.role) : normalizeRole(currentProfile.role);
     const nextStatus =
       payload.status !== undefined ? normalizeStatus(payload.status) : normalizeStatus(currentProfile.status);
+    const nextDocType = payload.doc_type !== undefined ? normalizeDocType(payload.doc_type) : normalizeDocType(currentProfile.doc_type);
+    const nextDocNumber =
+      payload.doc_number !== undefined
+        ? normalizeDocNumber(nextDocType, payload.doc_number)
+        : normalizeDocNumber(nextDocType, currentProfile.doc_number);
     const willRemainActiveAdmin = nextRole === 'admin' && nextStatus === 'active';
     if (isActiveAdminProfile(currentProfile) && !willRemainActiveAdmin) {
       const { count, error: countError } = await countActiveAdmins(adminClient);
       if (countError) return jsonResponse(500, { error: countError.message });
       if (count <= 1) {
         return jsonResponse(400, { error: 'No puedes quitar o desactivar al ultimo administrador activo.' });
+      }
+    }
+
+    if (!nextDocType || !nextDocNumber) {
+      return jsonResponse(400, { error: 'Tipo y numero de documento son obligatorios.' });
+    }
+    if (nextDocType === 'DNI' && !/^\d{8}$/.test(nextDocNumber)) {
+      return jsonResponse(400, { error: 'El DNI debe tener 8 digitos.' });
+    }
+    if (nextDocType === 'CE' && !/^\d{9}$/.test(nextDocNumber)) {
+      return jsonResponse(400, { error: 'El CE debe tener 9 digitos.' });
+    }
+
+    if (nextStatus === 'active') {
+      const conflictingDocument = await hasConflictingActiveDocument(adminClient, {
+        idToExclude: id,
+        docType: nextDocType,
+        docNumber: nextDocNumber,
+      });
+      if (conflictingDocument.error) return jsonResponse(500, { error: conflictingDocument.error.message });
+      if (conflictingDocument.exists) {
+        return jsonResponse(400, { error: 'Ya existe un usuario activo con ese documento.' });
       }
     }
 
@@ -238,7 +328,7 @@ Deno.serve(async (req) => {
     if (payload.role !== undefined) updates.role = normalizeRole(payload.role);
     if (payload.status !== undefined) updates.status = normalizeStatus(payload.status);
     if (payload.doc_type !== undefined) updates.doc_type = normalizeDocType(payload.doc_type);
-    if (payload.doc_number !== undefined) updates.doc_number = normalizeDocNumber(payload.doc_number);
+    if (payload.doc_number !== undefined) updates.doc_number = normalizeDocNumber(nextDocType, payload.doc_number);
     if (payload.email !== undefined) updates.email = String(payload.email || '').trim().toLowerCase();
     const nextPassword = payload.password !== undefined ? String(payload.password || '') : '';
     if (nextPassword) updates.temp_credential = nextPassword;

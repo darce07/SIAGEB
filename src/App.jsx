@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import Login from './pages/Login.jsx';
 import MonitoreoLayout from './routes/MonitoreoLayout.jsx';
@@ -21,8 +21,10 @@ import {
   HIGH_CONTRAST_STORAGE_KEY,
   REDUCE_MOTION_STORAGE_KEY,
 } from './lib/settings.js';
+import { supabase } from './lib/supabase.js';
 
 const AUTH_KEY = 'monitoreoAuth';
+const PROFILE_KEY = 'monitoreoProfile';
 
 const hasAuth = () => {
   try {
@@ -33,11 +35,50 @@ const hasAuth = () => {
   }
 };
 
+const clearStoredAuth = () => {
+  localStorage.removeItem(AUTH_KEY);
+  localStorage.removeItem(PROFILE_KEY);
+};
+
 function RequireAuth({ children }) {
   const location = useLocation();
-  if (!hasAuth()) {
+  const [status, setStatus] = useState('checking');
+
+  useEffect(() => {
+    let active = true;
+
+    const validateSession = async () => {
+      if (!hasAuth()) {
+        if (active) setStatus('unauthenticated');
+        return;
+      }
+
+      const { data, error } = await supabase.auth.getSession();
+      const session = data?.session || null;
+      if (error || !session?.access_token) {
+        clearStoredAuth();
+        if (active) setStatus('unauthenticated');
+        return;
+      }
+
+      if (active) setStatus('authenticated');
+    };
+
+    validateSession();
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  if (status === 'checking') {
+    return null;
+  }
+
+  if (status !== 'authenticated') {
     return <Navigate to="/login" replace state={{ from: location.pathname }} />;
   }
+
   return children;
 }
 
