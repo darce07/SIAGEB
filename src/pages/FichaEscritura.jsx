@@ -1,4 +1,4 @@
-import { useContext, useEffect, useMemo, useReducer, useRef, useState } from 'react';
+import { useCallback, useContext, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { CheckCircle2, RefreshCw, Save } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import Card from '../components/ui/Card.jsx';
@@ -19,6 +19,7 @@ import { supabase } from '../lib/supabase.js';
 const INSTANCE_ACTIVE_KEY = 'monitoreoInstanceActive';
 
 const TEMPLATE_KEY = 'monitoreoTemplateSelected';
+const TEMPLATE_SHEET_KEY = 'monitoreoTemplateSheetSelected';
 const loadSelectedTemplate = async (selectedId) => {
   try {
     if (!selectedId) return { template: null, error: null };
@@ -311,6 +312,22 @@ const serializeState = (state) => {
   return rest;
 };
 
+const serializeStateWithSheet = (state, selectedSheetId = '') => {
+  const serialized = serializeState(state);
+  return {
+    ...serialized,
+    meta: {
+      ...(serialized?.meta && typeof serialized.meta === 'object' ? serialized.meta : {}),
+      selectedSheetId: selectedSheetId || null,
+    },
+  };
+};
+
+const getInstanceSheetId = (instance) => {
+  const value = instance?.data?.meta?.selectedSheetId;
+  return typeof value === 'string' ? value : '';
+};
+
 const mergeLoadedState = (loaded, sections) => {
   const base = createInitialState(sections);
   const mergedQuestions = {
@@ -334,21 +351,6 @@ const getCurrentUserId = () => {
   }
 };
 
-const findInProgressInstance = async (templateId) => {
-  const userId = getCurrentUserId();
-  if (!templateId || !userId) return null;
-  const { data, error } = await supabase
-    .from('monitoring_instances')
-    .select('*')
-    .eq('template_id', templateId)
-    .eq('created_by', userId)
-    .eq('status', 'in_progress')
-    .order('updated_at', { ascending: false })
-    .limit(1);
-  if (error) return null;
-  return data?.[0] || null;
-};
-
 const getActiveInstance = async () => {
   const activeId = localStorage.getItem(INSTANCE_ACTIVE_KEY);
   if (!activeId) return null;
@@ -365,7 +367,7 @@ const upsertInstance = async (instance) => {
   await supabase.from('monitoring_instances').upsert(instance, { onConflict: 'id' });
 };
 
-const createInstance = async (templateId, templateStatus) => {
+const createInstance = async (templateId, templateStatus, selectedSheetId = '') => {
   try {
     if (templateStatus !== 'active') return null;
     const userId = getCurrentUserId();
@@ -378,7 +380,11 @@ const createInstance = async (templateId, templateStatus) => {
       created_at: now,
       updated_at: now,
       status: 'in_progress',
-      data: null,
+      data: {
+        meta: {
+          selectedSheetId: selectedSheetId || null,
+        },
+      },
     };
     await upsertInstance(instance);
     localStorage.setItem(INSTANCE_ACTIVE_KEY, instance.id);
@@ -394,6 +400,7 @@ const formatInstitutionLevel = (value) => {
   if (value === 'inicial') return 'INICIAL JARDIN';
   if (value === 'primaria') return 'PRIMARIA';
   if (value === 'secundaria') return 'SECUNDARIA';
+  if (value === 'tecnico_productiva') return 'TECNICO PRODUCTIVA';
   return '-';
 };
 
@@ -403,6 +410,9 @@ export default function FichaEscritura() {
   const [templateError, setTemplateError] = useState('');
   const [isTemplateLoading, setIsTemplateLoading] = useState(true);
   const [templateId, setTemplateId] = useState(() => localStorage.getItem(TEMPLATE_KEY) || '');
+  const [selectedSheetId, setSelectedSheetId] = useState(
+    () => localStorage.getItem(TEMPLATE_SHEET_KEY) || '',
+  );
   const [activeInstance, setActiveInstance] = useState(null);
   const [state, dispatch] = useReducer(reducer, undefined, () =>
     createInitialState(QUESTION_SECTIONS),
@@ -411,33 +421,31 @@ export default function FichaEscritura() {
     let active = true;
     const hydrate = async () => {
       setIsTemplateLoading(true);
+      const requestedSheetId = localStorage.getItem(TEMPLATE_SHEET_KEY) || '';
       // 1) Recuperar instancia activa si existe
-      const existing = await getActiveInstance();
+      const existingInstance = await getActiveInstance();
       if (!active) return;
+      let existing = existingInstance;
+      if (existing && requestedSheetId && getInstanceSheetId(existing) !== requestedSheetId) {
+        existing = null;
+        localStorage.removeItem(INSTANCE_ACTIVE_KEY);
+        setActiveInstance(null);
+      }
       if (existing) {
         setActiveInstance(existing);
+        const existingSheetId = getInstanceSheetId(existing);
+        if (existingSheetId && existingSheetId !== requestedSheetId) {
+          localStorage.setItem(TEMPLATE_SHEET_KEY, existingSheetId);
+          setSelectedSheetId(existingSheetId);
+        }
         if (existing.template_id && existing.template_id !== templateId) {
           localStorage.setItem(TEMPLATE_KEY, existing.template_id);
           setTemplateId(existing.template_id);
         }
       }
 
-      let reusedInstance = null;
-      if (!existing && templateId) {
-        reusedInstance = await findInProgressInstance(templateId);
-        if (!active) return;
-        if (reusedInstance) {
-          setActiveInstance(reusedInstance);
-          localStorage.setItem(INSTANCE_ACTIVE_KEY, reusedInstance.id);
-          if (reusedInstance.template_id && reusedInstance.template_id !== templateId) {
-            localStorage.setItem(TEMPLATE_KEY, reusedInstance.template_id);
-            setTemplateId(reusedInstance.template_id);
-          }
-        }
-      }
-
       // 2) Cargar plantilla por templateId
-      const idToLoad = existing?.template_id || reusedInstance?.template_id || templateId;
+      const idToLoad = existing?.template_id || templateId;
       if (!idToLoad) {
         setTemplateError('No se encontro la plantilla seleccionada.');
         setSelectedTemplate(null);
@@ -462,7 +470,7 @@ export default function FichaEscritura() {
     };
   }, [templateId]);
   const templateStatus = useMemo(() => getTemplateStatus(selectedTemplate), [selectedTemplate]);
-  const templateSections = useMemo(
+  const allTemplateSections = useMemo(
     () => selectedTemplate?.sections || QUESTION_SECTIONS,
     [selectedTemplate],
   );
@@ -471,11 +479,40 @@ export default function FichaEscritura() {
     const sheets = selectedTemplate?.levelsConfig?.builder?.sheets;
     return Array.isArray(sheets) ? sheets : [];
   }, [selectedTemplate]);
+  useEffect(() => {
+    if (!selectedTemplate) {
+      return;
+    }
+    if (!isBuilderTemplate || !builderSheets.length) {
+      if (selectedSheetId) setSelectedSheetId('');
+      localStorage.removeItem(TEMPLATE_SHEET_KEY);
+      return;
+    }
+    const isValid = builderSheets.some((sheet) => sheet.id === selectedSheetId);
+    const resolvedSheetId = isValid ? selectedSheetId : builderSheets[0]?.id || '';
+    if (!resolvedSheetId) {
+      localStorage.removeItem(TEMPLATE_SHEET_KEY);
+      return;
+    }
+    localStorage.setItem(TEMPLATE_SHEET_KEY, resolvedSheetId);
+    if (resolvedSheetId !== selectedSheetId) {
+      setSelectedSheetId(resolvedSheetId);
+    }
+  }, [builderSheets, isBuilderTemplate, selectedSheetId]);
+  const templateSections = useMemo(
+    () => (isBuilderTemplate && selectedSheetId
+      ? allTemplateSections.filter((section) => section?.sheetId === selectedSheetId)
+      : allTemplateSections),
+    [allTemplateSections, isBuilderTemplate, selectedSheetId],
+  );
   const activeBuilderSheet = useMemo(() => {
     if (!builderSheets.length) return null;
-    const sheetIdFromSections = templateSections.find((section) => section?.sheetId)?.sheetId;
+    if (selectedSheetId) {
+      return builderSheets.find((sheet) => sheet.id === selectedSheetId) || builderSheets[0];
+    }
+    const sheetIdFromSections = allTemplateSections.find((section) => section?.sheetId)?.sheetId;
     return builderSheets.find((sheet) => sheet.id === sheetIdFromSections) || builderSheets[0];
-  }, [builderSheets, templateSections]);
+  }, [allTemplateSections, builderSheets, selectedSheetId]);
   const activeHeaderFieldIds = useMemo(() => {
     const fields = activeBuilderSheet?.headerFields;
     if (!fields || typeof fields !== 'object') return [];
@@ -515,6 +552,7 @@ export default function FichaEscritura() {
   }, [effectiveHeaderFieldIds]);
 
   const showHeaderSection = groupedHeaderFields.length > 0 || activeDynamicFields.length > 0;
+  const showExecutionHeaderSection = !isBuilderTemplate && showHeaderSection;
   const templateMetadata = useMemo(() => {
     const meta = selectedTemplate?.levelsConfig?.metadata;
     if (!meta || typeof meta !== 'object') {
@@ -573,6 +611,13 @@ export default function FichaEscritura() {
   );
   const showLevelInfoCard = !isBuilderTemplate ? hasLevelScaleQuestions : templateMetadata.includeLevels;
   const formTitle = selectedTemplate?.title || FORM_TITLE;
+  const selectedSheetLabel = isBuilderTemplate
+    ? String(activeBuilderSheet?.title || '').trim()
+    : '';
+  const selectedSheetQuestionCount = useMemo(
+    () => templateSections.reduce((total, section) => total + ((section.questions || []).length), 0),
+    [templateSections],
+  );
   const defaultLevels = useMemo(
     () =>
       LEVEL_INFO.map((level, index) => ({
@@ -596,6 +641,7 @@ export default function FichaEscritura() {
   const [isInstitutionCatalogLoading, setIsInstitutionCatalogLoading] = useState(true);
   const [institutionCatalogError, setInstitutionCatalogError] = useState('');
   const [isInstitutionAutocompleteOpen, setIsInstitutionAutocompleteOpen] = useState(false);
+  const [activeQuestionAutocompleteId, setActiveQuestionAutocompleteId] = useState('');
   const prevDocenteRef = useRef('');
   const prevMonitorRef = useRef('');
   const institutionAutocompleteRef = useRef(null);
@@ -605,39 +651,47 @@ export default function FichaEscritura() {
     [templateSections],
   );
 
-  const institutionSuggestions = useMemo(() => {
-    const term = String(state.header.institucion || '')
-      .trim()
-      .toLowerCase();
-    if (!term) return [];
+  const getInstitutionSuggestions = useCallback(
+    (rawTerm, limit = 8) => {
+      const term = String(rawTerm || '')
+        .trim()
+        .toLowerCase();
+      if (!term) return [];
 
-    const scored = institutionCatalog
-      .map((item) => {
-        const name = String(item.nombre_ie || '');
-        const codLocal = String(item.cod_local || '');
-        const codModular = String(item.cod_modular || '');
-        const director = String(item.nombre_director || '');
-        const haystack = `${name} ${codLocal} ${codModular} ${director}`.toLowerCase();
-        if (!haystack.includes(term)) return null;
+      const scored = institutionCatalog
+        .map((item) => {
+          const name = String(item.nombre_ie || '');
+          const codLocal = String(item.cod_local || '');
+          const codModular = String(item.cod_modular || '');
+          const director = String(item.nombre_director || '');
+          const haystack = `${name} ${codLocal} ${codModular} ${director}`.toLowerCase();
+          if (!haystack.includes(term)) return null;
 
-        const startsWith =
-          name.toLowerCase().startsWith(term) ||
-          codLocal.toLowerCase().startsWith(term) ||
-          codModular.toLowerCase().startsWith(term)
-            ? 0
-            : 1;
-        return { item, score: startsWith };
-      })
-      .filter(Boolean)
-      .sort((left, right) => {
-        if (left.score !== right.score) return left.score - right.score;
-        return String(left.item.nombre_ie || '').localeCompare(String(right.item.nombre_ie || ''), 'es', {
-          sensitivity: 'base',
+          const startsWith =
+            name.toLowerCase().startsWith(term) ||
+            codLocal.toLowerCase().startsWith(term) ||
+            codModular.toLowerCase().startsWith(term)
+              ? 0
+              : 1;
+          return { item, score: startsWith };
+        })
+        .filter(Boolean)
+        .sort((left, right) => {
+          if (left.score !== right.score) return left.score - right.score;
+          return String(left.item.nombre_ie || '').localeCompare(String(right.item.nombre_ie || ''), 'es', {
+            sensitivity: 'base',
+          });
         });
-      });
 
-    return scored.slice(0, 8).map((entry) => entry.item);
-  }, [institutionCatalog, state.header.institucion]);
+      return scored.slice(0, limit).map((entry) => entry.item);
+    },
+    [institutionCatalog],
+  );
+
+  const institutionSuggestions = useMemo(
+    () => getInstitutionSuggestions(state.header.institucion, 8),
+    [getInstitutionSuggestions, state.header.institucion],
+  );
 
   const applyAutocompleteSelection = (item, fieldId) => {
     if (!item || !fieldId) return;
@@ -708,6 +762,28 @@ export default function FichaEscritura() {
     }
   };
 
+  const applyQuestionAutocompleteSelection = (questionId, item) => {
+    if (!questionId || !item) return;
+    dispatch({
+      type: 'UPDATE_QUESTION',
+      id: questionId,
+      payload: { answer: item.nombre_ie || '' },
+    });
+    setActiveQuestionAutocompleteId('');
+  };
+
+  const handleQuestionInstitutionKeyDown = (event, questionId, suggestions) => {
+    if (event.key === 'Escape') {
+      setActiveQuestionAutocompleteId((current) => (current === questionId ? '' : current));
+      return;
+    }
+
+    if (event.key === 'Enter' && suggestions.length) {
+      event.preventDefault();
+      applyQuestionAutocompleteSelection(questionId, suggestions[0]);
+    }
+  };
+
   useEffect(() => {
     let active = true;
 
@@ -758,6 +834,24 @@ export default function FichaEscritura() {
   }, [isInstitutionAutocompleteOpen]);
 
   useEffect(() => {
+    if (!activeQuestionAutocompleteId) return undefined;
+
+    const handleOutsidePointer = (event) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      const container = target.closest('[data-question-ie-autocomplete]');
+      const containerQuestionId = container?.getAttribute('data-question-ie-autocomplete') || '';
+      if (containerQuestionId === activeQuestionAutocompleteId) return;
+      setActiveQuestionAutocompleteId('');
+    };
+
+    window.addEventListener('pointerdown', handleOutsidePointer);
+    return () => {
+      window.removeEventListener('pointerdown', handleOutsidePointer);
+    };
+  }, [activeQuestionAutocompleteId]);
+
+  useEffect(() => {
     let active = true;
     const hydrateInstance = async () => {
       if (!activeInstance) return;
@@ -787,10 +881,10 @@ export default function FichaEscritura() {
       ...activeInstance,
       updated_at: now,
       status: activeInstance.status || 'in_progress',
-      data: serializeState(state),
+      data: serializeStateWithSheet(state, selectedSheetId),
     };
     upsertInstance(payload);
-  }, [activeInstance, isReadOnly, state]);
+  }, [activeInstance, isReadOnly, selectedSheetId, state]);
 
   useEffect(() => {
     if (
@@ -824,7 +918,7 @@ export default function FichaEscritura() {
 
   useEffect(() => {
     const sections = [
-      ...(showHeaderSection ? ['datos'] : []),
+      ...(showExecutionHeaderSection ? ['datos'] : []),
       ...templateSections.map((section) => section.id),
       ...(showClosingContainer ? ['cierre'] : []),
     ];
@@ -845,7 +939,22 @@ export default function FichaEscritura() {
     });
 
     return () => observer.disconnect();
-  }, [setActiveSection, showClosingContainer, showHeaderSection, templateSections]);
+  }, [setActiveSection, showClosingContainer, showExecutionHeaderSection, templateSections]);
+
+  const getFirstErrorSectionId = (errors) => {
+    if (errors.header && showExecutionHeaderSection) return 'datos';
+
+    if (errors.questions) {
+      const firstQuestionId = Object.keys(errors.questions)[0];
+      const sectionWithError = templateSections.find((section) =>
+        (section.questions || []).some((question) => String(question.id) === String(firstQuestionId)),
+      );
+      if (sectionWithError?.id) return sectionWithError.id;
+    }
+
+    if ((errors.cierre || errors.firmas) && showClosingContainer) return 'cierre';
+    return '';
+  };
 
   const handleSave = async () => {
     const errors = {};
@@ -943,22 +1052,24 @@ export default function FichaEscritura() {
 
     if (Object.keys(errors).length > 0) {
       dispatch({ type: 'SET_ERRORS', payload: errors });
+      setToast('Completa los campos obligatorios para guardar.');
+      const firstErrorSectionId = getFirstErrorSectionId(errors);
+      if (firstErrorSectionId) {
+        const target = document.getElementById(firstErrorSectionId);
+        if (target) {
+          target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          setActiveSection(firstErrorSectionId);
+        }
+      }
       return;
     }
 
     let instanceToSave = activeInstance;
     if (!instanceToSave && !isReadOnly) {
-      const reused = await findInProgressInstance(selectedTemplate?.id);
-      if (reused) {
-        instanceToSave = reused;
-        setActiveInstance(reused);
-        localStorage.setItem(INSTANCE_ACTIVE_KEY, reused.id);
-      } else {
-        const created = await createInstance(selectedTemplate?.id, templateStatus);
-        if (created) {
-          instanceToSave = created;
-          setActiveInstance(created);
-        }
+      const created = await createInstance(selectedTemplate?.id, templateStatus, selectedSheetId);
+      if (created) {
+        instanceToSave = created;
+        setActiveInstance(created);
       }
     }
 
@@ -975,7 +1086,7 @@ export default function FichaEscritura() {
         ...instanceToSave,
         updated_at: now,
         status: instanceToSave.status || 'in_progress',
-        data: serializeState(state),
+        data: serializeStateWithSheet(state, selectedSheetId),
       });
     }
   };
@@ -990,7 +1101,7 @@ export default function FichaEscritura() {
         ...activeInstance,
         updated_at: new Date().toISOString(),
         status: 'in_progress',
-        data: serializeState(createInitialState(templateSections)),
+        data: serializeStateWithSheet(createInitialState(templateSections), selectedSheetId),
       });
     }
     dispatch({ type: 'RESET', sections: templateSections });
@@ -1250,11 +1361,23 @@ export default function FichaEscritura() {
       </div>
 
       <fieldset disabled={isReadOnly} className={isReadOnly ? 'opacity-90' : ''}>
+        {isBuilderTemplate && selectedSheetQuestionCount === 0 ? (
+          <Card>
+            <p className="text-sm text-amber-200">
+              Esta ficha aun no tiene preguntas configuradas. Ve a Gestion de monitoreos (Etapa 6 y 7) y agrega secciones/preguntas para esta ficha.
+            </p>
+          </Card>
+        ) : null}
+
         <Card>
-          <SectionHeader eyebrow="Formulario" title={formTitle} />
+          <SectionHeader
+            eyebrow="Formulario"
+            title={formTitle}
+            description={selectedSheetLabel ? `Ficha seleccionada: ${selectedSheetLabel}` : undefined}
+          />
         </Card>
 
-      {showHeaderSection ? (
+      {showExecutionHeaderSection ? (
         <section id="datos" className="scroll-mt-28">
           <Card className="flex flex-col gap-6">
             <SectionHeader
@@ -1383,6 +1506,13 @@ export default function FichaEscritura() {
                     : [];
                 const showObservation = question.allowObservation !== false;
                 const isDisabled = data.answer !== 'SI';
+                const useInstitutionPredictor =
+                  questionKind === 'text' &&
+                  (question.sourcePredictiveSearch === true || question.predictiveSearch === true);
+                const questionInstitutionSuggestions = useInstitutionPredictor
+                  ? getInstitutionSuggestions(data.answer || '', 8)
+                  : [];
+                const isQuestionAutocompleteOpen = activeQuestionAutocompleteId === question.id;
                 return (
                   <div key={question.id} className="rounded-2xl border border-slate-800/70 bg-slate-950/40 p-5">
                     <div className="flex flex-col gap-4">
@@ -1529,19 +1659,96 @@ export default function FichaEscritura() {
 
                     {questionKind === 'text' ? (
                       <div className="mt-4 flex flex-col gap-4">
-                        <Textarea
-                          id={`${question.id}-text`}
-                          label="Respuesta"
-                          value={data.answer || ''}
-                          onChange={(event) =>
-                            dispatch({
-                              type: 'UPDATE_QUESTION',
-                              id: question.id,
-                              payload: { answer: event.target.value },
-                            })
-                          }
-                          placeholder="Escribe tu respuesta..."
-                        />
+                        {useInstitutionPredictor ? (
+                          <div
+                            className="flex flex-col gap-1.5 text-[14px] leading-[1.5] text-slate-200"
+                            data-question-ie-autocomplete={question.id}
+                          >
+                            <span className="text-[10px] uppercase tracking-[0.16em] text-slate-400">
+                              Respuesta (buscador de IE)
+                            </span>
+                            <div className="relative">
+                              <input
+                                id={`${question.id}-text`}
+                                value={data.answer || ''}
+                                onChange={(event) => {
+                                  dispatch({
+                                    type: 'UPDATE_QUESTION',
+                                    id: question.id,
+                                    payload: { answer: event.target.value },
+                                  });
+                                  setActiveQuestionAutocompleteId(question.id);
+                                }}
+                                onFocus={() => setActiveQuestionAutocompleteId(question.id)}
+                                onBlur={() => {
+                                  setTimeout(() => {
+                                    setActiveQuestionAutocompleteId((current) =>
+                                      current === question.id ? '' : current);
+                                  }, 120);
+                                }}
+                                onKeyDown={(event) =>
+                                  handleQuestionInstitutionKeyDown(
+                                    event,
+                                    question.id,
+                                    questionInstitutionSuggestions,
+                                  )
+                                }
+                                placeholder="Escribe el nombre de la I.E."
+                                autoComplete="off"
+                                className="h-9 w-full rounded-xl border border-slate-700/60 bg-slate-900/70 px-3 text-[14px] leading-[1.5] text-slate-100 placeholder:text-slate-500 focus:border-cyan-400 focus:outline-none focus:ring-2 focus:ring-cyan-500/30"
+                              />
+                              {isQuestionAutocompleteOpen && String(data.answer || '').trim() ? (
+                                <div className="absolute left-0 right-0 z-30 mt-1.5 overflow-hidden rounded-xl border border-slate-700/80 bg-slate-950/95 shadow-[0_12px_34px_rgba(2,6,23,0.45)]">
+                                  {isInstitutionCatalogLoading ? (
+                                    <p className="px-3 py-2 text-sm text-slate-400">Cargando instituciones...</p>
+                                  ) : questionInstitutionSuggestions.length ? (
+                                    <div className="max-h-72 overflow-y-auto">
+                                      {questionInstitutionSuggestions.map((item) => (
+                                        <button
+                                          key={`question-ie-suggestion-${question.id}-${item.id}`}
+                                          type="button"
+                                          onMouseDown={(event) => event.preventDefault()}
+                                          onClick={() =>
+                                            applyQuestionAutocompleteSelection(question.id, item)
+                                          }
+                                          className="flex w-full flex-col gap-1 border-b border-slate-800/80 px-3 py-2 text-left last:border-b-0 hover:bg-slate-900/70"
+                                        >
+                                          <span className="truncate text-sm font-semibold text-slate-100">
+                                            {item.nombre_ie}
+                                          </span>
+                                          <span className="truncate text-xs text-slate-400">
+                                            Cod. modular: {item.cod_modular || '-'} | Cod. local:{' '}
+                                            {item.cod_local || '-'} | {item.distrito || '-'} |{' '}
+                                            {formatInstitutionLevel(item.nivel)} | {item.modalidad || '-'}
+                                          </span>
+                                        </button>
+                                      ))}
+                                    </div>
+                                  ) : (
+                                    <p className="px-3 py-2 text-sm text-slate-400">No se encontraron IE.</p>
+                                  )}
+                                </div>
+                              ) : null}
+                            </div>
+                            {institutionCatalogError ? (
+                              <span className="text-xs text-amber-300">{institutionCatalogError}</span>
+                            ) : null}
+                          </div>
+                        ) : (
+                          <Textarea
+                            id={`${question.id}-text`}
+                            label="Respuesta"
+                            value={data.answer || ''}
+                            onChange={(event) =>
+                              dispatch({
+                                type: 'UPDATE_QUESTION',
+                                id: question.id,
+                                payload: { answer: event.target.value },
+                              })
+                            }
+                            placeholder="Escribe tu respuesta..."
+                          />
+                        )}
                         {showObservation ? (
                           <Textarea
                             id={`${question.id}-obs`}
@@ -1882,10 +2089,3 @@ export default function FichaEscritura() {
     </div>
   );
 }
-
-
-
-
-
-
-

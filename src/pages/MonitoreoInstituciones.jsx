@@ -33,6 +33,7 @@ const EMPTY_FORM = {
 };
 
 const PAGE_SIZE = 10;
+const DB_FETCH_BATCH_SIZE = 1000;
 
 const formatLevelLabel = (value) => {
   if (value === 'inicial_cuna_jardin') return 'INICIAL CUNA JARDIN';
@@ -40,6 +41,7 @@ const formatLevelLabel = (value) => {
   if (value === 'inicial') return 'INICIAL JARDIN';
   if (value === 'primaria') return 'PRIMARIA';
   if (value === 'secundaria') return 'SECUNDARIA';
+  if (value === 'tecnico_productiva') return 'TECNICO PRODUCTIVA';
   return '-';
 };
 
@@ -120,22 +122,45 @@ export default function MonitoreoInstituciones() {
     setLoading(true);
     setError('');
 
-    const { data, error: fetchError } = await supabase
-      .from('educational_institutions')
-      .select('*')
-      .order('updated_at', { ascending: false });
+    try {
+      let from = 0;
+      const accumulatedInstitutions = [];
 
-    if (fetchError) {
-      const message = fetchError.message || 'No se pudieron cargar las instituciones educativas.';
+      while (true) {
+        const to = from + DB_FETCH_BATCH_SIZE - 1;
+
+        const { data, error: fetchError } = await supabase
+          .from('educational_institutions')
+          .select('*')
+          .order('updated_at', { ascending: false })
+          .order('id', { ascending: false })
+          .range(from, to);
+
+        if (fetchError) {
+          throw new Error(fetchError.message || 'No se pudieron cargar las instituciones educativas.');
+        }
+
+        const chunk = data || [];
+        if (!chunk.length) break;
+
+        accumulatedInstitutions.push(...chunk);
+
+        if (chunk.length < DB_FETCH_BATCH_SIZE) break;
+        from += DB_FETCH_BATCH_SIZE;
+      }
+
+      setInstitutions(accumulatedInstitutions);
+    } catch (loadError) {
+      const message =
+        loadError instanceof Error
+          ? loadError.message
+          : 'No se pudieron cargar las instituciones educativas.';
       setError(message);
       showToast(message, 'error');
       setInstitutions([]);
+    } finally {
       setLoading(false);
-      return;
     }
-
-    setInstitutions(data || []);
-    setLoading(false);
   };
 
   useEffect(() => {
@@ -164,21 +189,27 @@ export default function MonitoreoInstituciones() {
     setHighlightedInstitutionId('');
   }, [search]);
 
-  const districtOptions = useMemo(
-    () =>
-      Array.from(
-        new Set(institutions.map((item) => normalizeText(item.distrito)).filter(Boolean)),
-      ).sort((left, right) => left.localeCompare(right, 'es', { sensitivity: 'base' })),
-    [institutions],
-  );
+  const districtOptions = useMemo(() => {
+    const collator = new Intl.Collator('es', { sensitivity: 'base', numeric: true });
+    return Array.from(
+      new Set(institutions.map((item) => normalizeText(item.distrito)).filter(Boolean)),
+    ).sort((left, right) => collator.compare(left, right));
+  }, [institutions]);
 
-  const reiOptions = useMemo(
-    () =>
-      Array.from(new Set(institutions.map((item) => normalizeText(item.rei)).filter(Boolean))).sort(
-        (left, right) => left.localeCompare(right, 'es', { sensitivity: 'base' }),
-      ),
-    [institutions],
-  );
+  const reiOptions = useMemo(() => {
+    const collator = new Intl.Collator('es', { sensitivity: 'base', numeric: true });
+    return Array.from(new Set(institutions.map((item) => normalizeText(item.rei)).filter(Boolean))).sort(
+      (left, right) => {
+        const leftIsSinRei = left.toUpperCase() === 'SIN REI';
+        const rightIsSinRei = right.toUpperCase() === 'SIN REI';
+
+        if (leftIsSinRei && !rightIsSinRei) return -1;
+        if (!leftIsSinRei && rightIsSinRei) return 1;
+
+        return collator.compare(left, right);
+      },
+    );
+  }, [institutions]);
 
   const summary = useMemo(() => {
     const base = {
@@ -602,11 +633,6 @@ export default function MonitoreoInstituciones() {
           <option key={item} value={item} />
         ))}
       </datalist>
-      <datalist id="rei-catalog">
-        {reiOptions.map((item) => (
-          <option key={item} value={item} />
-        ))}
-      </datalist>
 
       <Card className="flex flex-col gap-6">
         <button
@@ -668,15 +694,22 @@ export default function MonitoreoInstituciones() {
                   placeholder="Solo numeros"
                   error={fieldErrors.codModular}
                 />
-                <Input
+                <Select
                   id="reiIe"
                   label="REI"
                   value={form.rei}
                   onChange={(event) => setForm((prev) => ({ ...prev, rei: event.target.value }))}
-                  placeholder="REI"
-                  list="rei-catalog"
                   error={fieldErrors.rei}
-                />
+                >
+                  <option value="" disabled>
+                    Selecciona REI
+                  </option>
+                  {reiOptions.map((item) => (
+                    <option key={item} value={item}>
+                      {item}
+                    </option>
+                  ))}
+                </Select>
 
                 <Select
                   id="nivelIe"
@@ -689,6 +722,7 @@ export default function MonitoreoInstituciones() {
                   <option value="inicial_jardin">INICIAL JARDIN</option>
                   <option value="primaria">PRIMARIA</option>
                   <option value="secundaria">SECUNDARIA</option>
+                  <option value="tecnico_productiva">TECNICO PRODUCTIVA</option>
                 </Select>
                 <Select
                   id="modalidadIe"
@@ -858,6 +892,7 @@ export default function MonitoreoInstituciones() {
               <option value="inicial_jardin">INICIAL JARDIN</option>
               <option value="primaria">PRIMARIA</option>
               <option value="secundaria">SECUNDARIA</option>
+              <option value="tecnico_productiva">TECNICO PRODUCTIVA</option>
             </Select>
             <Select
               id="filterModalidad"

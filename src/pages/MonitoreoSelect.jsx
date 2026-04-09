@@ -7,6 +7,7 @@ import MonitoreoCard from '../components/monitoreos/MonitoreoCard.jsx';
 import { supabase } from '../lib/supabase.js';
 
 const AUTH_KEY = 'monitoreoAuth';
+const TEMPLATE_SHEET_KEY = 'monitoreoTemplateSheetSelected';
 
 const getTemplateStatus = (template) => {
   const status = template.availability ? template.availability.status || 'scheduled' : 'active';
@@ -73,6 +74,36 @@ const selectTemplate = (templateId) => {
   }
 };
 
+const selectTemplateSheet = (sheetId) => {
+  if (sheetId) {
+    localStorage.setItem(TEMPLATE_SHEET_KEY, sheetId);
+  } else {
+    localStorage.removeItem(TEMPLATE_SHEET_KEY);
+  }
+};
+
+const getTemplateSheets = (template) => {
+  const rows = Array.isArray(template?.levelsConfig?.builder?.sheets)
+    ? template.levelsConfig.builder.sheets
+    : [];
+  const sections = Array.isArray(template?.sections) ? template.sections : [];
+  return rows
+    .map((sheet, index) => {
+      const id = String(sheet?.id || '').trim();
+      const questionCount = sections
+        .filter((section) => section?.sheetId === id)
+        .reduce((total, section) => total + ((section.questions || []).length), 0);
+      return {
+        id,
+        title: String(sheet?.title || '').trim() || `Ficha ${index + 1}`,
+        code: String(sheet?.code || '').trim(),
+        subtitle: String(sheet?.subtitle || '').trim(),
+        questionCount,
+      };
+    })
+    .filter((sheet) => sheet.id);
+};
+
 const countQuestions = (sections = []) =>
   sections.reduce((total, section) => total + (section.questions?.length || 0), 0);
 
@@ -101,6 +132,13 @@ export default function MonitoreoSelect() {
     description: '',
     tone: 'warning',
   });
+  const [sheetSelection, setSheetSelection] = useState({
+    open: false,
+    template: null,
+    sheets: [],
+    selectedSheetId: '',
+  });
+  const [isOpeningTemplate, setIsOpeningTemplate] = useState(false);
 
   const openNoticeModal = (title, description, tone = 'warning') => {
     setNoticeModal({
@@ -229,7 +267,7 @@ export default function MonitoreoSelect() {
     return source.slice().sort(compareTemplatesForDisplay);
   }, [isAdmin, showDrafts, templates]);
 
-  const createInstanceForTemplate = async (template) => {
+  const createInstanceForTemplate = async (template, selectedSheetId = '') => {
     if (template.status !== 'published') {
       openNoticeModal(
         'Monitoreo no disponible',
@@ -257,18 +295,6 @@ export default function MonitoreoSelect() {
       );
       return false;
     }
-    const { data: existing, error: existingError } = await supabase
-      .from('monitoring_instances')
-      .select('*')
-      .eq('template_id', template.id)
-      .eq('created_by', userId)
-      .eq('status', 'in_progress')
-      .order('updated_at', { ascending: false })
-      .limit(1);
-    if (!existingError && existing?.length) {
-      localStorage.setItem('monitoreoInstanceActive', existing[0].id);
-      return true;
-    }
     const now = new Date().toISOString();
     const { data, error } = await supabase
       .from('monitoring_instances')
@@ -277,7 +303,11 @@ export default function MonitoreoSelect() {
           template_id: template.id,
           created_by: userId,
           status: 'in_progress',
-          data: null,
+          data: {
+            meta: {
+              selectedSheetId: selectedSheetId || null,
+            },
+          },
           created_at: now,
           updated_at: now,
         },
@@ -297,10 +327,64 @@ export default function MonitoreoSelect() {
     return true;
   };
 
-  const handleUseTemplate = async (template) => {
+  const launchTemplate = async (template, sheetId = '') => {
+    setIsOpeningTemplate(true);
     selectTemplate(template.id);
-    const created = await createInstanceForTemplate(template);
-    if (created) navigate('/monitoreo/ficha-escritura');
+    selectTemplateSheet(sheetId);
+    const created = await createInstanceForTemplate(template, sheetId);
+    setIsOpeningTemplate(false);
+    if (created) {
+      setSheetSelection({
+        open: false,
+        template: null,
+        sheets: [],
+        selectedSheetId: '',
+      });
+      navigate('/monitoreo/ficha-escritura');
+    }
+  };
+
+  const handleUseTemplate = async (template) => {
+    const sheets = getTemplateSheets(template);
+    if (sheets.length > 1) {
+      const storedSheetId = localStorage.getItem(TEMPLATE_SHEET_KEY) || '';
+      const selectedSheetId = sheets.some((sheet) => sheet.id === storedSheetId)
+        ? storedSheetId
+        : sheets[0].id;
+      setSheetSelection({
+        open: true,
+        template,
+        sheets,
+        selectedSheetId,
+      });
+      return;
+    }
+
+    await launchTemplate(template, sheets[0]?.id || '');
+  };
+
+  const closeSheetSelection = () => {
+    if (isOpeningTemplate) return;
+    setSheetSelection({
+      open: false,
+      template: null,
+      sheets: [],
+      selectedSheetId: '',
+    });
+  };
+
+  const handleConfirmSheetSelection = async () => {
+    if (!sheetSelection.template || !sheetSelection.selectedSheetId) return;
+    const selectedSheet = sheetSelection.sheets.find((sheet) => sheet.id === sheetSelection.selectedSheetId);
+    if (!selectedSheet || selectedSheet.questionCount <= 0) {
+      openNoticeModal(
+        'Ficha sin preguntas',
+        'La ficha seleccionada aun no tiene preguntas. Configurala en Gestion (Etapa 6 y 7) antes de usarla.',
+        'warning',
+      );
+      return;
+    }
+    await launchTemplate(sheetSelection.template, sheetSelection.selectedSheetId);
   };
 
   const handleDuplicate = async (template) => {
@@ -535,6 +619,97 @@ export default function MonitoreoSelect() {
         onCancel={closeNoticeModal}
         onConfirm={closeNoticeModal}
       />
+
+      {sheetSelection.open ? (
+        <div
+          className="ds-modal-backdrop z-50"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Seleccionar ficha"
+          onClick={closeSheetSelection}
+        >
+          <div
+            className="ds-modal-surface m-4 w-full max-w-2xl p-5"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="space-y-1">
+              <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Seleccion de ficha</p>
+              <h2 className="text-lg font-semibold text-slate-100">
+                {sheetSelection.template?.title || 'Monitoreo'}
+              </h2>
+              <p className="text-sm text-slate-300">
+                Este monitoreo tiene varias fichas. Elige cual deseas completar ahora.
+              </p>
+            </div>
+
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              {sheetSelection.sheets.map((sheet) => {
+                const isSelected = sheet.id === sheetSelection.selectedSheetId;
+                const isEmpty = sheet.questionCount <= 0;
+                return (
+                  <button
+                    key={sheet.id}
+                    type="button"
+                    onClick={() =>
+                      setSheetSelection((prev) => ({ ...prev, selectedSheetId: sheet.id }))
+                    }
+                    className={`rounded-xl border px-4 py-3 text-left transition ${
+                      isSelected
+                        ? 'border-cyan-400/60 bg-cyan-500/10 text-cyan-50'
+                        : 'border-slate-700/70 bg-slate-900/50 text-slate-200 hover:border-slate-500/80'
+                    }`}
+                  >
+                    <p className="text-sm font-semibold">{sheet.title}</p>
+                    {sheet.code ? <p className="text-xs text-slate-400">Codigo: {sheet.code}</p> : null}
+                    <p className={`text-xs ${isEmpty ? 'text-amber-300' : 'text-slate-400'}`}>
+                      {sheet.questionCount} preguntas configuradas
+                    </p>
+                    {sheet.subtitle ? <p className="mt-1 text-xs text-slate-400">{sheet.subtitle}</p> : null}
+                  </button>
+                );
+              })}
+            </div>
+
+            {(() => {
+              const selectedSheet = sheetSelection.sheets.find(
+                (sheet) => sheet.id === sheetSelection.selectedSheetId,
+              );
+              if (!selectedSheet || selectedSheet.questionCount > 0) return null;
+              return (
+                <p className="mt-3 text-sm text-amber-200">
+                  La ficha seleccionada no tiene preguntas. Debes configurarla en Gestion de monitoreos (Etapa 6 y 7).
+                </p>
+              );
+            })()}
+
+            <div className="mt-5 flex flex-wrap justify-end gap-3">
+              <button
+                type="button"
+                onClick={closeSheetSelection}
+                className="ds-btn ds-btn-ghost min-w-[110px]"
+                disabled={isOpeningTemplate}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmSheetSelection}
+                className="ds-btn ds-btn-primary min-w-[180px]"
+                disabled={
+                  isOpeningTemplate ||
+                  !sheetSelection.selectedSheetId ||
+                  !sheetSelection.sheets.some(
+                    (sheet) =>
+                      sheet.id === sheetSelection.selectedSheetId && sheet.questionCount > 0,
+                  )
+                }
+              >
+                {isOpeningTemplate ? 'Abriendo ficha...' : 'Continuar con esta ficha'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
