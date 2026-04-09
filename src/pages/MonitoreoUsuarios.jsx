@@ -14,6 +14,7 @@ import {
   UserCheck,
   UserX,
 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import Card from '../components/ui/Card.jsx';
 import ConfirmModal from '../components/ui/ConfirmModal.jsx';
 import Input from '../components/ui/Input.jsx';
@@ -34,9 +35,6 @@ const emptyForm = {
 };
 
 const PASSWORD_LENGTH = 9;
-const SUPABASE_FUNCTIONS_BASE_URL = import.meta.env.VITE_SUPABASE_URL || '';
-const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
-
 const buildFullName = (firstName, lastName) => `${firstName || ''} ${lastName || ''}`.trim();
 const pickRandom = (chars) => chars[Math.floor(Math.random() * chars.length)];
 
@@ -59,15 +57,14 @@ const buildTempPassword = () => {
 };
 
 const hasMinPasswordLength = (value) => Boolean(value) && value.length >= 6;
-const sanitizeJwt = (token) =>
-  String(token || '')
-    .trim()
-    .replace(/^"+|"+$/g, '')
-    .split(',')[0]
-    .trim();
-const isJwtLike = (token) => sanitizeJwt(token).split('.').length === 3;
-
+const sanitizeDocumentByType = (docType, value) => {
+  const raw = String(value || '');
+  if (docType === 'DNI') return raw.replace(/\D/g, '').slice(0, 8);
+  if (docType === 'CE') return raw.replace(/\D/g, '').slice(0, 9);
+  return raw.trim();
+};
 export default function MonitoreoUsuarios() {
+  const navigate = useNavigate();
   const isAdmin = useMemo(() => {
     try {
       const stored = JSON.parse(localStorage.getItem('monitoreoAuth'));
@@ -170,42 +167,36 @@ export default function MonitoreoUsuarios() {
   };
 
   const getValidAccessToken = async ({ forceRefresh = false } = {}) => {
-    const readSessionToken = async () => {
-      const { data, error } = await supabase.auth.getSession();
-      if (error) {
-        console.error('Admin-users: getSession error', error);
-        return '';
-      }
-      return sanitizeJwt(data?.session?.access_token);
-    };
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const expiryLeewaySeconds = 60;
+    const readSession = forceRefresh ? await supabase.auth.refreshSession() : await supabase.auth.getSession();
 
-    const refreshToken = async () => {
+    if (readSession.error) {
+      console.error(`Admin-users: ${forceRefresh ? 'refreshSession' : 'getSession'} error`, readSession.error);
+      return '';
+    }
+
+    let session = readSession.data?.session || null;
+    if (!session?.access_token) {
       const refreshed = await supabase.auth.refreshSession();
       if (refreshed.error) {
         console.error('Admin-users: refreshSession error', refreshed.error);
         return '';
       }
-      return sanitizeJwt(refreshed.data?.session?.access_token);
-    };
-
-    const verifyTokenUser = async (token) => {
-      if (!token || !isJwtLike(token)) return false;
-      const { data, error } = await supabase.auth.getUser(token);
-      return !error && Boolean(data?.user?.id);
-    };
-
-    let token = forceRefresh ? await refreshToken() : await readSessionToken();
-    if (!isJwtLike(token)) token = await refreshToken();
-    if (!isJwtLike(token)) return '';
-
-    let isValid = await verifyTokenUser(token);
-    if (!isValid) {
-      token = await refreshToken();
-      if (!isJwtLike(token)) return '';
-      isValid = await verifyTokenUser(token);
+      session = refreshed.data?.session || null;
     }
 
-    return isValid ? token : '';
+    const expiresAt = Number(session?.expires_at || 0);
+    if (!forceRefresh && session?.access_token && expiresAt && expiresAt <= nowSeconds + expiryLeewaySeconds) {
+      const refreshed = await supabase.auth.refreshSession();
+      if (refreshed.error) {
+        console.error('Admin-users: refreshSession error', refreshed.error);
+        return '';
+      }
+      session = refreshed.data?.session || null;
+    }
+
+    return session?.access_token || '';
   };
 
   const ensureAuthSession = async () => {
@@ -222,8 +213,8 @@ export default function MonitoreoUsuarios() {
     /401|invalid jwt|jwt|unauthorized|authorization/i.test(String(fnError?.message || ''));
 
   const invokeAdminUsers = async (body) => {
-    const token = await getValidAccessToken();
-    if (!token) {
+    const initialToken = await getValidAccessToken();
+    if (!initialToken) {
       return {
         data: null,
         error: {
@@ -233,50 +224,21 @@ export default function MonitoreoUsuarios() {
       };
     }
 
-    if (!SUPABASE_FUNCTIONS_BASE_URL || !SUPABASE_ANON_KEY) {
-      return {
-        data: null,
-        error: {
-          message: 'Falta configurar VITE_SUPABASE_URL o VITE_SUPABASE_ANON_KEY.',
-          context: { status: 500, statusText: 'Env missing' },
-        },
-      };
-    }
-
-    const invokeWithToken = async (accessToken) => {
+    const invokeWithCurrentSession = async (accessToken) => {
       try {
-        const response = await fetch(`${SUPABASE_FUNCTIONS_BASE_URL}/functions/v1/admin-users`, {
-          method: 'POST',
-          headers: {
-            'x-client-authorization': `Bearer ${sanitizeJwt(accessToken)}`,
-            apikey: SUPABASE_ANON_KEY,
-            'Content-Type': 'application/json',
+        supabase.functions.setAuth(accessToken);
+        const { data, error } = await supabase.functions.invoke('admin-users', {
+          body: {
+            ...(body || {}),
+            access_token: accessToken,
           },
-          body: JSON.stringify(body || {}),
         });
 
-        let payload = null;
-        try {
-          payload = await response.json();
-        } catch {
-          payload = null;
+        if (error) {
+          return { data, error };
         }
 
-        if (!response.ok) {
-          return {
-            data: payload,
-            error: {
-              message: payload?.error || payload?.message || response.statusText || 'Error en Edge Function.',
-              context: {
-                status: response.status,
-                statusText: response.statusText,
-                body: payload,
-              },
-            },
-          };
-        }
-
-        return { data: payload, error: null };
+        return { data, error: null };
       } catch (networkError) {
         return {
           data: null,
@@ -288,7 +250,7 @@ export default function MonitoreoUsuarios() {
       }
     };
 
-    let response = await invokeWithToken(token);
+    let response = await invokeWithCurrentSession(initialToken);
     if (!response.error || !isFunctionsUnauthorizedError(response.error)) {
       return response;
     }
@@ -298,7 +260,7 @@ export default function MonitoreoUsuarios() {
       return response;
     }
 
-    response = await invokeWithToken(refreshedToken);
+    response = await invokeWithCurrentSession(refreshedToken);
     return response;
   };
 
@@ -323,11 +285,14 @@ export default function MonitoreoUsuarios() {
 
     const sessionReady = await ensureAuthSession();
     if (!sessionReady) {
-      const message = 'Sesión inválida. Vuelve a iniciar sesión.';
+      localStorage.removeItem('monitoreoAuth');
+      localStorage.removeItem('monitoreoProfile');
+      const message = 'Sesion invalida. Vuelve a iniciar sesion.';
       setError(message);
       showToast(message, 'error');
       setUsers([]);
       setLoading(false);
+      navigate('/login', { replace: true });
       return;
     }
 
@@ -335,7 +300,12 @@ export default function MonitoreoUsuarios() {
 
     if (fnError) {
       if (isFunctionsUnauthorizedError(fnError)) {
-        const message = 'No se pudo validar tu sesión para cargar Equipo. Vuelve a intentar o cierra sesión manualmente.';
+        const details = await readFunctionError(fnError);
+        const message =
+          details ||
+          data?.error ||
+          data?.message ||
+          'No se pudo validar tu sesion para cargar Equipo. Revisa la configuracion de Edge Function.';
         console.error('Usuarios list unauthorized', fnError);
         setError(message);
         showToast(message, 'error');
@@ -534,7 +504,7 @@ export default function MonitoreoUsuarios() {
       role: user.role || 'user',
       status: user.status || 'active',
       docType: user.doc_type || 'DNI',
-      docNumber: user.doc_number || '',
+      docNumber: sanitizeDocumentByType(user.doc_type || 'DNI', user.doc_number || ''),
       password: '',
     });
     setTempPassword('');
@@ -893,11 +863,38 @@ export default function MonitoreoUsuarios() {
                       <Input id="email" label="Correo institucional" value={form.email} onChange={(event) => setForm((prev) => ({ ...prev, email: event.target.value }))} placeholder="usuario@ugel.gob.pe" />
 
                       <div className="grid gap-3 sm:grid-cols-2">
-                        <Select id="docType" label="Tipo documento" value={form.docType} onChange={(event) => setForm((prev) => ({ ...prev, docType: event.target.value }))}>
+                        <Select
+                          id="docType"
+                          label="Tipo documento"
+                          value={form.docType}
+                          onChange={(event) =>
+                            setForm((prev) => {
+                              const nextDocType = event.target.value;
+                              return {
+                                ...prev,
+                                docType: nextDocType,
+                                docNumber: sanitizeDocumentByType(nextDocType, prev.docNumber),
+                              };
+                            })
+                          }
+                        >
                           <option value="DNI">DNI</option>
                           <option value="CE">CE</option>
                         </Select>
-                        <Input id="docNumber" label="Documento" value={form.docNumber} onChange={(event) => setForm((prev) => ({ ...prev, docNumber: event.target.value }))} placeholder={form.docType === 'DNI' ? '8 dígitos' : 'Documento'} />
+                        <Input
+                          id="docNumber"
+                          label="Documento"
+                          value={form.docNumber}
+                          onChange={(event) =>
+                            setForm((prev) => ({
+                              ...prev,
+                              docNumber: sanitizeDocumentByType(prev.docType, event.target.value),
+                            }))
+                          }
+                          inputMode="numeric"
+                          maxLength={form.docType === 'DNI' ? 8 : 9}
+                          placeholder={form.docType === 'DNI' ? '8 digitos' : '9 digitos'}
+                        />
                       </div>
 
                       <label className="flex flex-col gap-2 text-sm text-slate-200">
@@ -996,43 +993,49 @@ export default function MonitoreoUsuarios() {
                   const isProtectedAdmin = isUserProtectedLastAdmin(user);
                   const isOwnAccount = currentProfile?.id === rowId;
                   return (
-                    <div key={rowId} className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-slate-800/70 bg-slate-950/40 p-4 text-sm">
+                    <div key={rowId} className="rounded-xl border border-slate-800/70 bg-slate-950/40 p-4 text-sm">
                       <div className="space-y-1">
                         <p
                           title={user.full_name || `${user.first_name || ''} ${user.last_name || ''}`.trim()}
-                          className="max-w-[48ch] truncate text-sm font-semibold text-slate-100"
+                          className="text-sm font-semibold text-slate-100 sm:max-w-[48ch] sm:truncate"
                         >
                           {user.full_name || `${user.first_name || ''} ${user.last_name || ''}`.trim()}
                         </p>
-                        <p title={user.email || 'Sin correo'} className="max-w-[48ch] truncate text-xs text-slate-400">
+                        <p title={user.email || 'Sin correo'} className="break-all text-xs text-slate-400 sm:max-w-[48ch] sm:truncate">
                           {user.email || 'Sin correo'}
                         </p>
                         <p className="text-xs text-slate-500">Creado: {user.created_at ? new Date(user.created_at).toLocaleDateString() : '-'}</p>
                       </div>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="rounded-full border border-slate-700/60 bg-slate-900/60 px-3 py-1 text-xs text-slate-300">{user.role === 'admin' ? 'Administrador' : 'Especialista'}</span>
-                        <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${user.status === 'active' ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200' : 'border-amber-500/40 bg-amber-500/10 text-amber-200'}`}>{user.status === 'active' ? 'Activo' : 'Desactivado'}</span>
-                        <button type="button" onClick={() => handleEdit(user)} className="inline-flex items-center gap-2 rounded-full border border-slate-700/60 px-4 py-2 text-xs font-semibold text-slate-300 transition hover:border-slate-500" title="Editar usuario"><Pencil size={14} />Editar</button>
-                        <button type="button" onClick={() => openDetailsModal(user)} className="inline-flex items-center gap-2 rounded-full border border-slate-700/60 px-4 py-2 text-xs font-semibold text-slate-200 transition hover:border-slate-500" title="Ver detalles"><Eye size={14} />Ver</button>
+                      <div className="mt-3 flex flex-wrap items-center gap-2">
+                        <span className="rounded-full border border-slate-700/60 bg-slate-900/60 px-3 py-1 text-xs text-slate-300">
+                          {user.role === 'admin' ? 'Administrador' : 'Especialista'}
+                        </span>
+                        <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${user.status === 'active' ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200' : 'border-amber-500/40 bg-amber-500/10 text-amber-200'}`}>
+                          {user.status === 'active' ? 'Activo' : 'Desactivado'}
+                        </span>
+                      </div>
+                      <div className="mt-3 grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center">
+                        <button type="button" onClick={() => handleEdit(user)} className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-slate-700/60 px-3 py-2 text-xs font-semibold text-slate-300 transition hover:border-slate-500 sm:w-auto sm:rounded-full sm:px-4" title="Editar usuario"><Pencil size={14} />Editar</button>
+                        <button type="button" onClick={() => openDetailsModal(user)} className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-slate-700/60 px-3 py-2 text-xs font-semibold text-slate-200 transition hover:border-slate-500 sm:w-auto sm:rounded-full sm:px-4" title="Ver detalles"><Eye size={14} />Ver</button>
                         {user.status === 'active' ? (
                           <button
                             type="button"
                             onClick={() => setDisableTarget({ ...user, id: rowId })}
                             disabled={isProtectedAdmin}
-                            className="inline-flex items-center gap-2 rounded-full border border-amber-500/30 px-4 py-2 text-xs font-semibold text-amber-200 transition hover:border-amber-400/60 disabled:cursor-not-allowed disabled:opacity-50"
+                            className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-amber-500/30 px-3 py-2 text-xs font-semibold text-amber-200 transition hover:border-amber-400/60 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto sm:rounded-full sm:px-4"
                             title={isProtectedAdmin ? 'No puedes desactivar al último administrador activo' : 'Desactivar usuario'}
                           >
                             <UserX size={14} />
                             Desactivar
                           </button>
                         ) : (
-                          <button type="button" onClick={() => handleActivate(user)} className="inline-flex items-center gap-2 rounded-full border border-emerald-500/30 px-4 py-2 text-xs font-semibold text-emerald-200 transition hover:border-emerald-400/60" title="Activar usuario"><UserCheck size={14} />Activar</button>
+                          <button type="button" onClick={() => handleActivate(user)} className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-emerald-500/30 px-3 py-2 text-xs font-semibold text-emerald-200 transition hover:border-emerald-400/60 sm:w-auto sm:rounded-full sm:px-4" title="Activar usuario"><UserCheck size={14} />Activar</button>
                         )}
                         <button
                           type="button"
                           onClick={() => openDeleteModal(user)}
                           disabled={isOwnAccount || isProtectedAdmin}
-                          className="inline-flex items-center gap-2 rounded-full border border-rose-500/35 px-4 py-2 text-xs font-semibold text-rose-200 transition hover:border-rose-400/60 disabled:cursor-not-allowed disabled:opacity-50"
+                          className="col-span-2 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-rose-500/35 px-3 py-2 text-xs font-semibold text-rose-200 transition hover:border-rose-400/60 disabled:cursor-not-allowed disabled:opacity-50 sm:col-span-1 sm:w-auto sm:rounded-full sm:px-4"
                           title={
                             isOwnAccount
                               ? 'No puedes eliminar tu propia cuenta'

@@ -6,6 +6,7 @@ import Select from '../components/ui/Select.jsx';
 import { isSupabaseConfigured, supabase } from '../lib/supabase.js';
 
 const AUTH_KEY = 'monitoreoAuth';
+const PROFILE_KEY = 'monitoreoProfile';
 const SESSION_LOGOUT_REASON_KEY = 'monitoreoSessionLogoutReason';
 const SESSION_LOGOUT_REASON_INACTIVITY = 'inactivity';
 const EMAIL_DOMAIN_OPTIONS = ['ugel.gob.pe', 'gmail.com', 'outlook.com', 'hotmail.com'];
@@ -170,10 +171,30 @@ export default function Login() {
   };
 
   useEffect(() => {
-    const stored = getStoredAuth();
-    if (stored?.role) {
-      navigate('/monitoreo/inicio', { replace: true });
-    }
+    let active = true;
+
+    const validateStoredAccess = async () => {
+      const stored = getStoredAuth();
+      if (!stored?.role) return;
+
+      const { data, error } = await supabase.auth.getSession();
+      const session = data?.session || null;
+      if (error || !session?.access_token) {
+        localStorage.removeItem(AUTH_KEY);
+        localStorage.removeItem(PROFILE_KEY);
+        return;
+      }
+
+      if (active) {
+        navigate('/monitoreo/inicio', { replace: true });
+      }
+    };
+
+    validateStoredAccess();
+
+    return () => {
+      active = false;
+    };
   }, [navigate]);
 
   useEffect(() => {
