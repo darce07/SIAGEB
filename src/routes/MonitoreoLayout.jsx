@@ -47,6 +47,8 @@ const SESSION_LOGOUT_REASON_KEY = 'monitoreoSessionLogoutReason';
 const SESSION_LOGOUT_REASON_INACTIVITY = 'inactivity';
 const SESSION_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
 const SESSION_ACTIVITY_WRITE_THROTTLE_MS = 10 * 1000;
+const TEMPLATE_SELECTED_KEY = 'monitoreoTemplateSelected';
+const TEMPLATE_SHEET_SELECTED_KEY = 'monitoreoTemplateSheetSelected';
 const ASSISTANT_WIZARD_BASE_STEPS = 7;
 const ASSISTANT_SPECIALIST_ROLES = ['user', 'especialista', 'specialist', 'admin'];
 const ASSISTANT_OBJECTIVE_TEXT_CANDIDATES = ['objective_text', 'text', 'description', 'label', 'objective'];
@@ -3033,7 +3035,8 @@ export default function MonitoreoLayout() {
         }
         return;
       }
-      const selectedId = localStorage.getItem('monitoreoTemplateSelected');
+      const selectedId = localStorage.getItem(TEMPLATE_SELECTED_KEY);
+      const selectedSheetId = localStorage.getItem(TEMPLATE_SHEET_SELECTED_KEY) || '';
       if (!selectedId) {
         if (active) {
           setSelectedTemplateSections(null);
@@ -3058,15 +3061,23 @@ export default function MonitoreoLayout() {
 
       let showHeader = true;
       let showClosing = true;
+      const allSections = Array.isArray(data?.sections) ? data.sections : [];
+      let resolvedSections = allSections;
       const levelsConfig = data?.levels_config && typeof data.levels_config === 'object' ? data.levels_config : null;
       if (levelsConfig?.type === 'request_builder') {
         const sheets = Array.isArray(levelsConfig?.builder?.sheets) ? levelsConfig.builder.sheets : [];
-        const sections = Array.isArray(data?.sections) ? data.sections : [];
-        const sheetIdFromSections = sections.find((section) => section?.sheetId)?.sheetId;
         const activeSheet =
-          sheets.find((sheet) => sheet.id === sheetIdFromSections) ||
+          sheets.find((sheet) => sheet.id === selectedSheetId) ||
+          sheets.find((sheet) => sheet.id === allSections.find((section) => section?.sheetId)?.sheetId) ||
           sheets[0] ||
           null;
+        const activeSheetId = activeSheet?.id || '';
+        if (activeSheetId) {
+          localStorage.setItem(TEMPLATE_SHEET_SELECTED_KEY, activeSheetId);
+          resolvedSections = allSections.filter((section) => section?.sheetId === activeSheetId);
+        } else {
+          localStorage.removeItem(TEMPLATE_SHEET_SELECTED_KEY);
+        }
         const headerFields = activeSheet?.headerFields && typeof activeSheet.headerFields === 'object'
           ? activeSheet.headerFields
           : {};
@@ -3081,7 +3092,7 @@ export default function MonitoreoLayout() {
         const includeLocation = Boolean(metadata.include_location);
         const includeSignatures = Boolean(metadata.include_signatures);
         const includeLevels = Boolean(metadata.include_levels);
-        showHeader = Object.values(headerFields).some(Boolean) || dynamicFields.length > 0;
+        showHeader = false;
         const hasClosingField = Object.values(closingFields).some(Boolean);
         const hasExplicitClosingBlock =
           includeDate ||
@@ -3096,9 +3107,11 @@ export default function MonitoreoLayout() {
           Boolean(closingFields.dni_monitored) ||
           Boolean(closingFields.dni_monitor);
         showClosing = hasClosingField && hasExplicitClosingBlock;
+      } else {
+        localStorage.removeItem(TEMPLATE_SHEET_SELECTED_KEY);
       }
 
-      setSelectedTemplateSections(data?.sections || null);
+      setSelectedTemplateSections(resolvedSections || null);
       setSelectedTemplateVisibleBlocks({ showHeader, showClosing });
     };
     fetchTemplateSections();
@@ -3366,7 +3379,7 @@ export default function MonitoreoLayout() {
     }
 
     let templateSections = SIDEBAR_SECTIONS;
-    if (selectedTemplateSections?.length) {
+    if (Array.isArray(selectedTemplateSections)) {
       const sectionItems = selectedTemplateSections.map((section) => ({
         id: section.id,
         label: section.title,

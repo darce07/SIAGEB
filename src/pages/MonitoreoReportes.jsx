@@ -144,6 +144,191 @@ const REPORT_STATE_META = {
 
 const pluralize = (count, singular, plural) => (count === 1 ? singular : plural);
 
+const hasContent = (value) => {
+  if (value === null || value === undefined) return false;
+  if (Array.isArray(value)) return value.some((item) => hasContent(item));
+  if (typeof value === 'object') return Object.values(value).some((item) => hasContent(item));
+  if (typeof value === 'string') return value.trim() !== '';
+  return true;
+};
+
+const formatAnswerValue = (value) => {
+  if (!hasContent(value)) return '';
+  if (Array.isArray(value)) {
+    return value.map((item) => formatAnswerValue(item)).filter(Boolean).join(', ');
+  }
+  if (typeof value === 'object') {
+    if (typeof value.label === 'string' && value.label.trim()) return value.label.trim();
+    if (typeof value.value === 'string' && value.value.trim()) return value.value.trim();
+    return Object.values(value).map((item) => formatAnswerValue(item)).filter(Boolean).join(', ');
+  }
+  return String(value).trim();
+};
+
+const normalizeAnswerToken = (value) =>
+  String(value || '')
+    .trim()
+    .toUpperCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+
+const isBinaryAnswer = (value) => {
+  const token = normalizeAnswerToken(value);
+  return token === 'SI' || token === 'NO';
+};
+
+const looksLikeInstitutionValue = (value) => {
+  const text = String(value || '').trim();
+  if (!text || isBinaryAnswer(text)) return false;
+  const hasLetterOrNumber = /[A-Za-z0-9ÁÉÍÓÚáéíóúÑñ]/.test(text);
+  return hasLetterOrNumber && text.length >= 4;
+};
+
+const isInstitutionQuestion = (questionLabel) => {
+  const normalized = String(questionLabel || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+  return (
+    normalized.includes('institucion educativa') ||
+    normalized.includes('nombre de la ie') ||
+    normalized.includes('nombre ie') ||
+    normalized.includes('codigo modular') ||
+    normalized.includes('codigo local') ||
+    /\bie\b/.test(normalized)
+  );
+};
+
+const getQuestionInsights = (instance, template) => {
+  const questionState = instance?.data?.questions;
+  if (!questionState || typeof questionState !== 'object') {
+    return {
+      institutionAnswer: '',
+      primaryAnswer: '',
+      primaryQuestion: '',
+      primaryIsBinary: false,
+    };
+  }
+
+  const questionLabelById = new Map();
+  (template?.sections || []).forEach((section) => {
+    (section?.questions || []).forEach((question) => {
+      if (!question?.id) return;
+      questionLabelById.set(question.id, String(question.text || '').trim());
+    });
+  });
+
+  let institutionAnswer = '';
+  let primaryAnswer = '';
+  let primaryQuestion = '';
+  let primaryIsBinary = false;
+
+  const entries = Object.entries(questionState);
+  for (const [questionId, value] of entries) {
+    const answer = formatAnswerValue(value?.answer);
+    if (!answer) continue;
+
+    const questionLabel = questionLabelById.get(questionId) || '';
+    if (!institutionAnswer && isInstitutionQuestion(questionLabel) && looksLikeInstitutionValue(answer)) {
+      institutionAnswer = answer;
+    }
+
+    if (!primaryAnswer) {
+      const level = value?.level;
+      const answerUpper = String(answer).toUpperCase();
+      primaryAnswer =
+        answerUpper === 'SI' && hasContent(level)
+          ? `${answer} (Nivel ${String(level).trim()})`
+          : answer;
+      primaryQuestion = questionLabel;
+      primaryIsBinary = isBinaryAnswer(answer);
+    }
+
+    if (institutionAnswer && primaryAnswer) break;
+  }
+
+  if (!primaryAnswer) {
+    for (const [questionId, value] of entries) {
+      const observation = formatAnswerValue(value?.obs);
+      if (!observation) continue;
+      const questionLabel = questionLabelById.get(questionId) || '';
+      if (!institutionAnswer && isInstitutionQuestion(questionLabel) && looksLikeInstitutionValue(observation)) {
+        institutionAnswer = observation;
+      }
+      primaryAnswer = observation;
+      primaryQuestion = questionLabel;
+      primaryIsBinary = false;
+      break;
+    }
+  }
+
+  return {
+    institutionAnswer,
+    primaryAnswer,
+    primaryQuestion,
+    primaryIsBinary,
+  };
+};
+
+const getInstanceReferenceData = (instance, insights = {}) => {
+  const header = instance?.data?.header || {};
+  const institutionFromHeader =
+    header.institucion || header.institution || header.institution_name || header.institucion_educativa || '';
+  const institution = institutionFromHeader || insights.institutionAnswer || '';
+  const docente = header.docente || header.monitored_name || '';
+  const monitor = header.director || header.monitor || header.monitor_name || '';
+  const fallbackUser = typeof instance?.created_by === 'string' ? instance.created_by.trim() : '';
+
+  if (docente) return { referenceType: 'Docente', referenceLabel: docente, institution };
+  if (monitor) return { referenceType: 'Monitor', referenceLabel: monitor, institution };
+  if (institution) return { referenceType: 'Institucion', referenceLabel: institution, institution };
+  if (fallbackUser) return { referenceType: 'Usuario', referenceLabel: fallbackUser, institution };
+  return { referenceType: 'Registro', referenceLabel: 'Reporte registrado', institution };
+};
+
+const getSheetMetadata = (template, instance) => {
+  const selectedSheetIdRaw = instance?.data?.meta?.selectedSheetId;
+  const selectedSheetId = typeof selectedSheetIdRaw === 'string' ? selectedSheetIdRaw : '';
+  const sheetsRaw = template?.levelsConfig?.builder?.sheets;
+  const sheets = Array.isArray(sheetsRaw) ? sheetsRaw.filter((sheet) => sheet?.id) : [];
+
+  let resolvedSheet = sheets.find((sheet) => sheet.id === selectedSheetId) || null;
+  if (!resolvedSheet && sheets.length === 1) {
+    resolvedSheet = sheets[0];
+  }
+
+  if (resolvedSheet) {
+    const title = String(resolvedSheet.title || '').trim() || `Ficha ${resolvedSheet.code || ''}`.trim();
+    return {
+      sheetId: resolvedSheet.id,
+      sheetTitle: title || 'Ficha',
+      sheetCode: String(resolvedSheet.code || '').trim(),
+    };
+  }
+
+  if (selectedSheetId) {
+    return {
+      sheetId: selectedSheetId,
+      sheetTitle: 'Ficha seleccionada',
+      sheetCode: '',
+    };
+  }
+
+  if (sheets.length > 1) {
+    return {
+      sheetId: '',
+      sheetTitle: 'Sin ficha asignada',
+      sheetCode: '',
+    };
+  }
+
+  return {
+    sheetId: '',
+    sheetTitle: 'Ficha general',
+    sheetCode: '',
+  };
+};
+
 const buildPdf = (template, instance, statusLabel) => {
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
   const data = instance?.data || {};
@@ -652,7 +837,9 @@ export default function MonitoreoReportes() {
     const instanceRows = instances.map((instance) => {
       const template = templatesById.get(instance.template_id);
       const templateTitle = template?.title || 'Monitoreo sin plantilla';
-      const docente = instance?.data?.header?.docente || 'Sin docente';
+      const insights = getQuestionInsights(instance, template);
+      const reference = getInstanceReferenceData(instance, insights);
+      const sheetMetadata = getSheetMetadata(template, instance);
       const state = getReportRowState(template, instance);
       const updatedAtTs = new Date(instance.updated_at || instance.created_at || 0).getTime() || 0;
       const dueAtTs =
@@ -663,7 +850,17 @@ export default function MonitoreoReportes() {
         templateId: instance.template_id,
         template,
         templateTitle,
-        docente,
+        docente: reference.referenceType === 'Docente' ? reference.referenceLabel : '',
+        displayName: reference.institution || reference.referenceLabel,
+        displayType: reference.institution ? 'IE' : reference.referenceType,
+        referenceType: reference.referenceType,
+        institution: reference.institution || '',
+        sheetId: sheetMetadata.sheetId || '',
+        sheetTitle: sheetMetadata.sheetTitle || 'Ficha',
+        sheetCode: sheetMetadata.sheetCode || '',
+        responsePreview: insights.primaryAnswer || 'Sin respuesta registrada',
+        responseQuestion: insights.primaryQuestion || '',
+        responseIsBinary: Boolean(insights.primaryIsBinary),
         state,
         rangeLabel: template ? formatTemplateRangeCompact(template) : 'Sin rango definido',
         updatedDateLabel: formatDateCompact(instance.updated_at || instance.created_at),
@@ -692,7 +889,15 @@ export default function MonitoreoReportes() {
           templateId: template.id,
           template,
           templateTitle: template?.title || 'Monitoreo sin título',
-          docente: 'Sin docente',
+          docente: '',
+          displayName: 'Sin reportes aún',
+          displayType: 'Registro',
+          referenceType: 'Registro',
+          institution: '',
+          sheetId: '',
+          sheetTitle: 'Ficha general',
+          sheetCode: '',
+          responsePreview: '',
           state: getTemplateOnlyState(template),
           rangeLabel: formatTemplateRangeCompact(template),
           updatedDateLabel: formatDateCompact(updatedAt),
@@ -733,7 +938,7 @@ export default function MonitoreoReportes() {
       if (statusFilter !== 'all' && row.state !== statusFilter) return false;
       if (!normalizedSearch) return true;
 
-      const haystack = `${row.templateTitle} ${row.docente}`.toLowerCase();
+      const haystack = `${row.templateTitle} ${row.sheetTitle || ''} ${row.displayName || ''} ${row.institution || ''} ${row.responseQuestion || ''} ${row.responsePreview || ''}`.toLowerCase();
       return haystack.includes(normalizedSearch);
     });
 
@@ -756,7 +961,7 @@ export default function MonitoreoReportes() {
   );
 
   const groupedReports = useMemo(() => {
-    const groupsMap = new Map();
+      const groupsMap = new Map();
 
     filteredRows.forEach((row) => {
       const groupKey = row.templateId || `sin-template-${row.id}`;
@@ -793,6 +998,34 @@ export default function MonitoreoReportes() {
         if (stateCount[report.state] !== undefined) stateCount[report.state] += 1;
       });
 
+      const sheetGroupsMap = new Map();
+      group.reports.forEach((report) => {
+        const sheetKey = report.sheetId || '__sheet_general__';
+        if (!sheetGroupsMap.has(sheetKey)) {
+          sheetGroupsMap.set(sheetKey, {
+            sheetKey,
+            sheetId: report.sheetId || '',
+            sheetTitle: report.sheetTitle || 'Ficha general',
+            sheetCode: report.sheetCode || '',
+            reports: [],
+            reportCount: 0,
+            latestUpdatedTs: report.updatedAtTs,
+          });
+        }
+
+        const sheetGroup = sheetGroupsMap.get(sheetKey);
+        sheetGroup.reports.push(report);
+        if (report.hasReport) sheetGroup.reportCount += 1;
+        if (report.updatedAtTs > sheetGroup.latestUpdatedTs) {
+          sheetGroup.latestUpdatedTs = report.updatedAtTs;
+        }
+      });
+
+      const sheetGroups = Array.from(sheetGroupsMap.values()).sort((left, right) => {
+        if (left.sheetTitle === right.sheetTitle) return right.latestUpdatedTs - left.latestUpdatedTs;
+        return left.sheetTitle.localeCompare(right.sheetTitle, 'es', { sensitivity: 'base' });
+      });
+
       let groupState = 'active';
       if (stateCount.in_progress > 0) groupState = 'in_progress';
       else if (stateCount.active > 0) groupState = 'active';
@@ -804,6 +1037,7 @@ export default function MonitoreoReportes() {
         ...group,
         stateCount,
         groupState,
+        sheetGroups,
       };
     });
 
@@ -994,6 +1228,9 @@ export default function MonitoreoReportes() {
     }
     localStorage.setItem('monitoreoInstanceActive', row.id);
     localStorage.setItem('monitoreoTemplateSelected', row.templateId || '');
+    if (row.sheetId) {
+      localStorage.setItem('monitoreoTemplateSheetSelected', row.sheetId);
+    }
     navigate('/monitoreo/ficha-escritura');
   };
 
@@ -1044,7 +1281,7 @@ export default function MonitoreoReportes() {
               <input
                 value={searchTerm}
                 onChange={(event) => setSearchTerm(event.target.value)}
-                placeholder="Monitoreo o docente..."
+                    placeholder="Monitoreo, IE o referencia..."
                 className="w-full bg-transparent text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none"
               />
             </div>
@@ -1134,6 +1371,9 @@ export default function MonitoreoReportes() {
                           {group.reportCount > 0
                             ? `${group.reportCount} ${pluralize(group.reportCount, 'reporte', 'reportes')}`
                             : 'Sin reportes aún'}
+                          {Array.isArray(group.sheetGroups) && group.sheetGroups.length > 1
+                            ? ` · ${group.sheetGroups.length} fichas`
+                            : ''}
                         </p>
                       </div>
 
@@ -1165,117 +1405,167 @@ export default function MonitoreoReportes() {
 
                     {isExpanded ? (
                       <div className="mt-2.5 space-y-2.5">
-                        {group.reports.map((row) => {
-                          if (!row.hasReport) {
-                            return (
-                              <article
-                                key={row.id}
-                                className="rounded-xl border border-slate-800/70 bg-slate-950/30 px-3 py-3"
-                              >
-                                <div className="flex flex-wrap items-center justify-between gap-2">
-                                  <p className="truncate text-sm font-semibold text-slate-100">
-                                    Sin formularios todavía
+                        {(group.sheetGroups || []).map((sheetGroup) => (
+                          <div key={`${group.groupKey}-${sheetGroup.sheetKey}`} className="space-y-2">
+                            <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-800/60 bg-slate-900/35 px-3 py-2">
+                              <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-300">
+                                Ficha: {truncateLabel(sheetGroup.sheetTitle || 'Ficha general', 52)}
+                              </p>
+                              <span className="text-[11px] text-slate-400">
+                                {sheetGroup.reportCount}{' '}
+                                {pluralize(sheetGroup.reportCount, 'reporte', 'reportes')}
+                              </span>
+                            </div>
+                            {sheetGroup.reports.map((row) => {
+                              if (!row.hasReport) {
+                                return (
+                                  <article
+                                    key={row.id}
+                                    className="rounded-xl border border-slate-800/70 bg-slate-950/30 px-3 py-3"
+                                  >
+                                    <div className="flex flex-wrap items-center justify-between gap-2">
+                                      <p className="truncate text-sm font-semibold text-slate-100">
+                                        Sin formularios todavía
+                                      </p>
+                                      <span
+                                        className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${
+                                          REPORT_STATE_META[row.state]?.className ||
+                                          REPORT_STATE_META.active.className
+                                        }`}
+                                      >
+                                        {REPORT_STATE_META[row.state]?.label || 'Activo'}
+                                      </span>
+                                    </div>
+                                    <p className="mt-1 text-xs text-slate-400">
+                                      Este monitoreo ya está creado, pero aún no tiene reportes.
+                                    </p>
+                                    <div className="mt-2.5 flex flex-wrap gap-2">
+                                      <button
+                                        type="button"
+                                        onClick={() => handleCreateReport(row.template, { reuseExisting: false })}
+                                        className="inline-flex items-center gap-2 rounded-full border border-cyan-500/35 bg-cyan-500/10 px-3 py-1.5 text-xs font-semibold text-cyan-100 transition hover:border-cyan-400/65"
+                                      >
+                                        Crear reporte
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => navigate('/monitoreo')}
+                                        className="inline-flex items-center gap-2 rounded-full border border-slate-700/60 px-3 py-1.5 text-xs font-semibold text-slate-100 transition hover:border-cyan-400/60"
+                                      >
+                                        Ir a Monitoreos
+                                      </button>
+                                    </div>
+                                  </article>
+                                );
+                              }
+
+                              const stateMeta = REPORT_STATE_META[row.state] || REPORT_STATE_META.active;
+                              const isSelected = row.id === selectedReportId;
+                              const canDeleteRow = isAdmin || row.state !== 'expired';
+                              return (
+                                <article
+                                  key={row.id}
+                                  role="button"
+                                  tabIndex={0}
+                                  aria-pressed={isSelected}
+                                  onClick={() => setSelectedReportId(row.id)}
+                                  onKeyDown={(event) => {
+                                    if (event.key === 'Enter' || event.key === ' ') {
+                                      event.preventDefault();
+                                      setSelectedReportId(row.id);
+                                    }
+                                  }}
+                                  className={`cursor-pointer rounded-xl border px-3 py-2.5 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/50 ${
+                                    isSelected
+                                      ? 'border-cyan-400/50 bg-cyan-500/10'
+                                      : 'border-slate-800/70 bg-slate-950/30 hover:border-cyan-400/35'
+                                  }`}
+                                >
+                                  <div className="flex flex-wrap items-center justify-between gap-2">
+                                    <p className="truncate text-sm font-semibold text-slate-100">
+                                      {truncateLabel(row.displayName || 'Reporte registrado', 58)}
+                                    </p>
+                                    <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${stateMeta.className}`}>
+                                      {stateMeta.label}
+                                    </span>
+                                  </div>
+                                  <p className="mt-1 truncate text-xs text-slate-300">
+                                    IE: {truncateLabel(row.institution || 'No registrada', 68)}
                                   </p>
-                                  <span
-                                    className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${
-                                      REPORT_STATE_META[row.state]?.className ||
-                                      REPORT_STATE_META.active.className
-                                    }`}
-                                  >
-                                    {REPORT_STATE_META[row.state]?.label || 'Activo'}
-                                  </span>
-                                </div>
-                                <p className="mt-1 text-xs text-slate-400">
-                                  Este monitoreo ya está creado, pero aún no tiene reportes.
-                                </p>
-                                <div className="mt-2.5 flex flex-wrap gap-2">
-                                  <button
-                                    type="button"
-                                    onClick={() => handleCreateReport(row.template, { reuseExisting: false })}
-                                    className="inline-flex items-center gap-2 rounded-full border border-cyan-500/35 bg-cyan-500/10 px-3 py-1.5 text-xs font-semibold text-cyan-100 transition hover:border-cyan-400/65"
-                                  >
-                                    Crear reporte
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => navigate('/monitoreo')}
-                                    className="inline-flex items-center gap-2 rounded-full border border-slate-700/60 px-3 py-1.5 text-xs font-semibold text-slate-100 transition hover:border-cyan-400/60"
-                                  >
-                                    Ir a Monitoreos
-                                  </button>
-                                </div>
-                              </article>
-                            );
-                          }
+                                  <p className="mt-1 truncate text-xs text-slate-300">
+                                    Ficha: {truncateLabel(row.sheetTitle || 'Ficha general', 60)}
+                                  </p>
+                                  <p className="mt-1 truncate text-xs text-slate-300">
+                                    Respuesta:{' '}
+                                    {truncateLabel(
+                                      row.responseIsBinary && row.responseQuestion
+                                        ? `${row.responseQuestion}: ${row.responsePreview || 'Sin respuesta registrada'}`
+                                        : row.responsePreview || 'Sin respuesta registrada',
+                                      92,
+                                    )}
+                                  </p>
+                                  <p className="mt-1 truncate text-xs text-slate-400">
+                                    Actualizado: {row.updatedDateLabel}
+                                  </p>
+                                  <p className="mt-1 text-[11px] text-slate-500">
+                                    Haz clic para ver el detalle del reporte.
+                                  </p>
 
-                          const stateMeta = REPORT_STATE_META[row.state] || REPORT_STATE_META.active;
-                          const isSelected = row.id === selectedReportId;
-                          return (
-                            <article
-                              key={row.id}
-                              role="button"
-                              tabIndex={0}
-                              aria-pressed={isSelected}
-                              onClick={() => setSelectedReportId(row.id)}
-                              onKeyDown={(event) => {
-                                if (event.key === 'Enter' || event.key === ' ') {
-                                  event.preventDefault();
-                                  setSelectedReportId(row.id);
-                                }
-                              }}
-                              className={`cursor-pointer rounded-xl border px-3 py-2.5 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/50 ${
-                                isSelected
-                                  ? 'border-cyan-400/50 bg-cyan-500/10'
-                                  : 'border-slate-800/70 bg-slate-950/30 hover:border-cyan-400/35'
-                              }`}
-                            >
-                              <div className="flex flex-wrap items-center justify-between gap-2">
-                                <p className="truncate text-sm font-semibold text-slate-100">
-                                  {truncateLabel(row.docente, 52)}
-                                </p>
-                                <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${stateMeta.className}`}>
-                                  {stateMeta.label}
-                                </span>
-                              </div>
-                              <p className="mt-1 truncate text-xs text-slate-400">
-                                Actualizado: {row.updatedDateLabel}
-                              </p>
-                              <p className="mt-1 text-[11px] text-slate-500">
-                                Haz clic para ver el detalle del reporte.
-                              </p>
-
-                              <div className="mt-2.5 flex flex-wrap gap-2">
-                                <button
-                                  type="button"
-                                  onClick={(event) => {
-                                    event.stopPropagation();
-                                    openReport(row);
-                                  }}
-                                  className="inline-flex items-center gap-2 rounded-full border border-slate-700/60 px-3 py-1.5 text-xs font-semibold text-slate-100 transition hover:border-cyan-400/60"
-                                >
-                                  <Eye size={13} />
-                                  Ver
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={(event) => {
-                                    event.stopPropagation();
-                                    openPdf(row.template, row.instance);
-                                  }}
-                                  disabled={pdfLoadingId === row.id || !row.template}
-                                  className="inline-flex items-center gap-2 rounded-full border border-rose-500/35 bg-rose-500/10 px-3 py-1.5 text-xs font-semibold text-rose-100 transition hover:border-rose-400/70 disabled:cursor-not-allowed disabled:opacity-60"
-                                >
-                                  {pdfLoadingId === row.id ? (
-                                    <Loader2 size={13} className="animate-spin" />
-                                  ) : (
-                                    <Download size={13} />
-                                  )}
-                                  {pdfLoadingId === row.id ? 'Generando...' : 'PDF'}
-                                </button>
-                              </div>
-                            </article>
-                          );
-                        })}
+                                  <div className="mt-2.5 flex flex-wrap gap-2">
+                                    <button
+                                      type="button"
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        openReport(row);
+                                      }}
+                                      className="inline-flex items-center gap-2 rounded-full border border-slate-700/60 px-3 py-1.5 text-xs font-semibold text-slate-100 transition hover:border-cyan-400/60"
+                                    >
+                                      <Eye size={13} />
+                                      Ver
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        openPdf(row.template, row.instance);
+                                      }}
+                                      disabled={pdfLoadingId === row.id || !row.template}
+                                      className="inline-flex items-center gap-2 rounded-full border border-rose-500/35 bg-rose-500/10 px-3 py-1.5 text-xs font-semibold text-rose-100 transition hover:border-rose-400/70 disabled:cursor-not-allowed disabled:opacity-60"
+                                    >
+                                      {pdfLoadingId === row.id ? (
+                                        <Loader2 size={13} className="animate-spin" />
+                                      ) : (
+                                        <Download size={13} />
+                                      )}
+                                      {pdfLoadingId === row.id ? 'Generando...' : 'PDF'}
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        handleRequestDelete({
+                                          instanceId: row.id,
+                                          isAdminAction: isAdmin,
+                                          details: `${row.templateTitle} - ${row.displayName || 'Reporte registrado'}`,
+                                        });
+                                      }}
+                                      disabled={!canDeleteRow}
+                                      title={!canDeleteRow ? 'Monitoreo vencido: solo administrador puede eliminar.' : undefined}
+                                      className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
+                                        canDeleteRow
+                                          ? 'border-rose-500/30 text-rose-200 hover:border-rose-400/60'
+                                          : 'cursor-not-allowed border-slate-700/70 text-slate-500'
+                                      }`}
+                                    >
+                                      <Trash2 size={13} />
+                                      Eliminar
+                                    </button>
+                                  </div>
+                                </article>
+                              );
+                            })}
+                          </div>
+                        ))}
                       </div>
                     ) : null}
                   </section>
@@ -1308,10 +1598,32 @@ export default function MonitoreoReportes() {
                   </div>
 
                   <div className="space-y-2 text-xs text-slate-300">
-                    <p className="flex items-center gap-2">
-                      <UserRound size={13} className="text-slate-400" />
-                      Docente: <span className="font-medium text-slate-100">{selectedRow.docente}</span>
-                    </p>
+                    {selectedRow.displayName ? (
+                      <p className="flex items-center gap-2">
+                        <UserRound size={13} className="text-slate-400" />
+                        {selectedRow.displayType || selectedRow.referenceType}:{' '}
+                        <span className="font-medium text-slate-100">{selectedRow.displayName}</span>
+                      </p>
+                    ) : null}
+                    {selectedRow.institution ? (
+                      <p className="flex items-center gap-2">
+                        <FileText size={13} className="text-slate-400" />
+                        IE: <span className="font-medium text-slate-100">{selectedRow.institution}</span>
+                      </p>
+                    ) : null}
+                    {selectedRow.responsePreview ? (
+                      <p className="text-slate-300">
+                        Respuesta clave:{' '}
+                        <span className="font-medium text-slate-100">
+                          {truncateLabel(
+                            selectedRow.responseIsBinary && selectedRow.responseQuestion
+                              ? `${selectedRow.responseQuestion}: ${selectedRow.responsePreview}`
+                              : selectedRow.responsePreview,
+                            120,
+                          )}
+                        </span>
+                      </p>
+                    ) : null}
                     <p className="flex items-center gap-2">
                       <CalendarDays size={13} className="text-slate-400" />
                       Rango: <span className="font-medium text-slate-100">{selectedRow.rangeLabel}</span>
@@ -1358,7 +1670,7 @@ export default function MonitoreoReportes() {
                         handleRequestDelete({
                           instanceId: selectedRow.id,
                           isAdminAction: isAdmin,
-                          details: `${selectedRow.templateTitle} - ${selectedRow.docente}`,
+                          details: `${selectedRow.templateTitle} - ${selectedRow.displayName || 'Reporte registrado'}`,
                         })
                       }
                       disabled={!canDeleteSelected}

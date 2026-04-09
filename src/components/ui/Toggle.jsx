@@ -1,6 +1,6 @@
 export default function Toggle({ value, onChange }) {
   return (
-    <div className="inline-flex rounded-full border border-slate-700/70 bg-slate-900/70 p-1">
+    <div className="inline-flex w-fit self-start rounded-full border border-slate-700/70 bg-slate-900/70 p-1">
       {["SI", "NO"].map((option) => (
         <button
           key={option}

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
   AlertTriangle,
@@ -13,6 +13,7 @@ import {
   Trash2,
   XCircle,
 } from 'lucide-react';
+import { animate } from 'animejs';
 import Card from '../components/ui/Card.jsx';
 import ConfirmModal from '../components/ui/ConfirmModal.jsx';
 import Input from '../components/ui/Input.jsx';
@@ -535,9 +536,10 @@ const createEmptyDynamicFieldDraft = () => ({
 
 const createEmptyQuestionDraft = () => ({
   text: '',
-  type: 'yes_no',
-  required: true,
-  allowObservation: true,
+  type: '',
+  required: false,
+  allowObservation: false,
+  predictiveSearch: false,
   options: [],
   minValue: '',
   maxValue: '',
@@ -571,6 +573,11 @@ const normalizeText = (value) =>
     .replace(/\p{Diacritic}/gu, '')
     .trim();
 
+const sanitizeQuestionText = (value) =>
+  String(value || '')
+    .replace(/^\s*\d+(?:\.\d+)*[.)]?\s*/, '')
+    .trim();
+
 const mapInstitution = (row) => ({
   id: row.id,
   name: row.nombre_ie || 'IE sin nombre',
@@ -590,10 +597,11 @@ const createSection = (name) => ({
 
 const createQuestion = (draft) => ({
   id: crypto.randomUUID(),
-  text: draft.text.trim(),
+  text: sanitizeQuestionText(draft.text),
   type: draft.type,
   required: Boolean(draft.required),
   allowObservation: Boolean(draft.allowObservation),
+  predictiveSearch: Boolean(draft.predictiveSearch),
   options: Array.isArray(draft.options) ? draft.options : [],
   minValue: draft.minValue,
   maxValue: draft.maxValue,
@@ -664,6 +672,7 @@ const buildTemplateSectionsFromSheets = (sheets = []) => {
           responseType: 'scale_1_3',
           allowObservation: question?.allowObservation !== false,
           sourceType: question?.type || 'yes_no',
+          sourcePredictiveSearch: Boolean(question?.predictiveSearch),
           sourceOptions: Array.isArray(question?.options) ? question.options : [],
           sourceMinValue: question?.minValue ?? '',
           sourceMaxValue: question?.maxValue ?? '',
@@ -860,7 +869,20 @@ export default function MonitoreoGestionMonitoreos({ embedded = false, initialCr
 
   const [questionDraft, setQuestionDraft] = useState(createEmptyQuestionDraft());
   const [questionOptionInput, setQuestionOptionInput] = useState('');
-  const [extraFieldInput, setExtraFieldInput] = useState('');
+  const [draggingQuestion, setDraggingQuestion] = useState(null);
+  const dragPreviewRef = useRef(null);
+  const dragPreviewMoveListenerRef = useRef(null);
+  const dragPreviewRafRef = useRef(0);
+  const dragPreviewPositionRef = useRef({
+    x: 0,
+    y: 0,
+    targetX: 0,
+    targetY: 0,
+    offsetX: 18,
+    offsetY: 14,
+  });
+  const dragPreviewAnimationsRef = useRef([]);
+  const transparentDragImageRef = useRef(null);
 
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [notice, setNotice] = useState({ tone: 'neutral', message: '' });
@@ -897,6 +919,42 @@ export default function MonitoreoGestionMonitoreos({ embedded = false, initialCr
     () => selectedSheet?.sections?.find((item) => item.id === selectedSectionId) || null,
     [selectedSheet, selectedSectionId],
   );
+  const sheetSummaries = useMemo(() => {
+    const rows = Array.isArray(editableRequest?.sheets) ? editableRequest.sheets : [];
+    return rows.map((sheet, index) => {
+      const sections = Array.isArray(sheet?.sections) ? sheet.sections : [];
+      const questionCount = sections.reduce(
+        (total, section) => total + (Array.isArray(section?.questions) ? section.questions.length : 0),
+        0,
+      );
+      return {
+        id: sheet?.id || '',
+        title: String(sheet?.title || '').trim() || `Ficha ${index + 1}`,
+        code: String(sheet?.code || '').trim(),
+        sectionCount: sections.length,
+        questionCount,
+      };
+    });
+  }, [editableRequest]);
+  const missingQuestionSheetTitles = useMemo(() => {
+    if (!selectedRequest) return [];
+    const rows = Array.isArray(selectedRequest?.sheets) ? selectedRequest.sheets : [];
+    if (rows.length <= 1) return [];
+    return rows
+      .map((sheet, index) => {
+        const sections = Array.isArray(sheet?.sections) ? sheet.sections : [];
+        const questionCount = sections.reduce(
+          (total, section) => total + (Array.isArray(section?.questions) ? section.questions.length : 0),
+          0,
+        );
+        return {
+          title: String(sheet?.title || '').trim() || `Ficha ${index + 1}`,
+          questionCount,
+        };
+      })
+      .filter((sheet) => sheet.questionCount === 0)
+      .map((sheet) => sheet.title);
+  }, [selectedRequest]);
 
   const availableLevelOptions = useMemo(
     () => getAvailableLevelOptions(requestDraft.modalityFilters),
@@ -925,8 +983,13 @@ export default function MonitoreoGestionMonitoreos({ embedded = false, initialCr
     if (!selectedRequestQuestionCount) {
       return 'Agrega al menos una pregunta antes de publicar el monitoreo.';
     }
+    if (missingQuestionSheetTitles.length) {
+      const preview = missingQuestionSheetTitles.slice(0, 2).join(', ');
+      const suffix = missingQuestionSheetTitles.length > 2 ? '...' : '';
+      return `Completa preguntas en cada ficha antes de publicar. Sin preguntas: ${preview}${suffix}`;
+    }
     return '';
-  }, [isAdmin, selectedRequest, selectedRequestQuestionCount]);
+  }, [isAdmin, missingQuestionSheetTitles, selectedRequest, selectedRequestQuestionCount]);
   const canPublishRequest = publishBlockedReason.length === 0;
   const creationContextLabel = useMemo(() => formatDateFromParam(creationContextDate), [creationContextDate]);
 
@@ -1794,25 +1857,28 @@ export default function MonitoreoGestionMonitoreos({ embedded = false, initialCr
   };
 
   const handleQuestionTypeChange = (type) => {
-    if (type === 'yes_no_levels' && !questionDraft.options.length) {
-      setQuestionDraft((prev) => ({
-        ...prev,
-        type,
-        options: ['No cumple', 'Cumple parcialmente', 'Cumple'],
-      }));
-      return;
-    }
+    setQuestionDraft((prev) => {
+      const nextDraft = { ...prev, type };
 
-    if (type !== 'options' && type !== 'yes_no_levels') {
-      setQuestionDraft((prev) => ({
-        ...prev,
-        type,
-        options: [],
-      }));
-      return;
-    }
+      if (!type) {
+        nextDraft.options = [];
+        nextDraft.predictiveSearch = false;
+      } else if (type === 'yes_no_levels' && !prev.options.length) {
+        nextDraft.options = ['No cumple', 'Cumple parcialmente', 'Cumple'];
+      } else if (type !== 'options' && type !== 'yes_no_levels') {
+        nextDraft.options = [];
+      }
 
-    setQuestionDraft((prev) => ({ ...prev, type }));
+      if (type !== 'text') {
+        nextDraft.predictiveSearch = false;
+      }
+      if (type !== 'number') {
+        nextDraft.minValue = '';
+        nextDraft.maxValue = '';
+      }
+
+      return nextDraft;
+    });
   };
 
   const handleAddQuestionOption = () => {
@@ -1834,30 +1900,15 @@ export default function MonitoreoGestionMonitoreos({ embedded = false, initialCr
     }));
   };
 
-  const handleAddExtraField = () => {
-    const value = extraFieldInput.trim();
-    if (!value) return;
-    if (questionDraft.extraFields.includes(value)) return;
-
-    setQuestionDraft((prev) => ({
-      ...prev,
-      extraFields: [...prev.extraFields, value],
-    }));
-    setExtraFieldInput('');
-  };
-
-  const handleRemoveExtraField = (field) => {
-    setQuestionDraft((prev) => ({
-      ...prev,
-      extraFields: prev.extraFields.filter((item) => item !== field),
-    }));
-  };
-
   const saveQuestion = (keepOpen) => {
     if (!selectedSheetId || !selectedSectionId) return;
 
-    if (!questionDraft.text.trim()) {
+    if (!sanitizeQuestionText(questionDraft.text)) {
       setNotice({ tone: 'warning', message: 'Ingresa el enunciado de la pregunta.' });
+      return;
+    }
+    if (!questionDraft.type) {
+      setNotice({ tone: 'warning', message: 'Selecciona un tipo de respuesta para la pregunta.' });
       return;
     }
 
@@ -1889,21 +1940,17 @@ export default function MonitoreoGestionMonitoreos({ embedded = false, initialCr
     }));
 
     if (keepOpen) {
-      setQuestionDraft((prev) => ({
-        ...createEmptyQuestionDraft(),
-        type: prev.type,
-      }));
+      setQuestionDraft(createEmptyQuestionDraft());
     } else {
       setQuestionDraft(createEmptyQuestionDraft());
     }
 
     setQuestionOptionInput('');
-    setExtraFieldInput('');
     setNotice({ tone: 'success', message: 'Pregunta guardada.' });
   };
 
-  const handleDeleteQuestion = (questionId) => {
-    if (!selectedSheetId || !selectedSectionId) return;
+  const handleDeleteQuestion = (questionId, sectionId = selectedSectionId) => {
+    if (!selectedSheetId || !sectionId) return;
 
     updateSelectedRequest((current) => ({
       ...current,
@@ -1912,7 +1959,7 @@ export default function MonitoreoGestionMonitoreos({ embedded = false, initialCr
         return {
           ...sheet,
           sections: (sheet.sections || []).map((section) =>
-            section.id === selectedSectionId
+            section.id === sectionId
               ? {
                   ...section,
                   questions: (section.questions || []).filter((item) => item.id !== questionId),
@@ -1922,6 +1969,214 @@ export default function MonitoreoGestionMonitoreos({ embedded = false, initialCr
         };
       }),
     }));
+  };
+
+  const moveQuestionBetweenSections = ({ questionId, sourceSectionId, targetSectionId, targetQuestionId = '' }) => {
+    if (!selectedSheetId || !questionId || !sourceSectionId || !targetSectionId) return;
+    if (sourceSectionId === targetSectionId && targetQuestionId === questionId) return;
+
+    updateSelectedRequest((current) => ({
+      ...current,
+      sheets: (current.sheets || []).map((sheet) => {
+        if (sheet.id !== selectedSheetId) return sheet;
+
+        const nextSections = (sheet.sections || []).map((section) => ({
+          ...section,
+          questions: Array.isArray(section.questions) ? [...section.questions] : [],
+        }));
+
+        const sourceSection = nextSections.find((section) => section.id === sourceSectionId);
+        const targetSection = nextSections.find((section) => section.id === targetSectionId);
+        if (!sourceSection || !targetSection) return sheet;
+
+        const sourceIndex = sourceSection.questions.findIndex((question) => question.id === questionId);
+        if (sourceIndex === -1) return sheet;
+
+        const [movedQuestion] = sourceSection.questions.splice(sourceIndex, 1);
+        if (!movedQuestion) return sheet;
+
+        const rawTargetIndex = targetQuestionId
+          ? targetSection.questions.findIndex((question) => question.id === targetQuestionId)
+          : -1;
+        const targetIndex = rawTargetIndex >= 0 ? rawTargetIndex : targetSection.questions.length;
+        targetSection.questions.splice(targetIndex, 0, movedQuestion);
+
+        return {
+          ...sheet,
+          sections: nextSections,
+        };
+      }),
+    }));
+  };
+
+  const getTransparentDragImage = () => {
+    if (transparentDragImageRef.current) return transparentDragImageRef.current;
+    const pixelCanvas = document.createElement('canvas');
+    pixelCanvas.width = 1;
+    pixelCanvas.height = 1;
+    transparentDragImageRef.current = pixelCanvas;
+    return pixelCanvas;
+  };
+
+  const stopDragPreviewTracking = () => {
+    if (dragPreviewMoveListenerRef.current) {
+      document.removeEventListener('dragover', dragPreviewMoveListenerRef.current);
+      dragPreviewMoveListenerRef.current = null;
+    }
+    if (dragPreviewRafRef.current && typeof window !== 'undefined') {
+      window.cancelAnimationFrame(dragPreviewRafRef.current);
+      dragPreviewRafRef.current = 0;
+    }
+  };
+
+  const queueDragPreviewMotion = () => {
+    if (typeof window === 'undefined' || dragPreviewRafRef.current) return;
+    const tick = () => {
+      const previewNode = dragPreviewRef.current;
+      if (!previewNode) {
+        dragPreviewRafRef.current = 0;
+        return;
+      }
+      const position = dragPreviewPositionRef.current;
+      position.x += (position.targetX - position.x) * 0.24;
+      position.y += (position.targetY - position.y) * 0.24;
+      previewNode.style.transform = `translate3d(${position.x}px, ${position.y}px, 0)`;
+
+      const shouldContinue =
+        Math.abs(position.targetX - position.x) > 0.5 || Math.abs(position.targetY - position.y) > 0.5;
+      if (shouldContinue) {
+        dragPreviewRafRef.current = window.requestAnimationFrame(tick);
+      } else {
+        dragPreviewRafRef.current = 0;
+      }
+    };
+    dragPreviewRafRef.current = window.requestAnimationFrame(tick);
+  };
+
+  const clearDragPreview = () => {
+    stopDragPreviewTracking();
+    dragPreviewAnimationsRef.current.forEach((animation) => animation?.cancel?.());
+    dragPreviewAnimationsRef.current = [];
+
+    if (dragPreviewRef.current && dragPreviewRef.current.parentNode) {
+      dragPreviewRef.current.parentNode.removeChild(dragPreviewRef.current);
+    }
+    dragPreviewRef.current = null;
+  };
+
+  const handleQuestionDragStart = (event, sectionId, questionId, questionLabel) => {
+    setDraggingQuestion({ sectionId, questionId });
+    clearDragPreview();
+
+    const pointerX = Number(event?.clientX || 0);
+    const pointerY = Number(event?.clientY || 0);
+    const initialX = pointerX + dragPreviewPositionRef.current.offsetX;
+    const initialY = pointerY + dragPreviewPositionRef.current.offsetY;
+    dragPreviewPositionRef.current = {
+      ...dragPreviewPositionRef.current,
+      x: initialX,
+      y: initialY,
+      targetX: initialX,
+      targetY: initialY,
+    };
+
+    const previewCard = document.createElement('div');
+    previewCard.style.position = 'fixed';
+    previewCard.style.top = '0';
+    previewCard.style.left = '0';
+    previewCard.style.width = 'min(340px, 88vw)';
+    previewCard.style.padding = '11px 13px';
+    previewCard.style.borderRadius = '12px';
+    previewCard.style.border = '1px solid rgba(34, 211, 238, 0.8)';
+    previewCard.style.background = 'linear-gradient(180deg, rgba(15, 23, 42, 0.98) 0%, rgba(8, 47, 73, 0.98) 100%)';
+    previewCard.style.boxShadow = '0 18px 36px rgba(8, 47, 73, 0.45)';
+    previewCard.style.pointerEvents = 'none';
+    previewCard.style.zIndex = '9999';
+    previewCard.style.opacity = '0';
+    previewCard.style.transform = `translate3d(${initialX}px, ${initialY}px, 0)`;
+    previewCard.style.backdropFilter = 'blur(4px)';
+
+    const previewTitle = document.createElement('p');
+    previewTitle.style.margin = '0';
+    previewTitle.style.fontSize = '13px';
+    previewTitle.style.fontWeight = '700';
+    previewTitle.style.lineHeight = '1.3';
+    previewTitle.style.color = '#e2e8f0';
+    previewTitle.textContent = String(questionLabel || 'Pregunta').trim().slice(0, 140);
+
+    const previewHint = document.createElement('p');
+    previewHint.style.margin = '6px 0 0';
+    previewHint.style.fontSize = '11px';
+    previewHint.style.fontWeight = '600';
+    previewHint.style.color = '#67e8f9';
+    previewHint.textContent = 'Moviendo pregunta';
+
+    previewCard.append(previewTitle, previewHint);
+    document.body.appendChild(previewCard);
+    dragPreviewRef.current = previewCard;
+
+    dragPreviewAnimationsRef.current = [
+      animate(previewCard, {
+        opacity: [0, 1],
+        duration: 180,
+      }),
+      animate(previewCard, {
+        boxShadow: ['0 12px 28px rgba(8, 47, 73, 0.3)', '0 20px 44px rgba(8, 47, 73, 0.52)'],
+        duration: 900,
+        loop: true,
+        alternate: true,
+      }),
+    ];
+
+    const handleDragMove = (dragEvent) => {
+      dragPreviewPositionRef.current.targetX = Number(dragEvent.clientX || 0) + dragPreviewPositionRef.current.offsetX;
+      dragPreviewPositionRef.current.targetY = Number(dragEvent.clientY || 0) + dragPreviewPositionRef.current.offsetY;
+      queueDragPreviewMotion();
+    };
+    document.addEventListener('dragover', handleDragMove);
+    dragPreviewMoveListenerRef.current = handleDragMove;
+    queueDragPreviewMotion();
+
+    if (event?.dataTransfer) {
+      event.dataTransfer.effectAllowed = 'move';
+      event.dataTransfer.setData('text/plain', questionId);
+      event.dataTransfer.setDragImage(getTransparentDragImage(), 0, 0);
+    }
+  };
+
+  const handleQuestionDragEnd = () => {
+    clearDragPreview();
+    setDraggingQuestion(null);
+  };
+
+  const handleQuestionDropOnQuestion = (targetSectionId, targetQuestionId) => {
+    if (!draggingQuestion) {
+      clearDragPreview();
+      return;
+    }
+    moveQuestionBetweenSections({
+      questionId: draggingQuestion.questionId,
+      sourceSectionId: draggingQuestion.sectionId,
+      targetSectionId,
+      targetQuestionId,
+    });
+    clearDragPreview();
+    setDraggingQuestion(null);
+  };
+
+  const handleQuestionDropOnSection = (targetSectionId) => {
+    if (!draggingQuestion) {
+      clearDragPreview();
+      return;
+    }
+    moveQuestionBetweenSections({
+      questionId: draggingQuestion.questionId,
+      sourceSectionId: draggingQuestion.sectionId,
+      targetSectionId,
+      targetQuestionId: '',
+    });
+    clearDragPreview();
+    setDraggingQuestion(null);
   };
 
   const renderNotice = () => {
@@ -1935,15 +2190,65 @@ export default function MonitoreoGestionMonitoreos({ embedded = false, initialCr
     return <p className={`text-small ${className}`}>{notice.message}</p>;
   };
 
+  const renderSheetGrouping = ({ id, label, helper }) => {
+    if (sheetSummaries.length <= 1) return null;
+    return (
+      <div className="rounded-xl border border-slate-800/80 bg-slate-900/55 p-3">
+        <Select
+          id={id}
+          label={label}
+          value={selectedSheetId}
+          onChange={(event) => {
+            setSelectedSheetId(event.target.value);
+            setSelectedSectionId('');
+          }}
+        >
+          {sheetSummaries.map((sheet) => (
+            <option key={sheet.id} value={sheet.id}>
+              {sheet.title} ({sheet.sectionCount} secciones | {sheet.questionCount} preguntas)
+            </option>
+          ))}
+        </Select>
+        <div className="mt-2 flex flex-wrap gap-2">
+          {sheetSummaries.map((sheet) => {
+            const isActive = sheet.id === selectedSheetId;
+            return (
+              <button
+                key={`${id}-${sheet.id}`}
+                type="button"
+                onClick={() => {
+                  setSelectedSheetId(sheet.id);
+                  setSelectedSectionId('');
+                }}
+                className={`rounded-lg border px-2.5 py-1.5 text-left transition ${
+                  isActive
+                    ? 'border-cyan-400/50 bg-cyan-500/15'
+                    : 'border-slate-700/70 bg-slate-900/40 hover:border-slate-500/70'
+                }`}
+              >
+                <p className={`text-xs font-semibold ${isActive ? 'text-cyan-100' : 'text-slate-200'}`}>
+                  {sheet.title}
+                </p>
+                <p className="text-[11px] text-slate-400">
+                  {sheet.sectionCount} secciones | {sheet.questionCount} preguntas
+                </p>
+              </button>
+            );
+          })}
+        </div>
+        <p className="text-small mt-2">{helper}</p>
+      </div>
+    );
+  };
+
   const showStage = (stageId) => !isMobileLayout || mobileStage === stageId;
   const mobileStageOptions = [
     { value: 'stage1', label: 'Etapa 1: Solicitud' },
     { value: 'stage2', label: 'Etapa 2: Revision' },
     { value: 'stage3', label: 'Etapa 3: Fichas' },
     { value: 'stage4', label: 'Etapa 4: Encabezado y cierre' },
-    { value: 'stage5', label: 'Etapa 5: Campos personalizados' },
-    { value: 'stage6', label: 'Etapa 6: Secciones' },
-    { value: 'stage7', label: 'Etapa 7: Preguntas' },
+    { value: 'stage5', label: 'Etapa 5: Secciones' },
+    { value: 'stage6', label: 'Etapa 6: Preguntas' },
   ];
 
   return (
@@ -2577,8 +2882,8 @@ export default function MonitoreoGestionMonitoreos({ embedded = false, initialCr
               />
 
               <div className="space-y-2">
-                {editableRequest?.sheets?.length ? (
-                  editableRequest.sheets.map((sheet) => (
+                {sheetSummaries.length ? (
+                  sheetSummaries.map((sheet) => (
                     <div key={sheet.id} className="flex items-center justify-between gap-2 rounded-xl border border-slate-800/80 bg-slate-900/55 px-3 py-2">
                       <button
                         type="button"
@@ -2586,7 +2891,9 @@ export default function MonitoreoGestionMonitoreos({ embedded = false, initialCr
                         className={`min-w-0 text-left ${sheet.id === selectedSheetId ? 'text-cyan-100' : 'text-slate-200'}`}
                       >
                         <p className="truncate text-sm font-medium">{sheet.title}</p>
-                        <p className="text-small">{sheet.code}</p>
+                        <p className="text-small">
+                          {sheet.code || 'Sin codigo'} | {sheet.sectionCount} secciones | {sheet.questionCount} preguntas
+                        </p>
                       </button>
                       <button
                         type="button"
@@ -2643,6 +2950,12 @@ export default function MonitoreoGestionMonitoreos({ embedded = false, initialCr
                 description="Activa o desactiva campos predefinidos para la ficha activa."
               />
 
+              {renderSheetGrouping({
+                id: 'activeSheetForHeaderAndClosing',
+                label: 'Ficha activa para encabezado y cierre',
+                helper: 'Cada ficha mantiene su propio encabezado y cierre de forma independiente.',
+              })}
+
               <div className="grid gap-4 xl:grid-cols-2">
                 <div className="space-y-2 rounded-xl border border-slate-800/80 bg-slate-900/55 p-3">
                   <p className="text-sm font-semibold text-slate-100">Campos de encabezado</p>
@@ -2688,124 +3001,15 @@ export default function MonitoreoGestionMonitoreos({ embedded = false, initialCr
             <Card className="min-w-0 space-y-4">
               <SectionHeader
                 eyebrow="Etapa 5"
-                title="Campos personalizados"
-                description="Agrega campos dinamicos para adaptar la ficha sin tocar codigo."
-              />
-
-              <div className="grid gap-3 md:grid-cols-4">
-                <Input
-                  id="dynamicFieldName"
-                  label="Nombre del campo"
-                  value={dynamicFieldDraft.name}
-                  onChange={(event) =>
-                    setDynamicFieldDraft((prev) => ({ ...prev, name: event.target.value }))
-                  }
-                />
-                <Select
-                  id="dynamicFieldType"
-                  label="Tipo"
-                  value={dynamicFieldDraft.type}
-                  onChange={(event) =>
-                    setDynamicFieldDraft((prev) => ({ ...prev, type: event.target.value, options: [] }))
-                  }
-                >
-                  {DYNAMIC_FIELD_TYPES.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </Select>
-                <label className="ds-input-label justify-end">
-                  <span className="ds-field-label">Obligatorio</span>
-                  <div className="flex h-10 items-center gap-2 rounded-xl border border-slate-700/70 bg-slate-900/55 px-3">
-                    <input
-                      type="checkbox"
-                      checked={dynamicFieldDraft.required}
-                      onChange={(event) =>
-                        setDynamicFieldDraft((prev) => ({ ...prev, required: event.target.checked }))
-                      }
-                    />
-                    <span className="text-sm text-slate-200">Si</span>
-                  </div>
-                </label>
-                <button type="button" onClick={handleAddDynamicField} className="ds-btn ds-btn-primary self-end">
-                  <Plus size={13} />
-                  Agregar campo
-                </button>
-              </div>
-
-              {dynamicFieldDraft.type === 'select' ? (
-                <div className="rounded-xl border border-slate-800/80 bg-slate-900/55 p-3">
-                  <p className="ds-field-label">Opciones de lista</p>
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    <input
-                      value={dynamicOptionInput}
-                      onChange={(event) => setDynamicOptionInput(event.target.value)}
-                      placeholder="Nueva opcion"
-                      className="ds-input h-9 max-w-sm"
-                    />
-                    <button type="button" onClick={handleAddDynamicOption} className="ds-btn ds-btn-secondary h-9">
-                      Agregar opcion
-                    </button>
-                  </div>
-                  {dynamicFieldDraft.options.length ? (
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      {dynamicFieldDraft.options.map((option) => (
-                        <span key={option} className="ds-badge ds-badge-info">
-                          {option}
-                          <button
-                            type="button"
-                            onClick={() => handleRemoveDynamicOption(option)}
-                            className="text-cyan-100/90"
-                          >
-                            <XCircle size={12} />
-                          </button>
-                        </span>
-                      ))}
-                    </div>
-                  ) : null}
-                </div>
-              ) : null}
-
-              <div className="space-y-2">
-                {(selectedSheet.dynamicFields || []).length ? (
-                  selectedSheet.dynamicFields.map((field) => (
-                    <div key={field.id} className="flex items-center justify-between gap-2 rounded-xl border border-slate-800/80 bg-slate-900/55 px-3 py-2">
-                      <div>
-                        <p className="text-sm font-medium text-slate-100">{field.name}</p>
-                        <p className="text-small">
-                          {DYNAMIC_FIELD_TYPES.find((item) => item.value === field.type)?.label || field.type}
-                          {field.required ? ' | Obligatorio' : ''}
-                        </p>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => handleDeleteDynamicField(field.id)}
-                        className="ds-btn ds-btn-danger h-8 px-2"
-                      >
-                        <Trash2 size={12} />
-                      </button>
-                    </div>
-                  ))
-                ) : (
-                  <p className="text-small">No hay campos personalizados en esta ficha.</p>
-                )}
-              </div>
-            </Card>
-          ) : (
-            <StageDisabled
-              title="Etapa 5 - Campos personalizados"
-              description="Selecciona una ficha para agregar campos dinamicos del encabezado."
-            />
-          )) : null}
-
-          {showStage('stage6') ? (selectedSheet ? (
-            <Card className="min-w-0 space-y-4">
-              <SectionHeader
-                eyebrow="Etapa 6"
                 title="Secciones"
                 description="Crea secciones y marca una activa para agregar preguntas."
               />
+
+              {renderSheetGrouping({
+                id: 'activeSheetForSections',
+                label: 'Ficha activa para secciones',
+                helper: 'Las secciones que crees aqui se guardan solo en la ficha seleccionada.',
+              })}
 
               <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto]">
                 <Input
@@ -2850,18 +3054,37 @@ export default function MonitoreoGestionMonitoreos({ embedded = false, initialCr
             </Card>
           ) : (
             <StageDisabled
-              title="Etapa 6 - Secciones"
+              title="Etapa 5 - Secciones"
               description="Selecciona una ficha para crear secciones de preguntas."
             />
           )) : null}
 
-          {showStage('stage7') ? (selectedSection ? (
+          {showStage('stage6') ? (selectedSection ? (
             <Card className="min-w-0 space-y-4">
               <SectionHeader
-                eyebrow="Etapa 7"
+                eyebrow="Etapa 6"
                 title="Preguntas"
-                description="Cada pregunta pertenece a la seccion seleccionada y adapta su tipo de respuesta."
+                description="Cada pregunta pertenece a una seccion y se puede reordenar por arrastre."
               />
+
+              {renderSheetGrouping({
+                id: 'activeSheetForQuestions',
+                label: 'Ficha activa para preguntas',
+                helper: 'Antes de guardar preguntas, confirma que estas en la ficha correcta.',
+              })}
+
+              <Select
+                id="questionSection"
+                label="Seccion para guardar la pregunta"
+                value={selectedSectionId}
+                onChange={(event) => setSelectedSectionId(event.target.value)}
+              >
+                {(selectedSheet.sections || []).map((section) => (
+                  <option key={section.id} value={section.id}>
+                    {section.name}
+                  </option>
+                ))}
+              </Select>
 
               <Textarea
                 id="questionText"
@@ -2877,6 +3100,7 @@ export default function MonitoreoGestionMonitoreos({ embedded = false, initialCr
                   value={questionDraft.type}
                   onChange={(event) => handleQuestionTypeChange(event.target.value)}
                 >
+                  <option value="">Seleccionar</option>
                   {QUESTION_TYPE_OPTIONS.map((option) => (
                     <option key={option.value} value={option.value}>
                       {option.label}
@@ -2933,12 +3157,26 @@ export default function MonitoreoGestionMonitoreos({ embedded = false, initialCr
                       }
                     />
                   </div>
+                ) : questionDraft.type === 'text' ? (
+                  <label className="ds-input-label justify-end">
+                    <span className="ds-field-label">Respuesta predictora</span>
+                    <div className="flex h-10 items-center gap-2 rounded-xl border border-slate-700/70 bg-slate-900/55 px-3">
+                      <input
+                        type="checkbox"
+                        checked={questionDraft.predictiveSearch}
+                        onChange={(event) =>
+                          setQuestionDraft((prev) => ({ ...prev, predictiveSearch: event.target.checked }))
+                        }
+                      />
+                      <span className="text-sm text-slate-200">Usar buscador de IE</span>
+                    </div>
+                  </label>
                 ) : (
                   <div className="rounded-xl border border-slate-800/80 bg-slate-900/55 px-3 py-2.5">
                     <p className="text-small">
                       {questionDraft.type === 'pdf'
                         ? 'Esta pregunta pedira carga de archivo PDF.'
-                        : 'Configura opciones y campos adicionales segun corresponda.'}
+                        : 'Configura opciones de respuesta segun corresponda.'}
                     </p>
                   </div>
                 )}
@@ -2971,31 +3209,6 @@ export default function MonitoreoGestionMonitoreos({ embedded = false, initialCr
                 </div>
               ) : null}
 
-              <div className="rounded-xl border border-slate-800/80 bg-slate-900/55 p-3">
-                <p className="ds-field-label">Campos adicionales por pregunta</p>
-                <div className="mt-2 flex flex-wrap gap-2">
-                  <input
-                    value={extraFieldInput}
-                    onChange={(event) => setExtraFieldInput(event.target.value)}
-                    placeholder="Ej. Evidencia o Recomendacion"
-                    className="ds-input h-9 max-w-sm"
-                  />
-                  <button type="button" onClick={handleAddExtraField} className="ds-btn ds-btn-secondary h-9">
-                    Agregar campo extra
-                  </button>
-                </div>
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {questionDraft.extraFields.map((field) => (
-                    <span key={field} className="ds-badge ds-badge-info">
-                      {field}
-                      <button type="button" onClick={() => handleRemoveExtraField(field)}>
-                        <XCircle size={12} />
-                      </button>
-                    </span>
-                  ))}
-                </div>
-              </div>
-
               <div className="flex flex-wrap gap-2">
                 <button type="button" onClick={() => saveQuestion(false)} className="ds-btn ds-btn-primary">
                   Guardar pregunta
@@ -3008,7 +3221,6 @@ export default function MonitoreoGestionMonitoreos({ embedded = false, initialCr
                   onClick={() => {
                     setQuestionDraft(createEmptyQuestionDraft());
                     setQuestionOptionInput('');
-                    setExtraFieldInput('');
                   }}
                   className="ds-btn ds-btn-secondary"
                 >
@@ -3016,41 +3228,124 @@ export default function MonitoreoGestionMonitoreos({ embedded = false, initialCr
                 </button>
               </div>
 
-              <div className="space-y-2">
-                {(selectedSection.questions || []).length ? (
-                  selectedSection.questions.map((question, index) => (
-                    <div key={question.id} className="rounded-xl border border-slate-800/80 bg-slate-900/55 px-3 py-2.5">
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <p className="text-sm font-medium text-slate-100">
-                            {index + 1}. {question.text}
-                          </p>
-                          <p className="text-small mt-1">
-                            {QUESTION_TYPE_OPTIONS.find((option) => option.value === question.type)?.label ||
-                              question.type}
-                            {question.required ? ' | Obligatoria' : ''}
-                            {question.allowObservation ? ' | Con observaciones' : ''}
-                          </p>
+              <div className="space-y-3">
+                <p className="ds-field-label">Preguntas por seccion (arrastra para ordenar o mover)</p>
+                {(selectedSheet.sections || []).length ? (
+                  <div className="grid gap-3 xl:grid-cols-2">
+                    {(selectedSheet.sections || []).map((section) => (
+                      <div
+                        key={section.id}
+                        className={`rounded-xl border p-3 ${
+                          selectedSectionId === section.id
+                            ? 'border-cyan-400/50 bg-cyan-500/10'
+                            : 'border-slate-800/80 bg-slate-900/55'
+                        }`}
+                      >
+                        <div className="mb-2 flex items-center justify-between gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setSelectedSectionId(section.id)}
+                            className="min-w-0 text-left"
+                          >
+                            <p className="truncate text-sm font-semibold text-slate-100">{section.name}</p>
+                          </button>
+                          <span className="text-small">{(section.questions || []).length} preguntas</span>
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => handleDeleteQuestion(question.id)}
-                          className="ds-btn ds-btn-danger h-8 px-2"
-                        >
-                          <Trash2 size={12} />
-                        </button>
+
+                        <div className="space-y-2">
+                          {(section.questions || []).map((question, index) => {
+                            const cleanedText =
+                              sanitizeQuestionText(question.text) || String(question.text || '').trim();
+                            const questionLabel = cleanedText || 'Pregunta sin enunciado';
+                            const isDraggingCurrent = draggingQuestion?.questionId === question.id;
+                            return (
+                              <div
+                                key={question.id}
+                                draggable
+                                onDragStart={(event) =>
+                                  handleQuestionDragStart(event, section.id, question.id, questionLabel)
+                                }
+                                onDragEnd={handleQuestionDragEnd}
+                                onDragOver={(event) => event.preventDefault()}
+                                onDrop={(event) => {
+                                  event.preventDefault();
+                                  event.stopPropagation();
+                                  handleQuestionDropOnQuestion(section.id, question.id);
+                                }}
+                                className={`rounded-xl border px-3 py-2.5 ${
+                                  isDraggingCurrent
+                                    ? 'cursor-grabbing border-cyan-400/80 bg-cyan-500/20 ring-1 ring-cyan-400/35'
+                                    : 'cursor-grab border-slate-800/80 bg-slate-900/65'
+                                }`}
+                              >
+                                <div className="flex items-start justify-between gap-3">
+                                  <div>
+                                    <p className="text-sm font-medium text-slate-100">
+                                      {index + 1}. {questionLabel}
+                                    </p>
+                                    <p className="text-small mt-1">
+                                      {QUESTION_TYPE_OPTIONS.find((option) => option.value === question.type)?.label ||
+                                        question.type}
+                                      {question.required ? ' | Obligatoria' : ''}
+                                      {question.allowObservation ? ' | Con observaciones' : ''}
+                                      {question.predictiveSearch ? ' | Predictor IE' : ''}
+                                    </p>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDeleteQuestion(question.id, section.id)}
+                                    className="ds-btn ds-btn-danger h-8 px-2"
+                                  >
+                                    <Trash2 size={12} />
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          })}
+
+                          <div
+                            onDragOver={(event) => event.preventDefault()}
+                            onDrop={(event) => {
+                              event.preventDefault();
+                              handleQuestionDropOnSection(section.id);
+                            }}
+                            className="rounded-lg border border-dashed border-slate-700/80 bg-slate-900/30 px-3 py-2 text-small"
+                          >
+                            {(section.questions || []).length
+                              ? 'Suelta aqui para enviar al final de esta seccion.'
+                              : 'Suelta aqui para agregar la pregunta a esta seccion.'}
+                          </div>
+                        </div>
                       </div>
-                    </div>
-                  ))
+                    ))}
+                  </div>
                 ) : (
-                  <p className="text-small">No hay preguntas en la seccion activa.</p>
+                  <p className="text-small">No hay secciones creadas en la ficha activa.</p>
                 )}
+              </div>
+            </Card>
+          ) : selectedSheet ? (
+            <Card className="min-w-0 space-y-4">
+              <SectionHeader
+                eyebrow="Etapa 6"
+                title="Preguntas"
+                description="Cada pregunta pertenece a una seccion de la ficha activa."
+              />
+              {renderSheetGrouping({
+                id: 'activeSheetForQuestionsEmpty',
+                label: 'Ficha activa para preguntas',
+                helper: 'Selecciona una seccion en la Etapa 5 para esta ficha.',
+              })}
+              <div className="rounded-xl border border-dashed border-slate-700/80 bg-slate-900/40 p-3">
+                <p className="text-small">
+                  La ficha activa aun no tiene una seccion seleccionada. Ve a la Etapa 5 para crear o elegir una.
+                </p>
               </div>
             </Card>
           ) : (
             <StageDisabled
-              title="Etapa 7 - Preguntas"
-              description="Selecciona una seccion para registrar preguntas con tipos de respuesta."
+              title="Etapa 6 - Preguntas"
+              description="Selecciona una ficha y crea secciones para registrar preguntas."
             />
           )) : null}
         </div>
