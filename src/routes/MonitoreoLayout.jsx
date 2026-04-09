@@ -1,18 +1,22 @@
 import { createContext, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
+  Bell,
   BarChart3,
   Building2,
   CalendarRange,
   ChevronLeft,
   ChevronRight,
   ClipboardList,
+  Clock3,
+  FileClock,
   LayoutDashboard,
   LogOut,
   Loader2,
   PanelLeftOpen,
   Send,
   Settings,
+  TriangleAlert,
   Users,
   X,
 } from 'lucide-react';
@@ -44,6 +48,9 @@ const REDUCE_MOTION_STORAGE_KEY = 'monitoreoReduceMotion';
 const SETTINGS_EVENT_NAME = 'monitoreo-settings-updated';
 const SESSION_ACTIVITY_PREFIX = 'monitoreoSessionLastActivity';
 const SESSION_LOGOUT_REASON_KEY = 'monitoreoSessionLogoutReason';
+const NOTIFICATIONS_STORAGE_KEY = 'monitoreoNotifications';
+const AUTOSAVE_ALERT_KEY = 'monitoreoAutosaveAlert';
+const AUTOSAVE_ALERT_EVENT_NAME = 'monitoreo-autosave-alert-updated';
 const SESSION_LOGOUT_REASON_INACTIVITY = 'inactivity';
 const SESSION_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
 const SESSION_ACTIVITY_WRITE_THROTTLE_MS = 10 * 1000;
@@ -79,6 +86,12 @@ const WIZARD_EMPTY_DRAFT = {
   responsibles: [],
   eventId: '',
   templateId: '',
+};
+const DEFAULT_NOTIFICATION_PREFS = {
+  monitoringDue: true,
+  systemAlerts: true,
+  agendaReminders: true,
+  channel: 'system',
 };
 const WIZARD_FIELD_ALIASES = {
   titulo: 'title',
@@ -326,6 +339,149 @@ const toCount = (value) => {
 };
 
 const withPlural = (count, singular, plural) => `${count} ${count === 1 ? singular : plural}`;
+
+const readNotificationPreferences = () => {
+  try {
+    const raw = JSON.parse(localStorage.getItem(NOTIFICATIONS_STORAGE_KEY) || '{}');
+    return {
+      monitoringDue:
+        typeof raw.monitoringDue === 'boolean'
+          ? raw.monitoringDue
+          : DEFAULT_NOTIFICATION_PREFS.monitoringDue,
+      systemAlerts:
+        typeof raw.systemAlerts === 'boolean'
+          ? raw.systemAlerts
+          : DEFAULT_NOTIFICATION_PREFS.systemAlerts,
+      agendaReminders:
+        typeof raw.agendaReminders === 'boolean'
+          ? raw.agendaReminders
+          : DEFAULT_NOTIFICATION_PREFS.agendaReminders,
+      channel:
+        raw.channel === 'system' || raw.channel === 'email'
+          ? raw.channel
+          : DEFAULT_NOTIFICATION_PREFS.channel,
+    };
+  } catch {
+    return { ...DEFAULT_NOTIFICATION_PREFS };
+  }
+};
+
+const readAutosaveAlert = () => {
+  try {
+    const raw = JSON.parse(localStorage.getItem(AUTOSAVE_ALERT_KEY) || 'null');
+    if (!raw || typeof raw !== 'object') return null;
+    if (!raw.message || !raw.at) return null;
+    return {
+      message: String(raw.message),
+      at: String(raw.at),
+    };
+  } catch {
+    return null;
+  }
+};
+
+const buildNotificationFeedItems = ({
+  role = ROLE_SPECIALIST,
+  context = null,
+  prefs = null,
+  autosaveAlert = null,
+} = {}) => {
+  const notificationPrefs = prefs || DEFAULT_NOTIFICATION_PREFS;
+  const items = [];
+
+  if (notificationPrefs.systemAlerts && autosaveAlert?.message) {
+    items.push({
+      id: 'autosave-error',
+      priority: 1,
+      tone: 'critical',
+      count: 1,
+      icon: TriangleAlert,
+      title: 'Error en autoguardado',
+      description: `${autosaveAlert.message} (${new Date(autosaveAlert.at).toLocaleString()})`,
+      actionLabel: 'Abrir reportes',
+      actionPath: '/monitoreo/reportes',
+    });
+  }
+
+  if (!context) return items;
+  const overdueMonitoring = toCount(context.overdueMonitoring) + toCount(context.overdueTemplates);
+  const dueSoonMonitoring = toCount(context.dueSoonMonitoring);
+  const pendingReports = toCount(context.pendingReports);
+  const upcomingActivities = toCount(context.upcomingActivities);
+  const draftCount = toCount(context.draftCount);
+
+  if (notificationPrefs.systemAlerts && overdueMonitoring > 0) {
+    items.push({
+      id: 'overdue-monitoring',
+      priority: 1,
+      tone: 'critical',
+      count: overdueMonitoring,
+      icon: TriangleAlert,
+      title: `${withPlural(overdueMonitoring, 'monitoreo vencido', 'monitoreos vencidos')}`,
+      description: 'Hay monitoreos fuera de plazo que requieren atencion inmediata.',
+      actionLabel: 'Revisar reportes',
+      actionPath: '/monitoreo/reportes',
+    });
+  }
+
+  if (notificationPrefs.monitoringDue && dueSoonMonitoring > 0) {
+    items.push({
+      id: 'due-soon-monitoring',
+      priority: 2,
+      tone: 'warning',
+      count: dueSoonMonitoring,
+      icon: Clock3,
+      title: `${withPlural(dueSoonMonitoring, 'monitoreo por vencer', 'monitoreos por vencer')}`,
+      description: 'Monitoreos con vencimiento dentro de los proximos 7 dias.',
+      actionLabel: 'Ir a seguimiento',
+      actionPath: '/monitoreo/seguimiento',
+    });
+  }
+
+  if (notificationPrefs.agendaReminders && upcomingActivities > 0) {
+    items.push({
+      id: 'upcoming-activities',
+      priority: 3,
+      tone: 'info',
+      count: upcomingActivities,
+      icon: CalendarRange,
+      title: `${withPlural(upcomingActivities, 'actividad programada', 'actividades programadas')}`,
+      description: 'Tareas y eventos de agenda pendientes en los proximos dias.',
+      actionLabel: 'Ver agenda',
+      actionPath: '/monitoreo/seguimiento',
+    });
+  }
+
+  if (notificationPrefs.systemAlerts && role === ROLE_ADMIN && pendingReports > 0) {
+    items.push({
+      id: 'pending-reports',
+      priority: 4,
+      tone: 'neutral',
+      count: pendingReports,
+      icon: FileClock,
+      title: `${withPlural(pendingReports, 'reporte pendiente', 'reportes pendientes')}`,
+      description: 'Reportes aun no completados por especialistas.',
+      actionLabel: 'Abrir reportes',
+      actionPath: '/monitoreo/reportes',
+    });
+  }
+
+  if (notificationPrefs.systemAlerts && role !== ROLE_ADMIN && draftCount > 0) {
+    items.push({
+      id: 'draft-forms',
+      priority: 4,
+      tone: 'neutral',
+      count: draftCount,
+      icon: FileClock,
+      title: `${withPlural(draftCount, 'ficha incompleta', 'fichas incompletas')}`,
+      description: 'Tienes avances guardados automaticamente para retomar.',
+      actionLabel: 'Continuar ficha',
+      actionPath: '/monitoreo/reportes',
+    });
+  }
+
+  return items.sort((a, b) => a.priority - b.priority);
+};
 
 const resolveAssistantState = ({ role = ROLE_SPECIALIST, context = null } = {}) => {
   if (!context) return ASSISTANT_STATE_NORMAL;
@@ -995,9 +1151,12 @@ export default function MonitoreoLayout() {
     () => localStorage.getItem('monitoreoSidebarCollapsed') === 'true',
   );
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
+  const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const [isAssistantOpen, setIsAssistantOpen] = useState(
     () => localStorage.getItem('monitoreoAssistantOpen') === 'true',
   );
+  const [notificationPrefs, setNotificationPrefs] = useState(() => readNotificationPreferences());
+  const [autosaveAlert, setAutosaveAlert] = useState(() => readAutosaveAlert());
   const [assistantInput, setAssistantInput] = useState('');
   const [isAssistantLoading, setIsAssistantLoading] = useState(false);
   const [assistantMessages, setAssistantMessages] = useState([buildGreetingMessage()]);
@@ -1014,6 +1173,8 @@ export default function MonitoreoLayout() {
   const assistantMessagesEndRef = useRef(null);
   const assistantInputRef = useRef(null);
   const assistantToggleButtonRef = useRef(null);
+  const notificationsPanelRef = useRef(null);
+  const notificationsToggleButtonRef = useRef(null);
   const mobileSidebarRef = useRef(null);
   const mobileSidebarButtonRef = useRef(null);
   const sessionTimeoutRef = useRef(null);
@@ -1129,6 +1290,21 @@ export default function MonitoreoLayout() {
     () => buildStorageKey(SESSION_ACTIVITY_PREFIX, assistantUserKey),
     [assistantUserKey],
   );
+  const notificationItems = useMemo(
+    () =>
+      buildNotificationFeedItems({
+        role: userRole,
+        context: assistantGreetingContext,
+        prefs: notificationPrefs,
+        autosaveAlert,
+      }),
+    [userRole, assistantGreetingContext, notificationPrefs, autosaveAlert],
+  );
+  const notificationTotalCount = useMemo(
+    () => notificationItems.reduce((total, item) => total + toCount(item.count), 0),
+    [notificationItems],
+  );
+  const notificationBadgeText = useMemo(() => toBadgeLabel(notificationTotalCount), [notificationTotalCount]);
 
   const isFicha = location.pathname.includes('/monitoreo/ficha-escritura');
   const applyPreferences = (
@@ -1172,6 +1348,8 @@ export default function MonitoreoLayout() {
       setAssistantQuickSuggestions(nextAssistantQuickSuggestions);
       setAssistantCloseOnOutside(nextAssistantCloseOnOutside);
       setAssistantClearOnLogout(nextAssistantClearOnLogout);
+      setNotificationPrefs(readNotificationPreferences());
+      setAutosaveAlert(readAutosaveAlert());
       if (
         nextAssistantMode === ASSISTANT_MODE_PERSISTENT ||
         nextAssistantMode === ASSISTANT_MODE_TEMPORARY
@@ -2298,9 +2476,11 @@ export default function MonitoreoLayout() {
 
   useEffect(() => {
     window.addEventListener(SETTINGS_EVENT_NAME, syncSettingsFromStorage);
+    window.addEventListener(AUTOSAVE_ALERT_EVENT_NAME, syncSettingsFromStorage);
     window.addEventListener('storage', syncSettingsFromStorage);
     return () => {
       window.removeEventListener(SETTINGS_EVENT_NAME, syncSettingsFromStorage);
+      window.removeEventListener(AUTOSAVE_ALERT_EVENT_NAME, syncSettingsFromStorage);
       window.removeEventListener('storage', syncSettingsFromStorage);
     };
   }, [syncSettingsFromStorage]);
@@ -2315,6 +2495,7 @@ export default function MonitoreoLayout() {
 
   useEffect(() => {
     setIsMobileSidebarOpen(false);
+    setIsNotificationsOpen(false);
   }, [location.pathname]);
 
   useEffect(() => {
@@ -2405,6 +2586,32 @@ export default function MonitoreoLayout() {
       window.removeEventListener('keydown', handleEscape);
     };
   }, [isAssistantOpen, assistantCloseOnOutside]);
+
+  useEffect(() => {
+    if (!isNotificationsOpen) return;
+
+    const handlePointerDown = (event) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (notificationsPanelRef.current?.contains(target)) return;
+      if (notificationsToggleButtonRef.current?.contains(target)) return;
+      setIsNotificationsOpen(false);
+    };
+
+    const handleEscape = (event) => {
+      if (event.key === 'Escape') {
+        setIsNotificationsOpen(false);
+      }
+    };
+
+    window.addEventListener('pointerdown', handlePointerDown);
+    window.addEventListener('keydown', handleEscape);
+
+    return () => {
+      window.removeEventListener('pointerdown', handlePointerDown);
+      window.removeEventListener('keydown', handleEscape);
+    };
+  }, [isNotificationsOpen]);
 
   useEffect(() => {
     let resolvedMode = ASSISTANT_MODE_PERSISTENT;
@@ -3804,6 +4011,23 @@ export default function MonitoreoLayout() {
               <div className="flex items-center gap-2">
                 <button
                   type="button"
+                  onClick={() => {
+                    setIsAssistantOpen(false);
+                    setIsNotificationsOpen((prev) => !prev);
+                  }}
+                  className="relative inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-700/60 text-slate-300 transition hover:border-slate-500/70"
+                  aria-label="Notificaciones"
+                  title="Notificaciones"
+                >
+                  <Bell size={15} />
+                  {notificationBadgeText ? (
+                    <span className="pointer-events-none absolute -right-1 -top-1 inline-flex min-w-[17px] items-center justify-center rounded-full border border-cyan-400/45 bg-cyan-500/25 px-1 py-0.5 text-[10px] font-semibold leading-none text-cyan-50">
+                      {notificationBadgeText}
+                    </span>
+                  ) : null}
+                </button>
+                <button
+                  type="button"
                   onClick={() => setIsSettingsOpen(true)}
                   className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-700/60 text-slate-300 transition hover:border-slate-500/70"
                   aria-label="Ajustes"
@@ -3832,6 +4056,91 @@ export default function MonitoreoLayout() {
         />
       ) : null}
       <div className={`fixed right-6 z-40 flex flex-col items-end ${isCompactDensity ? 'bottom-5 gap-2.5' : 'bottom-6 gap-3'}`}>
+        {isNotificationsOpen ? (
+          <div
+            ref={notificationsPanelRef}
+            role="dialog"
+            aria-label="Notificaciones"
+            aria-modal="false"
+            className={
+              isCompactDensity
+                ? 'w-[min(90vw,392px)] max-h-[calc(100vh-5.5rem)] overflow-hidden rounded-2xl border border-slate-800/70 bg-slate-900/75 text-[13px] text-slate-200 shadow-[0_20px_60px_-30px_rgba(0,0,0,0.75)] backdrop-blur'
+                : 'w-[min(92vw,420px)] max-h-[calc(100vh-6rem)] overflow-hidden rounded-2xl border border-slate-800/70 bg-slate-900/75 text-sm text-slate-200 shadow-[0_20px_60px_-30px_rgba(0,0,0,0.75)] backdrop-blur'
+            }
+          >
+            <div className={`flex items-center justify-between border-b border-slate-800/70 ${isCompactDensity ? 'px-3.5 py-2.5' : 'px-4 py-3'}`}>
+              <div className="flex items-center gap-2">
+                <span className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-cyan-500/40 bg-cyan-500/12 text-cyan-100">
+                  <Bell size={14} />
+                </span>
+                <div>
+                  <p className="text-sm font-semibold text-slate-100">Notificaciones</p>
+                  <p className="text-xs text-slate-400">
+                    {notificationItems.length
+                      ? `${notificationItems.length} alerta${notificationItems.length === 1 ? '' : 's'} activa${notificationItems.length === 1 ? '' : 's'}`
+                      : 'Sin alertas activas'}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsNotificationsOpen(false)}
+                className="rounded-full border border-slate-700/60 p-1 text-slate-300 transition hover:border-slate-500"
+                aria-label="Cerrar notificaciones"
+              >
+                <X size={14} />
+              </button>
+            </div>
+            <div className={isCompactDensity ? 'space-y-2 overflow-y-auto px-3 py-3' : 'space-y-2.5 overflow-y-auto px-4 py-4'}>
+              {notificationItems.length ? (
+                notificationItems.map((item) => {
+                  const Icon = item.icon || Bell;
+                  const toneClass =
+                    item.tone === 'critical'
+                      ? 'border-rose-500/45 bg-rose-500/12'
+                      : item.tone === 'warning'
+                        ? 'border-amber-500/45 bg-amber-500/12'
+                        : item.tone === 'info'
+                          ? 'border-cyan-500/45 bg-cyan-500/12'
+                          : 'border-slate-700/65 bg-slate-800/45';
+                  return (
+                    <article key={item.id} className={`rounded-xl border p-3 ${toneClass}`}>
+                      <div className="flex items-start gap-2.5">
+                        <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-slate-600/70 bg-slate-900/70 text-slate-200">
+                          <Icon size={14} />
+                        </span>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <p className="truncate text-sm font-semibold text-slate-100">{item.title}</p>
+                            <span className="inline-flex min-w-[20px] items-center justify-center rounded-full border border-slate-600/70 bg-slate-900/70 px-1.5 py-0.5 text-[10px] font-semibold text-slate-200">
+                              {toBadgeLabel(item.count) || '1'}
+                            </span>
+                          </div>
+                          <p className="mt-1 text-xs leading-5 text-slate-300/90">{item.description}</p>
+                          <button
+                            type="button"
+                            className="mt-2 inline-flex rounded-lg border border-cyan-500/45 bg-cyan-500/15 px-3 py-1.5 text-xs font-semibold text-cyan-100 transition hover:border-cyan-400/70 hover:bg-cyan-500/25"
+                            onClick={() => {
+                              setIsNotificationsOpen(false);
+                              navigate(item.actionPath);
+                            }}
+                          >
+                            {item.actionLabel}
+                          </button>
+                        </div>
+                      </div>
+                    </article>
+                  );
+                })
+              ) : (
+                <div className="rounded-xl border border-slate-800/70 bg-slate-900/60 px-4 py-5 text-center">
+                  <p className="text-sm font-semibold text-slate-100">Todo en orden</p>
+                  <p className="mt-1 text-xs text-slate-400">No hay alertas pendientes en este momento.</p>
+                </div>
+              )}
+            </div>
+          </div>
+        ) : null}
         {isAssistantOpen ? (
           <div
             ref={assistantPanelRef}
@@ -4163,9 +4472,34 @@ export default function MonitoreoLayout() {
           </div>
         ) : null}
         <button
+          ref={notificationsToggleButtonRef}
+          type="button"
+          onClick={() => {
+            setIsAssistantOpen(false);
+            setIsNotificationsOpen((current) => !current);
+          }}
+          aria-label="Notificaciones"
+          title="Notificaciones"
+          className={
+            isCompactDensity
+              ? 'relative inline-flex h-11 w-11 items-center justify-center rounded-full border border-amber-400/45 bg-amber-500/18 text-amber-100 shadow-lg transition hover:border-amber-300/75'
+              : 'relative inline-flex h-12 w-12 items-center justify-center rounded-full border border-amber-400/45 bg-amber-500/18 text-amber-100 shadow-lg transition hover:border-amber-300/75'
+          }
+        >
+          <Bell size={19} />
+          {notificationBadgeText ? (
+            <span className="pointer-events-none absolute -right-1 -top-1 inline-flex min-w-[18px] items-center justify-center rounded-full border border-cyan-400/45 bg-cyan-500/25 px-1 py-0.5 text-[10px] font-semibold leading-none text-cyan-50">
+              {notificationBadgeText}
+            </span>
+          ) : null}
+        </button>
+        <button
           ref={assistantToggleButtonRef}
           type="button"
-          onClick={() => setIsAssistantOpen((current) => !current)}
+          onClick={() => {
+            setIsNotificationsOpen(false);
+            setIsAssistantOpen((current) => !current);
+          }}
           className={assistantToggleButtonClass}
           aria-label="Abrir asistente"
         >

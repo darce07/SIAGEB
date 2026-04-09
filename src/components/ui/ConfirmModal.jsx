@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { AlertTriangle, Info, ShieldAlert, X } from 'lucide-react';
 
 const toneMap = {
@@ -47,7 +48,7 @@ export default function ConfirmModal({
   const theme = toneMap[tone] || toneMap.danger;
   const Icon = theme.icon;
 
-  return (
+  const modalNode = (
     <div
       className="ds-modal-backdrop"
       onClick={onCancel}
@@ -101,4 +102,7 @@ export default function ConfirmModal({
       </div>
     </div>
   );
+
+  if (typeof document === 'undefined') return modalNode;
+  return createPortal(modalNode, document.body);
 }

@@ -296,6 +296,40 @@ export default function MonitoreoSelect() {
       return false;
     }
     const now = new Date().toISOString();
+
+    // Reutiliza una instancia en progreso para evitar duplicados al retomar la ficha.
+    const { data: existingRows, error: existingError } = await supabase
+      .from('monitoring_instances')
+      .select('id,data,updated_at')
+      .eq('template_id', template.id)
+      .eq('created_by', userId)
+      .eq('status', 'in_progress')
+      .order('updated_at', { ascending: false })
+      .limit(20);
+
+    if (existingError) {
+      console.error(existingError);
+      openNoticeModal(
+        'No se pudo continuar',
+        'No se pudo validar si ya tienes una ficha en progreso.',
+        'warning',
+      );
+      return false;
+    }
+
+    const rows = Array.isArray(existingRows) ? existingRows : [];
+    const targetSheetId = String(selectedSheetId || '');
+    const matched = rows.find((row) => {
+      const rowSheetId = String(row?.data?.meta?.selectedSheetId || '');
+      if (!targetSheetId) return true;
+      return rowSheetId === targetSheetId;
+    });
+
+    if (matched?.id) {
+      localStorage.setItem('monitoreoInstanceActive', matched.id);
+      return true;
+    }
+
     const { data, error } = await supabase
       .from('monitoring_instances')
       .insert([

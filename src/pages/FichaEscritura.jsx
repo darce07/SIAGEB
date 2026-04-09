@@ -20,6 +20,8 @@ const INSTANCE_ACTIVE_KEY = 'monitoreoInstanceActive';
 
 const TEMPLATE_KEY = 'monitoreoTemplateSelected';
 const TEMPLATE_SHEET_KEY = 'monitoreoTemplateSheetSelected';
+const AUTOSAVE_ALERT_KEY = 'monitoreoAutosaveAlert';
+const AUTOSAVE_ALERT_EVENT_NAME = 'monitoreo-autosave-alert-updated';
 const loadSelectedTemplate = async (selectedId) => {
   try {
     if (!selectedId) return { template: null, error: null };
@@ -364,7 +366,32 @@ const getActiveInstance = async () => {
 };
 
 const upsertInstance = async (instance) => {
-  await supabase.from('monitoring_instances').upsert(instance, { onConflict: 'id' });
+  const { error } = await supabase.from('monitoring_instances').upsert(instance, { onConflict: 'id' });
+  if (error) throw error;
+};
+
+const pushAutosaveAlert = (message) => {
+  try {
+    localStorage.setItem(
+      AUTOSAVE_ALERT_KEY,
+      JSON.stringify({
+        message: message || 'No se pudieron guardar los cambios en Supabase.',
+        at: new Date().toISOString(),
+      }),
+    );
+    window.dispatchEvent(new Event(AUTOSAVE_ALERT_EVENT_NAME));
+  } catch {
+    // noop
+  }
+};
+
+const clearAutosaveAlert = () => {
+  try {
+    localStorage.removeItem(AUTOSAVE_ALERT_KEY);
+    window.dispatchEvent(new Event(AUTOSAVE_ALERT_EVENT_NAME));
+  } catch {
+    // noop
+  }
 };
 
 const createInstance = async (templateId, templateStatus, selectedSheetId = '') => {
@@ -876,14 +903,26 @@ export default function FichaEscritura() {
 
   useEffect(() => {
     if (!activeInstance || isReadOnly) return;
-    const now = new Date().toISOString();
-    const payload = {
-      ...activeInstance,
-      updated_at: now,
-      status: activeInstance.status || 'in_progress',
-      data: serializeStateWithSheet(state, selectedSheetId),
+    let active = true;
+    const persistDraft = async () => {
+      try {
+        const now = new Date().toISOString();
+        const payload = {
+          ...activeInstance,
+          updated_at: now,
+          status: activeInstance.status || 'in_progress',
+          data: serializeStateWithSheet(state, selectedSheetId),
+        };
+        await upsertInstance(payload);
+        if (active) clearAutosaveAlert();
+      } catch {
+        if (active) pushAutosaveAlert('No se pudieron guardar los cambios automaticos de la ficha.');
+      }
     };
-    upsertInstance(payload);
+    persistDraft();
+    return () => {
+      active = false;
+    };
   }, [activeInstance, isReadOnly, selectedSheetId, state]);
 
   useEffect(() => {
@@ -1073,6 +1112,28 @@ export default function FichaEscritura() {
       }
     }
 
+    if (!isReadOnly && !instanceToSave) {
+      pushAutosaveAlert('No se pudo crear la ficha activa para guardar tus cambios.');
+      setToast('No se pudo preparar el guardado. Intenta nuevamente.');
+      return;
+    }
+
+    if (instanceToSave && !isReadOnly) {
+      try {
+        const now = new Date().toISOString();
+        await upsertInstance({
+          ...instanceToSave,
+          updated_at: now,
+          status: instanceToSave.status || 'in_progress',
+          data: serializeStateWithSheet(state, selectedSheetId),
+        });
+      } catch {
+        pushAutosaveAlert('No se pudieron guardar tus cambios en Supabase.');
+        setToast('Error de guardado. Verifica tu conexion e intenta nuevamente.');
+        return;
+      }
+    }
+
     dispatch({
       type: 'MARK_SAVED',
       value: true,
@@ -1080,29 +1141,26 @@ export default function FichaEscritura() {
     });
     dispatch({ type: 'SET_ERRORS', payload: {} });
     setToast('Cambios guardados correctamente.');
-    if (instanceToSave && !isReadOnly) {
-      const now = new Date().toISOString();
-      upsertInstance({
-        ...instanceToSave,
-        updated_at: now,
-        status: instanceToSave.status || 'in_progress',
-        data: serializeStateWithSheet(state, selectedSheetId),
-      });
-    }
+    clearAutosaveAlert();
   };
 
   const handleReset = () => {
     setIsResetConfirmOpen(true);
   };
 
-  const handleConfirmReset = () => {
+  const handleConfirmReset = async () => {
     if (activeInstance) {
-      upsertInstance({
-        ...activeInstance,
-        updated_at: new Date().toISOString(),
-        status: 'in_progress',
-        data: serializeStateWithSheet(createInitialState(templateSections), selectedSheetId),
-      });
+      try {
+        await upsertInstance({
+          ...activeInstance,
+          updated_at: new Date().toISOString(),
+          status: 'in_progress',
+          data: serializeStateWithSheet(createInitialState(templateSections), selectedSheetId),
+        });
+        clearAutosaveAlert();
+      } catch {
+        pushAutosaveAlert('No se pudo reiniciar la ficha en Supabase.');
+      }
     }
     dispatch({ type: 'RESET', sections: templateSections });
     setIsResetConfirmOpen(false);

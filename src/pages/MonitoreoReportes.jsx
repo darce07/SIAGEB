@@ -1246,83 +1246,87 @@ export default function MonitoreoReportes() {
     <div className="flex flex-col gap-6">
       <Card className="flex flex-col gap-5">
         <SectionHeader title="Reportes" size="page" />
+        <p className="text-sm text-slate-400">
+          Consulta y gestiona los resultados de monitoreos institucionales.
+        </p>
 
-        <div className="flex flex-wrap items-center gap-2">
-          <p className="inline-flex h-7 items-center rounded-lg border border-slate-700/60 bg-slate-900/50 px-2.5 text-[10px] uppercase tracking-[0.12em] text-slate-400">
-            Estado
-          </p>
-          <span className="inline-flex h-7 items-center gap-1.5 rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-2.5 text-[11px] text-cyan-100">
-            <span className="font-semibold">{summary.total}</span>
-            <span>Total</span>
-          </span>
-          <span className="inline-flex h-7 items-center gap-1.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-2.5 text-[11px] text-emerald-100">
-            <span className="font-semibold">{summary.in_progress}</span>
-            <span>En progreso</span>
-          </span>
-          <span className="inline-flex h-7 items-center gap-1.5 rounded-lg border border-indigo-500/30 bg-indigo-500/10 px-2.5 text-[11px] text-indigo-100">
-            <span className="font-semibold">{summary.completed}</span>
-            <span>Completados</span>
-          </span>
-          <span className="inline-flex h-7 items-center gap-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 px-2.5 text-[11px] text-amber-100">
-            <span className="font-semibold">{summary.expired}</span>
-            <span>Vencidos</span>
-          </span>
-          <span className="inline-flex h-7 items-center gap-1.5 rounded-lg border border-slate-600/70 bg-slate-800/60 px-2.5 text-[11px] text-slate-200">
-            <span className="font-semibold">{summary.draft}</span>
-            <span>Borradores</span>
-          </span>
-        </div>
+        <div className="rounded-2xl border border-slate-800/70 bg-slate-900/45 px-4 py-4">
+          <p className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Filtros</p>
 
-        <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_190px_220px_auto] lg:items-end">
-          <label className="flex flex-col gap-1.5">
-            <span className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Buscar</span>
-            <div className="flex items-center gap-2 rounded-xl border border-slate-700/70 bg-slate-900/60 px-3 py-2">
-              <Search size={14} className="text-slate-500" />
-              <input
-                value={searchTerm}
-                onChange={(event) => setSearchTerm(event.target.value)}
-                    placeholder="Monitoreo, IE o referencia..."
-                className="w-full bg-transparent text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none"
-              />
-            </div>
-          </label>
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <span className="inline-flex h-7 items-center gap-1.5 rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-2.5 text-[11px] text-cyan-100">
+              <span className="font-semibold">{summary.total}</span>
+              <span>Total</span>
+            </span>
+            <span className="inline-flex h-7 items-center gap-1.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-2.5 text-[11px] text-emerald-100">
+              <span className="font-semibold">{summary.in_progress}</span>
+              <span>En progreso</span>
+            </span>
+            <span className="inline-flex h-7 items-center gap-1.5 rounded-lg border border-indigo-500/30 bg-indigo-500/10 px-2.5 text-[11px] text-indigo-100">
+              <span className="font-semibold">{summary.completed}</span>
+              <span>Completados</span>
+            </span>
+            <span className="inline-flex h-7 items-center gap-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 px-2.5 text-[11px] text-amber-100">
+              <span className="font-semibold">{summary.expired}</span>
+              <span>Vencidos</span>
+            </span>
+            <span className="inline-flex h-7 items-center gap-1.5 rounded-lg border border-slate-600/70 bg-slate-800/60 px-2.5 text-[11px] text-slate-200">
+              <span className="font-semibold">{summary.draft}</span>
+              <span>Borradores</span>
+            </span>
+          </div>
 
-          <label className="flex flex-col gap-1.5">
-            <span className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Estado</span>
-            <select
-              value={statusFilter}
-              onChange={(event) => setStatusFilter(event.target.value)}
-              className="h-[38px] rounded-xl border border-slate-700/70 bg-slate-900/60 px-3 text-sm text-slate-100 focus:border-cyan-400 focus:outline-none focus:ring-2 focus:ring-cyan-500/30"
-            >
-              {stateFilters.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
+          <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,1fr)_190px_220px_auto] lg:items-end">
+            <label className="flex flex-col gap-1.5">
+              <span className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Buscar</span>
+              <div className="flex items-center gap-2 rounded-xl border border-slate-700/70 bg-slate-900/60 px-3 py-2">
+                <Search size={14} className="text-slate-500" />
+                <input
+                  value={searchTerm}
+                  onChange={(event) => setSearchTerm(event.target.value)}
+                      placeholder="Monitoreo, IE o referencia..."
+                  className="w-full bg-transparent text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none"
+                />
+              </div>
+            </label>
 
-          <label className="flex flex-col gap-1.5">
-            <span className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Ordenar</span>
-            <div className="flex items-center gap-2 rounded-xl border border-slate-700/70 bg-slate-900/60 px-3">
-              <ArrowUpDown size={13} className="text-slate-500" />
+            <label className="flex flex-col gap-1.5">
+              <span className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Estado</span>
               <select
-                value={sortBy}
-                onChange={(event) => setSortBy(event.target.value)}
-                className="h-[38px] w-full bg-transparent text-sm text-slate-100 focus:outline-none"
+                value={statusFilter}
+                onChange={(event) => setStatusFilter(event.target.value)}
+                className="h-[38px] rounded-xl border border-slate-700/70 bg-slate-900/60 px-3 text-sm text-slate-100 focus:border-cyan-400 focus:outline-none focus:ring-2 focus:ring-cyan-500/30"
               >
-                <option value="recent">Más recientes</option>
-                <option value="due">Próximo vencimiento</option>
-                <option value="name">Nombre (A-Z)</option>
+                {stateFilters.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
               </select>
-            </div>
-          </label>
+            </label>
 
-          <div className="rounded-xl border border-slate-700/60 bg-slate-900/45 px-3 py-2 text-xs text-slate-300">
-            Mostrando: <span className="font-semibold text-slate-100">{visibleReportCount}</span>{' '}
-            {pluralize(visibleReportCount, 'reporte', 'reportes')} en{' '}
-            <span className="font-semibold text-slate-100">{groupedReports.length}</span>{' '}
-            {pluralize(groupedReports.length, 'monitoreo', 'monitoreos')}
+            <label className="flex flex-col gap-1.5">
+              <span className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Ordenar</span>
+              <div className="flex items-center gap-2 rounded-xl border border-slate-700/70 bg-slate-900/60 px-3">
+                <ArrowUpDown size={13} className="text-slate-500" />
+                <select
+                  value={sortBy}
+                  onChange={(event) => setSortBy(event.target.value)}
+                  className="h-[38px] w-full bg-transparent text-sm text-slate-100 focus:outline-none"
+                >
+                  <option value="recent">Más recientes</option>
+                  <option value="due">Próximo vencimiento</option>
+                  <option value="name">Nombre (A-Z)</option>
+                </select>
+              </div>
+            </label>
+
+            <div className="rounded-xl border border-slate-700/60 bg-slate-900/45 px-3 py-2 text-xs text-slate-300">
+              Mostrando: <span className="font-semibold text-slate-100">{visibleReportCount}</span>{' '}
+              {pluralize(visibleReportCount, 'reporte', 'reportes')} en{' '}
+              <span className="font-semibold text-slate-100">{groupedReports.length}</span>{' '}
+              {pluralize(groupedReports.length, 'monitoreo', 'monitoreos')}
+            </div>
           </div>
         </div>
 
@@ -1350,18 +1354,29 @@ export default function MonitoreoReportes() {
           </div>
         ) : (
           <div className={`grid gap-4 ${isSelectedDetailVisible ? 'xl:grid-cols-[minmax(0,1fr)_340px]' : ''}`}>
-            <div className="space-y-3">
+            <div className="space-y-4">
               {groupedReports.map((group) => {
                 const groupMeta = REPORT_STATE_META[group.groupState] || REPORT_STATE_META.active;
                 const isExpanded = Boolean(expandedGroups[group.groupKey]);
                 const templateRow = group.reports.find((row) => row?.template?.id) || null;
                 return (
-                  <section key={group.groupKey} className="rounded-2xl border border-slate-800/70 bg-slate-900/45 px-3 py-3">
-                    <button
-                      type="button"
-                      onClick={() => toggleGroup(group.groupKey)}
-                      className="flex w-full items-start justify-between gap-3 text-left"
-                    >
+                  <section
+                    key={group.groupKey}
+                    role="button"
+                    tabIndex={0}
+                    aria-expanded={isExpanded}
+                    onClick={() => toggleGroup(group.groupKey)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault();
+                        toggleGroup(group.groupKey);
+                      }
+                    }}
+                    className={`rounded-2xl border border-slate-800/70 bg-slate-900/45 px-3 py-3 shadow-[0_10px_26px_rgba(2,6,23,0.22)] transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/50 ${
+                      'cursor-pointer hover:-translate-y-0.5 hover:border-cyan-400/35 hover:shadow-[0_16px_34px_rgba(6,182,212,0.12)]'
+                    }`}
+                  >
+                    <div className="flex w-full items-start justify-between gap-3 rounded-xl px-1 py-1 text-left">
                       <div className="min-w-0">
                         <p title={group.templateTitle} className="max-w-[68ch] truncate text-sm font-semibold text-slate-100">
                           {truncateLabel(group.templateTitle, 74)}
@@ -1385,17 +1400,19 @@ export default function MonitoreoReportes() {
                           {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                         </span>
                       </div>
-                    </button>
+                    </div>
 
                     {templateRow?.template?.id ? (
                       <div className="mt-2.5 flex justify-end">
                         <button
                           type="button"
-                          onClick={() =>
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            event.preventDefault();
                             handleCreateReport(templateRow.template, {
                               reuseExisting: false,
-                            })
-                          }
+                            });
+                          }}
                           className="inline-flex items-center gap-2 rounded-full border border-cyan-500/35 bg-cyan-500/10 px-3 py-1.5 text-xs font-semibold text-cyan-100 transition hover:border-cyan-400/65"
                         >
                           Crear reporte
@@ -1437,13 +1454,13 @@ export default function MonitoreoReportes() {
                                       </span>
                                     </div>
                                     <p className="mt-1 text-xs text-slate-400">
-                                      Este monitoreo ya está creado, pero aún no tiene reportes.
+                                      Aun no hay reportes registrados. Este monitoreo esta activo pero aun no tiene formularios completados.
                                     </p>
                                     <div className="mt-2.5 flex flex-wrap gap-2">
                                       <button
                                         type="button"
                                         onClick={() => handleCreateReport(row.template, { reuseExisting: false })}
-                                        className="inline-flex items-center gap-2 rounded-full border border-cyan-500/35 bg-cyan-500/10 px-3 py-1.5 text-xs font-semibold text-cyan-100 transition hover:border-cyan-400/65"
+                                        className="inline-flex items-center gap-2 rounded-full border border-cyan-400/60 bg-cyan-500/20 px-3 py-1.5 text-xs font-semibold text-cyan-100 transition hover:border-cyan-300 hover:bg-cyan-500/30"
                                       >
                                         Crear reporte
                                       </button>
