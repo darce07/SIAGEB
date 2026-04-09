@@ -993,43 +993,49 @@ export default function MonitoreoUsuarios() {
                   const isProtectedAdmin = isUserProtectedLastAdmin(user);
                   const isOwnAccount = currentProfile?.id === rowId;
                   return (
-                    <div key={rowId} className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-slate-800/70 bg-slate-950/40 p-4 text-sm">
+                    <div key={rowId} className="rounded-xl border border-slate-800/70 bg-slate-950/40 p-4 text-sm">
                       <div className="space-y-1">
                         <p
                           title={user.full_name || `${user.first_name || ''} ${user.last_name || ''}`.trim()}
-                          className="max-w-[48ch] truncate text-sm font-semibold text-slate-100"
+                          className="text-sm font-semibold text-slate-100 sm:max-w-[48ch] sm:truncate"
                         >
                           {user.full_name || `${user.first_name || ''} ${user.last_name || ''}`.trim()}
                         </p>
-                        <p title={user.email || 'Sin correo'} className="max-w-[48ch] truncate text-xs text-slate-400">
+                        <p title={user.email || 'Sin correo'} className="break-all text-xs text-slate-400 sm:max-w-[48ch] sm:truncate">
                           {user.email || 'Sin correo'}
                         </p>
                         <p className="text-xs text-slate-500">Creado: {user.created_at ? new Date(user.created_at).toLocaleDateString() : '-'}</p>
                       </div>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="rounded-full border border-slate-700/60 bg-slate-900/60 px-3 py-1 text-xs text-slate-300">{user.role === 'admin' ? 'Administrador' : 'Especialista'}</span>
-                        <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${user.status === 'active' ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200' : 'border-amber-500/40 bg-amber-500/10 text-amber-200'}`}>{user.status === 'active' ? 'Activo' : 'Desactivado'}</span>
-                        <button type="button" onClick={() => handleEdit(user)} className="inline-flex items-center gap-2 rounded-full border border-slate-700/60 px-4 py-2 text-xs font-semibold text-slate-300 transition hover:border-slate-500" title="Editar usuario"><Pencil size={14} />Editar</button>
-                        <button type="button" onClick={() => openDetailsModal(user)} className="inline-flex items-center gap-2 rounded-full border border-slate-700/60 px-4 py-2 text-xs font-semibold text-slate-200 transition hover:border-slate-500" title="Ver detalles"><Eye size={14} />Ver</button>
+                      <div className="mt-3 flex flex-wrap items-center gap-2">
+                        <span className="rounded-full border border-slate-700/60 bg-slate-900/60 px-3 py-1 text-xs text-slate-300">
+                          {user.role === 'admin' ? 'Administrador' : 'Especialista'}
+                        </span>
+                        <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${user.status === 'active' ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200' : 'border-amber-500/40 bg-amber-500/10 text-amber-200'}`}>
+                          {user.status === 'active' ? 'Activo' : 'Desactivado'}
+                        </span>
+                      </div>
+                      <div className="mt-3 grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center">
+                        <button type="button" onClick={() => handleEdit(user)} className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-slate-700/60 px-3 py-2 text-xs font-semibold text-slate-300 transition hover:border-slate-500 sm:w-auto sm:rounded-full sm:px-4" title="Editar usuario"><Pencil size={14} />Editar</button>
+                        <button type="button" onClick={() => openDetailsModal(user)} className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-slate-700/60 px-3 py-2 text-xs font-semibold text-slate-200 transition hover:border-slate-500 sm:w-auto sm:rounded-full sm:px-4" title="Ver detalles"><Eye size={14} />Ver</button>
                         {user.status === 'active' ? (
                           <button
                             type="button"
                             onClick={() => setDisableTarget({ ...user, id: rowId })}
                             disabled={isProtectedAdmin}
-                            className="inline-flex items-center gap-2 rounded-full border border-amber-500/30 px-4 py-2 text-xs font-semibold text-amber-200 transition hover:border-amber-400/60 disabled:cursor-not-allowed disabled:opacity-50"
+                            className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-amber-500/30 px-3 py-2 text-xs font-semibold text-amber-200 transition hover:border-amber-400/60 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto sm:rounded-full sm:px-4"
                             title={isProtectedAdmin ? 'No puedes desactivar al último administrador activo' : 'Desactivar usuario'}
                           >
                             <UserX size={14} />
                             Desactivar
                           </button>
                         ) : (
-                          <button type="button" onClick={() => handleActivate(user)} className="inline-flex items-center gap-2 rounded-full border border-emerald-500/30 px-4 py-2 text-xs font-semibold text-emerald-200 transition hover:border-emerald-400/60" title="Activar usuario"><UserCheck size={14} />Activar</button>
+                          <button type="button" onClick={() => handleActivate(user)} className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-emerald-500/30 px-3 py-2 text-xs font-semibold text-emerald-200 transition hover:border-emerald-400/60 sm:w-auto sm:rounded-full sm:px-4" title="Activar usuario"><UserCheck size={14} />Activar</button>
                         )}
                         <button
                           type="button"
                           onClick={() => openDeleteModal(user)}
                           disabled={isOwnAccount || isProtectedAdmin}
-                          className="inline-flex items-center gap-2 rounded-full border border-rose-500/35 px-4 py-2 text-xs font-semibold text-rose-200 transition hover:border-rose-400/60 disabled:cursor-not-allowed disabled:opacity-50"
+                          className="col-span-2 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-rose-500/35 px-3 py-2 text-xs font-semibold text-rose-200 transition hover:border-rose-400/60 disabled:cursor-not-allowed disabled:opacity-50 sm:col-span-1 sm:w-auto sm:rounded-full sm:px-4"
                           title={
                             isOwnAccount
                               ? 'No puedes eliminar tu propia cuenta'
