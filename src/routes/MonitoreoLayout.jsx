@@ -4049,13 +4049,17 @@ export default function MonitoreoLayout() {
           </main>
         </div>
       </div>
-      {isAssistantOpen ? (
+      {isAssistantOpen || isNotificationsOpen ? (
         <div
           aria-hidden="true"
-          className="pointer-events-none fixed inset-0 z-30 bg-slate-950/15 transition-opacity"
+          className="fixed inset-0 z-30 bg-slate-950/55 transition-opacity"
         />
       ) : null}
-      <div className={`fixed right-6 z-40 flex flex-col items-end ${isCompactDensity ? 'bottom-5 gap-2.5' : 'bottom-6 gap-3'}`}>
+      <div
+        className={`fixed right-3 z-40 flex flex-col items-end sm:right-6 ${
+          isCompactDensity ? 'bottom-4 gap-2 sm:bottom-5 sm:gap-2.5' : 'bottom-4 gap-2 sm:bottom-6 sm:gap-3'
+        }`}
+      >
         {isNotificationsOpen ? (
           <div
             ref={notificationsPanelRef}
@@ -4064,8 +4068,8 @@ export default function MonitoreoLayout() {
             aria-modal="false"
             className={
               isCompactDensity
-                ? 'w-[min(90vw,392px)] max-h-[calc(100vh-5.5rem)] overflow-hidden rounded-2xl border border-slate-800/70 bg-slate-900/75 text-[13px] text-slate-200 shadow-[0_20px_60px_-30px_rgba(0,0,0,0.75)] backdrop-blur'
-                : 'w-[min(92vw,420px)] max-h-[calc(100vh-6rem)] overflow-hidden rounded-2xl border border-slate-800/70 bg-slate-900/75 text-sm text-slate-200 shadow-[0_20px_60px_-30px_rgba(0,0,0,0.75)] backdrop-blur'
+                ? 'mb-1 w-[calc(100vw-1.5rem)] max-h-[62vh] overflow-hidden rounded-2xl border border-slate-700/90 bg-slate-950/96 text-[13px] text-slate-200 shadow-[0_22px_70px_-26px_rgba(0,0,0,0.9)] sm:mb-0 sm:w-[min(90vw,392px)] sm:max-h-[calc(100vh-5.5rem)]'
+                : 'mb-1 w-[calc(100vw-1.5rem)] max-h-[64vh] overflow-hidden rounded-2xl border border-slate-700/90 bg-slate-950/96 text-sm text-slate-200 shadow-[0_22px_70px_-26px_rgba(0,0,0,0.9)] sm:mb-0 sm:w-[min(92vw,420px)] sm:max-h-[calc(100vh-6rem)]'
             }
           >
             <div className={`flex items-center justify-between border-b border-slate-800/70 ${isCompactDensity ? 'px-3.5 py-2.5' : 'px-4 py-3'}`}>
@@ -4482,8 +4486,8 @@ export default function MonitoreoLayout() {
           title="Notificaciones"
           className={
             isCompactDensity
-              ? 'relative inline-flex h-11 w-11 items-center justify-center rounded-full border border-amber-400/45 bg-amber-500/18 text-amber-100 shadow-lg transition hover:border-amber-300/75'
-              : 'relative inline-flex h-12 w-12 items-center justify-center rounded-full border border-amber-400/45 bg-amber-500/18 text-amber-100 shadow-lg transition hover:border-amber-300/75'
+              ? 'relative inline-flex h-10 w-10 items-center justify-center rounded-full border border-amber-400/45 bg-amber-500/18 text-amber-100 shadow-lg transition hover:border-amber-300/75 sm:h-11 sm:w-11'
+              : 'relative inline-flex h-10 w-10 items-center justify-center rounded-full border border-amber-400/45 bg-amber-500/18 text-amber-100 shadow-lg transition hover:border-amber-300/75 sm:h-12 sm:w-12'
           }
         >
           <Bell size={19} />
@@ -4500,7 +4504,7 @@ export default function MonitoreoLayout() {
             setIsNotificationsOpen(false);
             setIsAssistantOpen((current) => !current);
           }}
-          className={assistantToggleButtonClass}
+          className={`${assistantToggleButtonClass} h-10 w-10 sm:h-12 sm:w-12`}
           aria-label="Abrir asistente"
         >
           <img src={chatbotIcon} alt="" className="h-7 w-7" />
