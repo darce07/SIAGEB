@@ -1194,11 +1194,11 @@ export default function MonitoreoInstituciones() {
           onClick={() => setDetailTarget(null)}
         >
           <div
-            className="max-h-[84vh] w-full overflow-y-auto rounded-t-2xl border border-slate-700/80 bg-slate-900 p-4 shadow-[0_30px_80px_rgba(2,6,23,0.85)] md:max-h-[90vh] md:max-w-3xl md:rounded-2xl md:p-7"
+            className="max-h-[84vh] w-full overflow-y-auto rounded-t-2xl border border-slate-700/80 bg-slate-900 p-4 pb-24 shadow-[0_30px_80px_rgba(2,6,23,0.85)] md:max-h-[90vh] md:max-w-3xl md:rounded-2xl md:p-7"
             onClick={(event) => event.stopPropagation()}
           >
-            <div className="mb-4 flex items-center justify-between gap-3 border-b border-slate-800/70 pb-4">
-              <p className="text-lg font-semibold text-slate-100">Detalle de institucion educativa</p>
+            <div className="sticky top-0 z-10 -mx-1 mb-4 flex items-center justify-between gap-3 border-b border-slate-800/70 bg-slate-900/95 px-1 pb-4 pt-1 backdrop-blur">
+              <p className="text-lg font-semibold text-slate-100">Detalle de IE</p>
               <button
                 type="button"
                 onClick={() => setDetailTarget(null)}
@@ -1208,7 +1208,7 @@ export default function MonitoreoInstituciones() {
               </button>
             </div>
 
-            <div className="grid gap-3 md:grid-cols-2">
+            <div className="overflow-hidden rounded-xl border border-slate-800/70 bg-slate-900/55">
               {[
                 ['Nombre IE', detailTarget.nombre_ie],
                 ['Codigo local', detailTarget.cod_local],
@@ -1219,13 +1219,15 @@ export default function MonitoreoInstituciones() {
                 ['REI', detailTarget.rei],
                 ['Director(a)', detailTarget.nombre_director],
                 ['Estado', formatStatusLabel(detailTarget.estado)],
-              ].map(([label, value]) => (
+              ].map(([label, value], index, collection) => (
                 <div
                   key={label}
-                  className="min-h-14 rounded-xl border border-slate-800/70 bg-slate-900/60 px-4 py-3"
+                  className={`grid grid-cols-[120px_1fr] px-3 py-3 text-sm ${
+                    index < collection.length - 1 ? 'border-b border-slate-800/70' : ''
+                  }`}
                 >
-                  <p className="text-[10px] uppercase tracking-[0.14em] text-slate-500">{label}</p>
-                  <p className="mt-1 text-sm text-slate-100">{value || '-'}</p>
+                  <p className="text-[10px] uppercase tracking-[0.12em] text-slate-500">{label}</p>
+                  <p className="truncate text-slate-100">{value || '-'}</p>
                 </div>
               ))}
             </div>

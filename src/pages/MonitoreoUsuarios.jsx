@@ -993,30 +993,45 @@ export default function MonitoreoUsuarios() {
                   const isProtectedAdmin = isUserProtectedLastAdmin(user);
                   const isOwnAccount = currentProfile?.id === rowId;
                   return (
-                    <div key={rowId} className="rounded-xl border border-slate-800/70 bg-slate-950/40 p-4 text-sm">
+                    <div key={rowId} className="rounded-2xl border border-slate-800/70 bg-slate-950/40 p-3.5 text-sm">
                       <div className="space-y-1">
                         <p
                           title={user.full_name || `${user.first_name || ''} ${user.last_name || ''}`.trim()}
-                          className="text-sm font-semibold text-slate-100 sm:max-w-[48ch] sm:truncate"
+                          className="truncate text-sm font-semibold text-slate-100 sm:max-w-[48ch]"
                         >
                           {user.full_name || `${user.first_name || ''} ${user.last_name || ''}`.trim()}
                         </p>
-                        <p title={user.email || 'Sin correo'} className="break-all text-xs text-slate-400 sm:max-w-[48ch] sm:truncate">
+                        <p title={user.email || 'Sin correo'} className="truncate text-xs text-slate-400 sm:max-w-[48ch]">
                           {user.email || 'Sin correo'}
                         </p>
-                        <p className="text-xs text-slate-500">Creado: {user.created_at ? new Date(user.created_at).toLocaleDateString() : '-'}</p>
                       </div>
-                      <div className="mt-3 flex flex-wrap items-center gap-2">
-                        <span className="rounded-full border border-slate-700/60 bg-slate-900/60 px-3 py-1 text-xs text-slate-300">
+                      <div className="mt-2.5 flex flex-wrap items-center gap-2">
+                        <span className="rounded-full border border-slate-700/60 bg-slate-900/60 px-2.5 py-0.5 text-[11px] text-slate-300">
                           {user.role === 'admin' ? 'Administrador' : 'Especialista'}
                         </span>
-                        <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${user.status === 'active' ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200' : 'border-amber-500/40 bg-amber-500/10 text-amber-200'}`}>
+                        <span className={`rounded-full border px-2.5 py-0.5 text-[11px] font-semibold ${user.status === 'active' ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200' : 'border-amber-500/40 bg-amber-500/10 text-amber-200'}`}>
                           {user.status === 'active' ? 'Activo' : 'Desactivado'}
                         </span>
                       </div>
-                      <div className="mt-3 grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center">
+                      <div className="mt-3 overflow-hidden rounded-xl border border-slate-800/70 bg-slate-900/55">
+                        <div className="grid grid-cols-[96px_1fr] border-b border-slate-800/70 px-3 py-2 text-xs">
+                          <p className="text-[10px] uppercase tracking-[0.12em] text-slate-500">Documento</p>
+                          <p className="truncate text-slate-200">{user.doc_type || '-'} {user.doc_number || '-'}</p>
+                        </div>
+                        <div className="grid grid-cols-[96px_1fr] border-b border-slate-800/70 px-3 py-2 text-xs">
+                          <p className="text-[10px] uppercase tracking-[0.12em] text-slate-500">Creado</p>
+                          <p className="truncate text-slate-200">{user.created_at ? new Date(user.created_at).toLocaleDateString() : '-'}</p>
+                        </div>
+                        <div className="grid grid-cols-[96px_1fr] px-3 py-2 text-xs">
+                          <p className="text-[10px] uppercase tracking-[0.12em] text-slate-500">Actualizado</p>
+                          <p className="truncate text-slate-200">{user.updated_at ? new Date(user.updated_at).toLocaleDateString() : '-'}</p>
+                        </div>
+                      </div>
+                      <div className="mt-3 grid grid-cols-2 gap-2">
                         <button type="button" onClick={() => handleEdit(user)} className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-slate-700/60 px-3 py-2 text-xs font-semibold text-slate-300 transition hover:border-slate-500 sm:w-auto sm:rounded-full sm:px-4" title="Editar usuario"><Pencil size={14} />Editar</button>
                         <button type="button" onClick={() => openDetailsModal(user)} className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-slate-700/60 px-3 py-2 text-xs font-semibold text-slate-200 transition hover:border-slate-500 sm:w-auto sm:rounded-full sm:px-4" title="Ver detalles"><Eye size={14} />Ver</button>
+                      </div>
+                      <div className="mt-2 grid grid-cols-2 gap-2">
                         {user.status === 'active' ? (
                           <button
                             type="button"
@@ -1035,7 +1050,7 @@ export default function MonitoreoUsuarios() {
                           type="button"
                           onClick={() => openDeleteModal(user)}
                           disabled={isOwnAccount || isProtectedAdmin}
-                          className="col-span-2 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-rose-500/35 px-3 py-2 text-xs font-semibold text-rose-200 transition hover:border-rose-400/60 disabled:cursor-not-allowed disabled:opacity-50 sm:col-span-1 sm:w-auto sm:rounded-full sm:px-4"
+                          className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-rose-500/35 px-3 py-2 text-xs font-semibold text-rose-200 transition hover:border-rose-400/60 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto sm:rounded-full sm:px-4"
                           title={
                             isOwnAccount
                               ? 'No puedes eliminar tu propia cuenta'
@@ -1083,14 +1098,40 @@ export default function MonitoreoUsuarios() {
           />
 
           {detailsTarget ? (
-            <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/75 p-4 backdrop-blur-md md:p-6" onClick={closeDetailsModal}>
-              <div className="w-full max-w-4xl max-h-[88vh] overflow-y-auto rounded-2xl border border-slate-600/80 bg-slate-900 p-7 shadow-[0_30px_80px_rgba(2,6,23,0.85)] md:p-8" onClick={(event) => event.stopPropagation()}>
+            <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/75 p-0 backdrop-blur-md md:items-center md:p-6" onClick={closeDetailsModal}>
+              <div className="max-h-[84vh] w-full overflow-y-auto rounded-t-2xl border border-slate-600/80 bg-slate-900 p-4 pb-24 shadow-[0_30px_80px_rgba(2,6,23,0.85)] md:max-h-[88vh] md:max-w-4xl md:rounded-2xl md:p-8" onClick={(event) => event.stopPropagation()}>
                 <div className="sticky top-0 z-10 -mx-1 mb-2 flex items-center justify-between gap-3 border-b border-slate-800/70 bg-slate-900/95 px-1 pb-4 backdrop-blur">
-                  <p className="text-xl font-semibold text-slate-100">Detalles del usuario</p>
+                  <p className="text-xl font-semibold text-slate-100">Detalle de usuario</p>
                   <button type="button" onClick={closeDetailsModal} className="rounded-full border border-slate-700/60 px-3 py-1.5 text-xs text-slate-300">Cerrar</button>
                 </div>
 
-                <div className="mt-6 grid gap-5">
+                <div className="mt-4 grid gap-5 md:hidden">
+                  <div className="overflow-hidden rounded-xl border border-slate-800/70 bg-slate-900/55">
+                    {[
+                      ['Nombres', detailsTarget.first_name],
+                      ['Apellidos', detailsTarget.last_name],
+                      ['Correo', detailsTarget.email],
+                      ['Documento', `${detailsTarget.doc_type || '-'} ${detailsTarget.doc_number || '-'}`],
+                      ['Rol', detailsTarget.role === 'admin' ? 'Administrador' : 'Especialista'],
+                      ['Estado', detailsTarget.status === 'active' ? 'Activo' : 'Desactivado'],
+                      ['Creado', detailsTarget.created_at ? new Date(detailsTarget.created_at).toLocaleString() : '-'],
+                      ['Actualizado', detailsTarget.updated_at ? new Date(detailsTarget.updated_at).toLocaleString() : '-'],
+                      ['UID', detailsTarget.id],
+                    ].map(([label, value], index, collection) => (
+                      <div
+                        key={label}
+                        className={`grid grid-cols-[96px_1fr] px-3 py-3 text-xs ${
+                          index < collection.length - 1 ? 'border-b border-slate-800/70' : ''
+                        }`}
+                      >
+                        <p className="text-[10px] uppercase tracking-[0.12em] text-slate-500">{label}</p>
+                        <p className="truncate text-slate-100">{value || '-'}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="mt-6 hidden gap-5 md:grid">
                   <div className="rounded-xl border border-slate-800/70 bg-slate-950/40 p-4 md:p-5">
                     <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">Datos personales</p>
                     <div className="mt-3 grid gap-3 md:grid-cols-2">
