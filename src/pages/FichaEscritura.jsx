@@ -57,6 +57,63 @@ const getTemplateStatus = (template) => {
   return startAt || endAt ? 'scheduled' : 'active';
 };
 
+const onlyDigits = (value) => String(value || '').replace(/\D/g, '');
+
+const normalizeInstitutionCodes = (codLocalRaw, codModularRaw) => {
+  const codLocalDigits = onlyDigits(codLocalRaw);
+  const codModularDigits = onlyDigits(codModularRaw);
+
+  let codLocal = codLocalDigits.length === 6 ? codLocalDigits : '';
+  let codModular = codModularDigits.length === 7 ? codModularDigits : '';
+
+  // Handle swapped values: local=7 and modular=6.
+  if (!codLocal && codModularDigits.length === 6) codLocal = codModularDigits;
+  if (!codModular && codLocalDigits.length === 7) codModular = codLocalDigits;
+
+  // Fallbacks when source quality is poor.
+  if (!codLocal && codLocalDigits.length === 6) codLocal = codLocalDigits;
+  if (!codModular && codModularDigits.length === 7) codModular = codModularDigits;
+  if (!codLocal) codLocal = codLocalDigits || codModularDigits || '';
+  if (!codModular) codModular = codModularDigits || codLocalDigits || '';
+
+  return { cod_local: codLocal, cod_modular: codModular };
+};
+
+const normalizeInstitutionRecord = (record) => {
+  const normalizedCodes = normalizeInstitutionCodes(record?.cod_local, record?.cod_modular);
+  return {
+    ...record,
+    cod_local: normalizedCodes.cod_local,
+    cod_modular: normalizedCodes.cod_modular,
+  };
+};
+
+const dedupeInstitutionCatalog = (records) => {
+  const byKey = new Map();
+  (records || []).forEach((raw) => {
+    const item = normalizeInstitutionRecord(raw);
+    const key = [
+      String(item?.nombre_ie || '').trim().toUpperCase(),
+      String(item?.distrito || '').trim().toUpperCase(),
+      String(item?.cod_local || '').trim(),
+      String(item?.cod_modular || '').trim(),
+    ].join('|');
+
+    const score =
+      (String(item?.cod_local || '').length === 6 ? 2 : 0) +
+      (String(item?.cod_modular || '').length === 7 ? 2 : 0) +
+      (item?.estado === 'active' ? 1 : 0) +
+      (item?.nombre_director ? 1 : 0);
+
+    const current = byKey.get(key);
+    if (!current || score > current.score) {
+      byKey.set(key, { score, item });
+    }
+  });
+
+  return Array.from(byKey.values()).map((entry) => entry.item);
+};
+
 const BUILDER_HEADER_FIELD_LABELS = {
   institution_name: 'Institucion educativa',
   cod_modular: 'Codigo modular',
@@ -833,7 +890,7 @@ export default function FichaEscritura() {
         return;
       }
 
-      setInstitutionCatalog(data || []);
+      setInstitutionCatalog(dedupeInstitutionCatalog(data || []));
       setIsInstitutionCatalogLoading(false);
     };
 
