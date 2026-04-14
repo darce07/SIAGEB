@@ -6,6 +6,7 @@ import Input from '../components/ui/Input.jsx';
 import SectionHeader from '../components/ui/SectionHeader.jsx';
 import ConfirmModal from '../components/ui/ConfirmModal.jsx';
 import { supabase } from '../lib/supabase.js';
+import { getRoleLabel } from '../lib/roles.js';
 
 const AVATAR_BUCKET = 'avatars';
 
@@ -66,7 +67,7 @@ export default function MonitoreoPerfil() {
   const [passwordSuccess, setPasswordSuccess] = useState('');
   const [isSavingPassword, setIsSavingPassword] = useState(false);
 
-  const roleLabel = auth?.role === 'admin' ? 'Administrador' : 'Especialista';
+  const roleLabel = getRoleLabel(auth?.role);
 
   useEffect(() => {
     const hydrateProfile = async () => {

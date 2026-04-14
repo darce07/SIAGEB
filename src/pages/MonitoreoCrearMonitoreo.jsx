@@ -4,6 +4,7 @@ import { Lock, Plus, Trash2, Copy, ArrowUp, ArrowDown } from 'lucide-react';
 import Card from '../components/ui/Card.jsx';
 import ConfirmModal from '../components/ui/ConfirmModal.jsx';
 import Input from '../components/ui/Input.jsx';
+import Select from '../components/ui/Select.jsx';
 import SectionHeader from '../components/ui/SectionHeader.jsx';
 import Textarea from '../components/ui/Textarea.jsx';
 import { LEVEL_INFO } from '../data/fichaEscritura.js';
@@ -56,6 +57,34 @@ const mapAvailabilityToEventStatus = (status) => {
   return 'active';
 };
 
+const MONITOR_ROLE_SET = new Set(['user', 'especialista', 'jefe_area']);
+
+const sanitizeAssignedMonitorIds = (values) => {
+  const safeValues = Array.isArray(values) ? values : [];
+  return [...new Set(safeValues.map((value) => String(value || '').trim()).filter(Boolean))];
+};
+
+const mapMonitorProfile = (row) => {
+  const fullName = String(row?.full_name || '').trim();
+  const composed = [row?.first_name, row?.last_name]
+    .map((value) => String(value || '').trim())
+    .filter(Boolean)
+    .join(' ')
+    .trim();
+  return {
+    id: String(row?.id || '').trim(),
+    name: fullName || composed || String(row?.email || '').trim() || 'Monitor sin nombre',
+    email: String(row?.email || '').trim(),
+  };
+};
+
+const normalizeText = (value) =>
+  String(value || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/\p{Diacritic}/gu, '')
+    .trim();
+
 export default function MonitoreoCrearMonitoreo() {
   const navigate = useNavigate();
   const { templateId } = useParams();
@@ -81,9 +110,15 @@ export default function MonitoreoCrearMonitoreo() {
   const [endAt, setEndAt] = useState(
     '',
   );
+  const [cddEnabled, setCddEnabled] = useState(false);
+  const [cddArea, setCddArea] = useState('');
   const [availabilityStatus, setAvailabilityStatus] = useState(
     'active',
   );
+  const [monitorCatalog, setMonitorCatalog] = useState([]);
+  const [assignedMonitorIds, setAssignedMonitorIds] = useState([]);
+  const [monitorSearch, setMonitorSearch] = useState('');
+  const [isMonitorsLoading, setIsMonitorsLoading] = useState(false);
   const [deleteSectionTarget, setDeleteSectionTarget] = useState(null);
   const [deleteQuestionTarget, setDeleteQuestionTarget] = useState(null);
   const [noticeModal, setNoticeModal] = useState({
@@ -144,6 +179,66 @@ export default function MonitoreoCrearMonitoreo() {
   }, [templateId]);
 
   useEffect(() => {
+    let active = true;
+    const fetchMonitors = async () => {
+      if (!isAdmin) {
+        if (active) setMonitorCatalog([]);
+        return;
+      }
+
+      setIsMonitorsLoading(true);
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('id,first_name,last_name,full_name,email,role,status')
+        .eq('status', 'active');
+      if (!active) return;
+
+      if (error) {
+        console.error(error);
+        setMonitorCatalog([]);
+      } else {
+        const mapped = (data || [])
+          .filter((row) => MONITOR_ROLE_SET.has(String(row?.role || '').toLowerCase()))
+          .map(mapMonitorProfile)
+          .filter((item) => item.id)
+          .sort((left, right) => String(left.name || '').localeCompare(String(right.name || ''), 'es', { sensitivity: 'base' }));
+        setMonitorCatalog(mapped);
+      }
+      setIsMonitorsLoading(false);
+    };
+
+    fetchMonitors();
+    return () => {
+      active = false;
+    };
+  }, [isAdmin]);
+
+  useEffect(() => {
+    let active = true;
+    const fetchAssignments = async () => {
+      if (!templateId || !isAdmin) {
+        if (active) setAssignedMonitorIds([]);
+        return;
+      }
+      const { data, error } = await supabase
+        .from('monitoring_template_monitors')
+        .select('user_id')
+        .eq('template_id', templateId);
+      if (!active) return;
+      if (error) {
+        console.error(error);
+        setAssignedMonitorIds([]);
+      } else {
+        setAssignedMonitorIds(sanitizeAssignedMonitorIds((data || []).map((item) => item.user_id)));
+      }
+    };
+    fetchAssignments();
+    return () => {
+      active = false;
+    };
+  }, [templateId, isAdmin]);
+
+  useEffect(() => {
     if (!editingTemplate) {
       setTitle('');
       setDescription('');
@@ -151,7 +246,13 @@ export default function MonitoreoCrearMonitoreo() {
       setLevels(defaultLevels);
       setStartAt('');
       setEndAt('');
+      setCddEnabled(false);
+      setCddArea('');
       setAvailabilityStatus('active');
+      if (!templateId) {
+        setAssignedMonitorIds([]);
+      }
+      setMonitorSearch('');
       return;
     }
     setTitle(editingTemplate.title || '');
@@ -172,8 +273,13 @@ export default function MonitoreoCrearMonitoreo() {
         ? editingTemplate.availability.endAt.slice(0, 16)
         : '',
     );
+    setCddEnabled(
+      String(editingTemplate.levelsConfig?.scope?.cdd || '').toLowerCase() === 'si',
+    );
+    setCddArea(String(editingTemplate.levelsConfig?.scope?.cddArea || '').trim());
     setAvailabilityStatus(editingTemplate.availability?.status || 'active');
-  }, [editingTemplate]);
+    setMonitorSearch('');
+  }, [editingTemplate, templateId]);
 
   useEffect(() => {
     if (!isAdmin) {
@@ -317,10 +423,62 @@ export default function MonitoreoCrearMonitoreo() {
     setLevels((prev) => removeIntermediate(prev, key));
   };
 
+  const selectedMonitorIdSet = useMemo(
+    () => new Set(sanitizeAssignedMonitorIds(assignedMonitorIds)),
+    [assignedMonitorIds],
+  );
+
+  const selectedMonitors = useMemo(() => {
+    if (!monitorCatalog.length || !selectedMonitorIdSet.size) return [];
+    const byId = new Map(monitorCatalog.map((item) => [item.id, item]));
+    return Array.from(selectedMonitorIdSet).map((id) => byId.get(id)).filter(Boolean);
+  }, [monitorCatalog, selectedMonitorIdSet]);
+
+  const filteredMonitors = useMemo(() => {
+    const term = normalizeText(monitorSearch);
+    const rows = monitorCatalog.filter((item) => {
+      if (!term) return true;
+      return normalizeText(`${item.name} ${item.email}`).includes(term);
+    });
+    return rows.sort((left, right) => {
+      const leftSelected = selectedMonitorIdSet.has(left.id);
+      const rightSelected = selectedMonitorIdSet.has(right.id);
+      if (leftSelected !== rightSelected) return leftSelected ? -1 : 1;
+      return String(left.name || '').localeCompare(String(right.name || ''), 'es', { sensitivity: 'base' });
+    });
+  }, [monitorCatalog, monitorSearch, selectedMonitorIdSet]);
+
+  const toggleMonitorAssignment = (monitorId) => {
+    if (!monitorId) return;
+    setAssignedMonitorIds((prev) => {
+      const current = sanitizeAssignedMonitorIds(prev);
+      if (current.includes(monitorId)) return current.filter((id) => id !== monitorId);
+      return [...current, monitorId];
+    });
+  };
+
   const persistTemplate = async (status) => {
     const now = new Date().toISOString();
     const auth = JSON.parse(localStorage.getItem('monitoreoAuth') || '{}');
     const profile = JSON.parse(localStorage.getItem('monitoreoProfile') || '{}');
+    if (cddEnabled && !String(cddArea || '').trim()) {
+      openNoticeModal(
+        'Falta area CdD',
+        'Define el area antes de guardar un monitoreo marcado como Compromiso de Desempeño.',
+        'warning',
+      );
+      return;
+    }
+    const nextAssignedMonitors = sanitizeAssignedMonitorIds(assignedMonitorIds);
+    if (status === 'published' && !nextAssignedMonitors.length) {
+      openNoticeModal(
+        'Falta asignar monitores',
+        'Selecciona al menos un monitor del Equipo antes de publicar.',
+        'warning',
+      );
+      return;
+    }
+
     const payload = {
       id: editingTemplate?.id || crypto.randomUUID(),
       title: title.trim(),
@@ -330,6 +488,13 @@ export default function MonitoreoCrearMonitoreo() {
       levels_config: {
         type: levels.length > 3 ? 'custom' : 'standard',
         levels,
+        scope: {
+          ...(editingTemplate?.levelsConfig?.scope && typeof editingTemplate.levelsConfig.scope === 'object'
+            ? editingTemplate.levelsConfig.scope
+            : {}),
+          cdd: cddEnabled ? 'si' : 'no',
+          cddArea: cddEnabled ? String(cddArea || '').trim() : '',
+        },
       },
       availability: {
         status: availabilityStatus,
@@ -348,6 +513,39 @@ export default function MonitoreoCrearMonitoreo() {
       console.error(error);
       openNoticeModal('No se pudo guardar', 'No se pudo guardar la plantilla.', 'danger');
       return;
+    }
+
+    const { error: clearAssignmentsError } = await supabase
+      .from('monitoring_template_monitors')
+      .delete()
+      .eq('template_id', payload.id);
+    if (clearAssignmentsError) {
+      console.error(clearAssignmentsError);
+      openNoticeModal(
+        'No se pudo guardar',
+        'La plantilla se guardo, pero no se pudo actualizar la asignacion de monitores.',
+        'warning',
+      );
+      return;
+    }
+
+    if (nextAssignedMonitors.length) {
+      const assignmentRows = nextAssignedMonitors.map((userId) => ({
+        template_id: payload.id,
+        user_id: userId,
+      }));
+      const { error: insertAssignmentsError } = await supabase
+        .from('monitoring_template_monitors')
+        .insert(assignmentRows);
+      if (insertAssignmentsError) {
+        console.error(insertAssignmentsError);
+        openNoticeModal(
+          'No se pudo guardar',
+          'La plantilla se guardo, pero no se pudo registrar la lista de monitores.',
+          'warning',
+        );
+        return;
+      }
     }
 
     if (startAt && endAt) {
@@ -379,6 +577,7 @@ export default function MonitoreoCrearMonitoreo() {
   };
 
   const isTitleValid = title.trim().length > 0;
+  const canPublishTemplate = isTitleValid && sanitizeAssignedMonitorIds(assignedMonitorIds).length > 0;
 
   return (
     <div className="flex flex-col gap-8">
@@ -421,6 +620,25 @@ export default function MonitoreoCrearMonitoreo() {
           />
           <Input id="estadoMonitoreo" label="Estado actual" value={availabilityStatus} disabled />
         </div>
+        <div className="grid gap-4 md:grid-cols-2">
+          <Select
+            id="cddFlag"
+            label="Compromiso de Desempeño (CdD)"
+            value={cddEnabled ? 'si' : 'no'}
+            onChange={(event) => setCddEnabled(event.target.value === 'si')}
+          >
+            <option value="no">No aplica</option>
+            <option value="si">Si aplica</option>
+          </Select>
+          <Input
+            id="cddArea"
+            label="Area (CdD)"
+            value={cddArea}
+            onChange={(event) => setCddArea(event.target.value)}
+            placeholder={cddEnabled ? 'Ej. Matematica' : 'Opcional'}
+            disabled={!cddEnabled}
+          />
+        </div>
         <div className="flex flex-wrap gap-3">
           <button
             type="button"
@@ -446,6 +664,61 @@ export default function MonitoreoCrearMonitoreo() {
           >
             Programar
           </button>
+        </div>
+
+        <div className="rounded-xl border border-slate-800/80 bg-slate-900/45 p-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-sm font-semibold text-slate-100">Monitores con acceso</p>
+            <span className="rounded-full border border-cyan-500/40 bg-cyan-500/10 px-2.5 py-1 text-[11px] text-cyan-100">
+              {selectedMonitors.length} seleccionado{selectedMonitors.length === 1 ? '' : 's'}
+            </span>
+          </div>
+          <p className="mt-1 text-xs text-slate-300">
+            Solo los monitores seleccionados en Equipo podran ver este monitoreo.
+          </p>
+          <div className="mt-2 grid gap-2 md:grid-cols-[minmax(0,1fr)_auto]">
+            <Input
+              id="monitorAccessSearch"
+              label="Buscar monitor"
+              value={monitorSearch}
+              onChange={(event) => setMonitorSearch(event.target.value)}
+              placeholder="Nombre o correo"
+            />
+            <button
+              type="button"
+              onClick={() => setMonitorSearch('')}
+              className="inline-flex h-10 items-center justify-center rounded-xl border border-slate-700/60 px-4 text-xs font-semibold text-slate-200 transition hover:border-slate-500 self-end"
+            >
+              Limpiar
+            </button>
+          </div>
+          {isMonitorsLoading ? <p className="mt-2 text-xs text-slate-300">Cargando equipo...</p> : null}
+          {!isMonitorsLoading ? (
+            <div className="mt-2 max-h-44 space-y-1 overflow-auto rounded-xl border border-slate-800/80 bg-slate-900/60 p-2">
+              {filteredMonitors.length ? (
+                filteredMonitors.map((monitor) => {
+                  const checked = selectedMonitorIdSet.has(monitor.id);
+                  return (
+                    <button
+                      key={monitor.id}
+                      type="button"
+                      onClick={() => toggleMonitorAssignment(monitor.id)}
+                      className={`flex w-full items-center justify-between rounded-lg border px-2.5 py-2 text-left text-xs transition ${
+                        checked
+                          ? 'border-cyan-400/60 bg-cyan-500/20 text-cyan-100'
+                          : 'border-slate-700/70 bg-slate-900/45 text-slate-300 hover:border-slate-500'
+                      }`}
+                    >
+                      <span className="truncate pr-2">{monitor.name}</span>
+                      <span className="truncate text-[11px] opacity-80">{monitor.email || 'Sin correo'}</span>
+                    </button>
+                  );
+                })
+              ) : (
+                <p className="px-1 py-2 text-xs text-slate-300">No hay monitores activos para mostrar.</p>
+              )}
+            </div>
+          ) : null}
         </div>
       </Card>
 
@@ -700,9 +973,10 @@ export default function MonitoreoCrearMonitoreo() {
         <button
           type="button"
           onClick={() => persistTemplate('published')}
-          disabled={!isTitleValid}
+          disabled={!canPublishTemplate}
+          title={canPublishTemplate ? 'Publicar' : 'Debes completar titulo y asignar al menos un monitor.'}
           className={`inline-flex items-center justify-center rounded-xl bg-slate-100 px-6 py-3 text-sm font-semibold text-slate-900 transition hover:bg-white ${
-            isTitleValid ? '' : 'cursor-not-allowed opacity-50'
+            canPublishTemplate ? '' : 'cursor-not-allowed opacity-50'
           }`}
         >
           Publicar

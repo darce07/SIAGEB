@@ -1,25 +1,35 @@
-import { useEffect, useMemo, useState } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+﻿import { useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
   CalendarDays,
+  CheckCircle2,
   ClipboardList,
-  Clock3,
-  FileClock,
-  MoveRight,
-  Settings,
-  Users,
-  BarChart3,
+  Loader2,
+  TrendingDown,
+  TrendingUp,
 } from 'lucide-react';
 import Card from '../components/ui/Card.jsx';
 import SectionHeader from '../components/ui/SectionHeader.jsx';
 import { supabase } from '../lib/supabase.js';
-import { HOME_QUICK_ACTIONS_BY_ROLE, HOME_WIDGETS_BY_ROLE } from '../config/roleUiConfig.js';
-import { ROLE_ADMIN, ROLE_SPECIALIST, resolveUserRole } from '../lib/roles.js';
+import { getRoleLabel, hasCddDashboardAccessRole } from '../lib/roles.js';
 
 const AUTH_KEY = 'monitoreoAuth';
-const ALERT_WINDOW_DAYS = 7;
-const AGENDA_ITEMS_LIMIT = 3;
+
+const MONTH_OPTIONS = [
+  { value: 'all', label: 'Todos' },
+  { value: '1', label: 'Enero' },
+  { value: '2', label: 'Febrero' },
+  { value: '3', label: 'Marzo' },
+  { value: '4', label: 'Abril' },
+  { value: '5', label: 'Mayo' },
+  { value: '6', label: 'Junio' },
+  { value: '7', label: 'Julio' },
+  { value: '8', label: 'Agosto' },
+  { value: '9', label: 'Septiembre' },
+  { value: '10', label: 'Octubre' },
+  { value: '11', label: 'Noviembre' },
+  { value: '12', label: 'Diciembre' },
+];
 
 const toSafeDate = (value) => {
   const parsed = value ? new Date(value) : null;
@@ -27,37 +37,29 @@ const toSafeDate = (value) => {
   return parsed;
 };
 
-const addDays = (date, amount) => {
-  const next = new Date(date);
-  next.setDate(next.getDate() + amount);
-  return next;
-};
-
-const isRangeOverlapping = (start, end, from, to) => {
-  if (!start || !end || !from || !to) return false;
-  return start <= to && end >= from;
-};
-
-const formatDateShort = (value) => {
+const formatDateTime = (value) => {
   const date = toSafeDate(value);
-  if (!date) return 'No registrado';
+  if (!date) return '-';
   return new Intl.DateTimeFormat('es-PE', {
     day: '2-digit',
     month: '2-digit',
     year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
   }).format(date);
 };
 
-const truncateLabel = (value, maxChars = 70) => {
-  const source = String(value || '').trim();
-  if (!source) return '';
-  if (source.length <= maxChars) return source;
-  return `${source.slice(0, Math.max(1, maxChars - 1)).trimEnd()}...`;
+const getTemplateScope = (template) => {
+  const levelsConfig = template?.levels_config;
+  if (!levelsConfig || typeof levelsConfig !== 'object') return {};
+  const scope = levelsConfig.scope;
+  if (!scope || typeof scope !== 'object') return {};
+  return scope;
 };
 
 const getTemplateStatus = (template) => {
   const availability = template?.availability || {};
-  const status = availability.status || 'scheduled';
+  const status = String(availability.status || 'active').toLowerCase();
   const startAt = toSafeDate(availability.startAt);
   const endAt = toSafeDate(availability.endAt);
   const now = new Date();
@@ -66,727 +68,811 @@ const getTemplateStatus = (template) => {
   if (status === 'closed') return 'closed';
   if (startAt && now < startAt) return 'scheduled';
   if (endAt && now > endAt) return 'closed';
-  if (status === 'active') return 'active';
-  return startAt || endAt ? 'scheduled' : 'active';
-};
-
-const eventTypeLabel = (type) => (String(type || '').toLowerCase() === 'activity' ? 'Actividad' : 'Monitoreo');
-
-const formatAgendaRange = (startAt, endAt) => {
-  const startLabel = formatDateShort(startAt);
-  const endLabel = formatDateShort(endAt);
-  return startLabel === endLabel ? startLabel : `${startLabel} - ${endLabel}`;
-};
-
-const normalizeTemplateEventStatus = (template) => {
-  const status = getTemplateStatus(template);
-  if (status === 'hidden') return 'hidden';
-  if (status === 'closed') return 'closed';
   return 'active';
 };
 
-const pluralize = (count, singular, plural) => (count === 1 ? singular : plural);
+const isCddPublishedTemplate = (template) => {
+  if (template?.status !== 'published') return false;
+  if (getTemplateStatus(template) !== 'active') return false;
+  const scope = getTemplateScope(template);
+  return String(scope?.cdd || '').toLowerCase() === 'si';
+};
 
-const isSameDay = (left, right) => {
-  if (!left || !right) return false;
-  return (
-    left.getFullYear() === right.getFullYear() &&
-    left.getMonth() === right.getMonth() &&
-    left.getDate() === right.getDate()
+const getDateWindowFromFilter = (filter) => {
+  const year = Number(filter?.year || 0);
+  if (!year) return null;
+
+  const month = Number(filter?.month || 0);
+  const day = Number(filter?.day || 0);
+
+  if (month && day) {
+    const start = new Date(year, month - 1, day, 0, 0, 0, 0);
+    const end = new Date(year, month - 1, day, 23, 59, 59, 999);
+    return { start, end };
+  }
+
+  if (month) {
+    const start = new Date(year, month - 1, 1, 0, 0, 0, 0);
+    const end = new Date(year, month, 0, 23, 59, 59, 999);
+    return { start, end };
+  }
+
+  const start = new Date(year, 0, 1, 0, 0, 0, 0);
+  const end = new Date(year, 11, 31, 23, 59, 59, 999);
+  return { start, end };
+};
+
+const doesTemplateMatchDateFilter = (template, filter) => {
+  const window = getDateWindowFromFilter(filter);
+  if (!window) return true;
+
+  const startAt = toSafeDate(template?.availability?.startAt) || toSafeDate(template?.created_at);
+  const endAt = toSafeDate(template?.availability?.endAt) || toSafeDate(template?.updated_at);
+
+  if (!startAt && !endAt) return false;
+  const safeStart = startAt || endAt;
+  const safeEnd = endAt || startAt;
+  return safeStart <= window.end && safeEnd >= window.start;
+};
+
+const normalizeText = (value) => String(value || '').trim();
+
+const formatPercent = (value) => `${Math.round(Number(value) || 0)}%`;
+
+const clampPercent = (value) => {
+  const numeric = Number(value) || 0;
+  if (numeric < 0) return 0;
+  if (numeric > 100) return 100;
+  return numeric;
+};
+
+const parseNumericValue = (value) => {
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  const normalized = String(value).trim().replace(',', '.');
+  if (!normalized) return null;
+  const parsed = Number(normalized);
+  if (!Number.isFinite(parsed)) return null;
+  return parsed;
+};
+
+const normalizeForMatch = (value) =>
+  String(value || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim();
+
+const isNumericQuestion = (question) => {
+  const sourceType = String(question?.sourceType || question?.type || '').trim().toLowerCase();
+  return ['number', 'numeric', 'numero', 'number_input'].includes(sourceType);
+};
+
+const getQuestionLabel = (question) =>
+  String(
+    question?.label ||
+      question?.title ||
+      question?.question ||
+      question?.prompt ||
+      question?.text ||
+      question?.name ||
+      '',
   );
+
+const isGoalQuestionLabel = (label) => {
+  const text = normalizeForMatch(label);
+  if (!text) return false;
+  if (text.includes('cual es la meta de re')) return true;
+  if (text.includes('meta de re')) return true;
+  return text.includes('meta');
 };
 
-const toneClassByAlert = {
-  critical: 'border-rose-500/40 bg-rose-500/10 text-rose-100',
-  warning: 'border-amber-500/40 bg-amber-500/10 text-amber-100',
-  info: 'border-cyan-500/40 bg-cyan-500/10 text-cyan-100',
+const isRealProgressQuestionLabel = (label) => {
+  const text = normalizeForMatch(label);
+  if (!text) return false;
+  if (text.includes('cuanto tienen de avance real')) return true;
+  if (text.includes('avance real')) return true;
+  return text.includes('avance') && text.includes('real');
 };
 
-const iconByAlert = {
-  critical: AlertTriangle,
-  warning: Clock3,
-  info: ClipboardList,
+const extractNumericAnswer = (value) => {
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'object') {
+    const candidates = [value.answer, value.value, value.numeric, value.number, value.result, value.respuesta];
+    for (const candidate of candidates) {
+      const parsed = parseNumericValue(candidate);
+      if (parsed !== null) return parsed;
+    }
+    return null;
+  }
+  return parseNumericValue(value);
 };
 
-const quickActionIconByKey = {
-  clipboard: ClipboardList,
-  calendar: CalendarDays,
-  fileClock: FileClock,
-  chart: BarChart3,
-  users: Users,
-  settings: Settings,
+const pluralize = (count, singular, plural) => `${count} ${count === 1 ? singular : plural}`;
+
+const getDaysInMonth = (year, month) => {
+  const safeYear = Number(year) || new Date().getFullYear();
+  const safeMonth = Number(month) || 1;
+  return new Date(safeYear, safeMonth, 0).getDate();
 };
 
 export default function MonitoreoInicio() {
-  const location = useLocation();
-  const navigate = useNavigate();
   const auth = useMemo(() => {
     try {
-      return JSON.parse(localStorage.getItem(AUTH_KEY));
+      return JSON.parse(localStorage.getItem(AUTH_KEY) || '{}');
     } catch {
-      return null;
+      return {};
     }
   }, []);
 
-  const userRole = resolveUserRole(auth?.role);
-  const isAdmin = userRole === ROLE_ADMIN;
-  const userId = auth?.email || auth?.docNumber || '';
+  const hasDashboardAccess = hasCddDashboardAccessRole(auth?.role);
+  const roleLabel = getRoleLabel(auth?.role);
 
   const [templates, setTemplates] = useState([]);
   const [instances, setInstances] = useState([]);
-  const [events, setEvents] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState('');
-  const [showDenied, setShowDenied] = useState(Boolean(location.state?.denied));
+  const [templateMonitors, setTemplateMonitors] = useState([]);
+  const [profiles, setProfiles] = useState([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  const now = useMemo(() => new Date(), []);
+  const [pendingFilters, setPendingFilters] = useState({
+    year: String(now.getFullYear()),
+    month: 'all',
+    day: 'all',
+    area: 'all',
+  });
+  const [appliedFilters, setAppliedFilters] = useState({
+    year: String(now.getFullYear()),
+    month: 'all',
+    day: 'all',
+    area: 'all',
+  });
 
   useEffect(() => {
-    if (!location.state?.denied) return;
-    const timeoutId = setTimeout(() => setShowDenied(false), 3200);
-    navigate('/monitoreo/inicio', { replace: true, state: null });
-    return () => clearTimeout(timeoutId);
-  }, [location.state, navigate]);
+    if (!hasDashboardAccess) {
+      setIsLoading(false);
+      return;
+    }
 
-  useEffect(() => {
     let active = true;
 
-    const loadDashboardData = async () => {
-      setLoading(true);
-      setLoadError('');
+    const loadDashboard = async () => {
+      setIsLoading(true);
+      setError('');
 
-      const templatesPromise = supabase
+      const templatesReq = supabase
         .from('monitoring_templates')
-        .select('id,title,description,status,availability,created_at,updated_at')
+        .select('id,title,status,availability,levels_config,sections,created_by,created_at,updated_at')
         .order('updated_at', { ascending: false });
 
-      const instancesBaseQuery = supabase
+      const instancesReq = supabase
         .from('monitoring_instances')
-        .select('id,template_id,status,created_by,data,created_at,updated_at')
+        .select('id,template_id,status,created_by,created_at,updated_at,data')
         .order('updated_at', { ascending: false });
-      const instancesPromise = isAdmin
-        ? instancesBaseQuery
-        : instancesBaseQuery.eq('created_by', userId);
 
-      const eventsPromise = supabase
-        .from('monitoring_events')
-        .select('id,title,event_type,start_at,end_at,status,created_by,created_at,updated_at,monitoring_event_responsibles(id)')
-        .order('start_at', { ascending: true });
+      const templateMonitorsReq = supabase
+        .from('monitoring_template_monitors')
+        .select('template_id,user_id,created_at');
 
-      const [templatesResult, instancesResult, eventsResult] = await Promise.all([
-        templatesPromise,
-        instancesPromise,
-        eventsPromise,
+      const profilesReq = supabase
+        .from('profiles')
+        .select('id,full_name,first_name,last_name,email,doc_number,role,status')
+        .eq('status', 'active');
+
+      const [templatesRes, instancesRes, templateMonitorsRes, profilesRes] = await Promise.all([
+        templatesReq,
+        instancesReq,
+        templateMonitorsReq,
+        profilesReq,
       ]);
-
-      const errors = [];
-      if (templatesResult.error) errors.push(`Monitoreos: ${templatesResult.error.message}`);
-      if (instancesResult.error) errors.push(`Reportes: ${instancesResult.error.message}`);
-      if (eventsResult.error) errors.push(`Seguimiento: ${eventsResult.error.message}`);
 
       if (!active) return;
 
+      const errors = [];
+      if (templatesRes.error) errors.push(`Monitoreos: ${templatesRes.error.message}`);
+      if (instancesRes.error) errors.push(`Instancias: ${instancesRes.error.message}`);
+
       if (errors.length) {
-        setLoadError(`No se pudo completar el resumen (${errors.join(' | ')}).`);
+        setError(`No se pudo cargar el dashboard (${errors.join(' | ')}).`);
       }
 
-      setTemplates(templatesResult.data || []);
-      setInstances(instancesResult.data || []);
-      setEvents(eventsResult.data || []);
-      setLoading(false);
+      setTemplates(templatesRes.data || []);
+      setInstances(instancesRes.data || []);
+      setTemplateMonitors(templateMonitorsRes.error ? [] : templateMonitorsRes.data || []);
+      setProfiles(profilesRes.error ? [] : profilesRes.data || []);
+      setIsLoading(false);
     };
 
-    loadDashboardData();
+    loadDashboard();
+
+    const channel = supabase
+      .channel('home-cdd-realtime')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'monitoring_templates' }, loadDashboard)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'monitoring_instances' }, loadDashboard)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'monitoring_template_monitors' }, loadDashboard)
+      .subscribe();
+
     return () => {
       active = false;
+      supabase.removeChannel(channel);
     };
-  }, [isAdmin, userId]);
+  }, [hasDashboardAccess]);
 
-  const publishedTemplates = useMemo(
-    () => templates.filter((template) => template.status === 'published'),
+  const yearOptions = useMemo(() => {
+    const years = new Set([new Date().getFullYear()]);
+    templates.forEach((template) => {
+      const dates = [template?.availability?.startAt, template?.availability?.endAt, template?.created_at];
+      dates.forEach((value) => {
+        const parsed = toSafeDate(value);
+        if (parsed) years.add(parsed.getFullYear());
+      });
+    });
+    return Array.from(years)
+      .sort((a, b) => b - a)
+      .map((year) => String(year));
+  }, [templates]);
+
+  const dayOptions = useMemo(() => {
+    const month = Number(pendingFilters.month || 0);
+    if (!month) {
+      return ['all'];
+    }
+    const days = getDaysInMonth(pendingFilters.year, month);
+    return ['all', ...Array.from({ length: days }, (_, index) => String(index + 1))];
+  }, [pendingFilters.month, pendingFilters.year]);
+
+  useEffect(() => {
+    if (!dayOptions.includes(pendingFilters.day)) {
+      setPendingFilters((prev) => ({ ...prev, day: 'all' }));
+    }
+  }, [dayOptions, pendingFilters.day]);
+
+  const cddTemplates = useMemo(
+    () => templates.filter((template) => isCddPublishedTemplate(template)),
     [templates],
   );
 
-  const activeTemplates = useMemo(
-    () => publishedTemplates.filter((template) => getTemplateStatus(template) === 'active'),
-    [publishedTemplates],
-  );
+  const areaOptions = useMemo(() => {
+    const areas = new Set();
+    cddTemplates.forEach((template) => {
+      const area = normalizeText(getTemplateScope(template)?.cddArea);
+      if (area) areas.add(area);
+    });
+    return ['all', ...Array.from(areas).sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' }))];
+  }, [cddTemplates]);
 
-  const draftTemplatesCount = useMemo(
-    () => templates.filter((template) => template.status !== 'published').length,
-    [templates],
-  );
-
-  const todayStart = useMemo(() => {
-    const now = new Date();
-    return new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  }, []);
-
-  const overdueTemplatesCount = useMemo(
-    () =>
-      publishedTemplates.filter((template) => {
-        const endAt = toSafeDate(template?.availability?.endAt);
-        if (!endAt) return false;
-        if (getTemplateStatus(template) === 'hidden') return false;
-        return endAt < todayStart;
-      }).length,
-    [publishedTemplates, todayStart],
-  );
-
-  const dueTodayTemplatesCount = useMemo(
-    () =>
-      publishedTemplates.filter((template) => {
-        const endAt = toSafeDate(template?.availability?.endAt);
-        if (!endAt) return false;
-        if (getTemplateStatus(template) === 'hidden') return false;
-        return isSameDay(endAt, todayStart);
-      }).length,
-    [publishedTemplates, todayStart],
-  );
-
-  const dueSoonTemplatesCount = useMemo(() => {
-    const soonLimit = addDays(todayStart, 2);
-    return publishedTemplates.filter((template) => {
-      const endAt = toSafeDate(template?.availability?.endAt);
-      if (!endAt) return false;
-      if (getTemplateStatus(template) === 'hidden') return false;
-      if (isSameDay(endAt, todayStart)) return false;
-      return endAt > todayStart && endAt <= soonLimit;
-    }).length;
-  }, [publishedTemplates, todayStart]);
-
-  const eventsWithoutResponsibleCount = useMemo(() => {
-    if (!isAdmin) return 0;
-    return events.filter(
-      (event) =>
-        event.event_type === 'monitoring' &&
-        event.status !== 'closed' &&
-        (event.monitoring_event_responsibles?.length || 0) === 0,
-    ).length;
-  }, [events, isAdmin]);
-
-  const pendingReportsCount = useMemo(
-    () => instances.filter((instance) => instance.status !== 'completed').length,
-    [instances],
-  );
-
-  const priorityActions = useMemo(() => {
-    const items = [];
-
-    if (overdueTemplatesCount > 0) {
-      items.push({
-        id: 'overdue-templates',
-        priority: 1,
-        tone: 'critical',
-        title: `${overdueTemplatesCount} ${pluralize(overdueTemplatesCount, 'monitoreo vencido', 'monitoreos vencidos')}`,
-        description: 'Requiere revision inmediata.',
-        actionLabel: 'Revisar',
-        actionPath: '/monitoreo/reportes',
+  const profileById = useMemo(() => {
+    const map = new Map();
+    profiles.forEach((profile) => {
+      const id = normalizeText(profile?.id).toLowerCase();
+      if (!id) return;
+      const name =
+        normalizeText(profile?.full_name) ||
+        `${normalizeText(profile?.first_name)} ${normalizeText(profile?.last_name)}`.trim() ||
+        normalizeText(profile?.email) ||
+        'Sin nombre';
+      map.set(id, {
+        id,
+        name,
+        role: normalizeText(profile?.role).toLowerCase(),
       });
-    }
+    });
+    return map;
+  }, [profiles]);
 
-    if (dueTodayTemplatesCount > 0) {
-      items.push({
-        id: 'due-today-templates',
-        priority: 2,
-        tone: 'warning',
-        title: `${dueTodayTemplatesCount} ${pluralize(
-          dueTodayTemplatesCount,
-          'monitoreo vence hoy',
-          'monitoreos vencen hoy',
-        )}`,
-        description: 'Prioriza la ejecucion antes del cierre.',
-        actionLabel: 'Atender',
-        actionPath: '/monitoreo/reportes',
+  const templateMonitorIdsMap = useMemo(() => {
+    const map = new Map();
+    templateMonitors.forEach((row) => {
+      const templateId = normalizeText(row?.template_id);
+      const userId = normalizeText(row?.user_id);
+      if (!templateId || !userId) return;
+      if (!map.has(templateId)) map.set(templateId, []);
+      map.get(templateId).push(userId.toLowerCase());
+    });
+    return map;
+  }, [templateMonitors]);
+
+  const filteredTemplates = useMemo(() => {
+    const selectedArea = appliedFilters.area;
+    return cddTemplates.filter((template) => {
+      if (!doesTemplateMatchDateFilter(template, appliedFilters)) return false;
+      const area = normalizeText(getTemplateScope(template)?.cddArea);
+      if (selectedArea !== 'all' && area !== selectedArea) return false;
+      return true;
+    });
+  }, [appliedFilters, cddTemplates]);
+
+  const templateStats = useMemo(() => {
+    return filteredTemplates.map((template) => {
+      const scope = getTemplateScope(template);
+      const instancesForTemplate = instances.filter((item) => item.template_id === template.id);
+      const area = normalizeText(scope?.cddArea) || 'Sin area';
+
+      const latestInstance = [...instancesForTemplate]
+        .sort((a, b) => new Date(b.updated_at || b.created_at || 0).getTime() - new Date(a.updated_at || a.created_at || 0).getTime())[0];
+
+      const questionMap = new Map();
+      (Array.isArray(template?.sections) ? template.sections : []).forEach((section) => {
+        (Array.isArray(section?.questions) ? section.questions : []).forEach((question) => {
+          if (!question?.id) return;
+          questionMap.set(String(question.id), question);
+        });
       });
-    }
 
-    if (pendingReportsCount > 0) {
-      items.push({
-        id: 'pending-reports',
-        priority: 3,
-        tone: 'info',
-        title: `${pendingReportsCount} ${pluralize(pendingReportsCount, 'reporte pendiente', 'reportes pendientes')}`,
-        description: 'Continua formularios en progreso.',
-        actionLabel: 'Continuar',
-        actionPath: '/monitoreo/reportes',
+      const latestQuestions = latestInstance?.data?.questions;
+      const numericRows = [];
+      if (latestQuestions && typeof latestQuestions === 'object') {
+        Object.entries(latestQuestions).forEach(([questionId, value]) => {
+          const question = questionMap.get(String(questionId));
+          const parsed = extractNumericAnswer(value);
+          if (parsed === null) return;
+          if (question && !isNumericQuestion(question)) return;
+          const rawLabelFromAnswer =
+            typeof value === 'object' && value
+              ? value.label || value.question || value.question_text || value.prompt || value.title || ''
+              : '';
+          numericRows.push({
+            value: parsed,
+            label: normalizeForMatch(getQuestionLabel(question) || rawLabelFromAnswer),
+          });
+        });
+      }
+
+      let goal = null;
+      let completed = null;
+
+      numericRows.forEach((row) => {
+        if (goal === null && isGoalQuestionLabel(row.label)) {
+          goal = row.value;
+          return;
+        }
+        if (completed === null && isRealProgressQuestionLabel(row.label)) {
+          completed = row.value;
+        }
       });
-    }
 
-    if (draftTemplatesCount > 0) {
-      items.push({
-        id: 'draft-templates',
-        priority: 4,
-        tone: 'info',
-        title: `${draftTemplatesCount} ${pluralize(
-          draftTemplatesCount,
-          'borrador requiere completarse',
-          'borradores requieren completarse',
-        )}`,
-        description: 'Publica o completa los borradores.',
-        actionLabel: 'Completar',
-        actionPath: '/monitoreo',
-      });
-    }
+      if (goal === null && numericRows.length > 0) {
+        goal = numericRows[0].value;
+      }
+      if (completed === null && numericRows.length > 1) {
+        completed = numericRows[1].value;
+      }
+      if (completed === null && numericRows.length > 0) {
+        completed = numericRows[0].value;
+      }
 
-    if (dueSoonTemplatesCount > 0) {
-      items.push({
-        id: 'due-soon-templates',
-        priority: 5,
-        tone: 'warning',
-        title: `${dueSoonTemplatesCount} ${pluralize(
-          dueSoonTemplatesCount,
-          'monitoreo vence pronto',
-          'monitoreos vencen pronto',
-        )}`,
-        description: 'Revisa vencimientos de los proximos 2 dias.',
-        actionLabel: 'Priorizar',
-        actionPath: '/monitoreo/reportes',
-      });
-    }
+      const safeGoal = clampPercent(goal ?? 100);
+      const safeCompleted = clampPercent(completed ?? 0);
+      const progress = safeGoal > 0 ? clampPercent((safeCompleted / safeGoal) * 100) : 0;
 
-    if (eventsWithoutResponsibleCount > 0) {
-      items.push({
-        id: 'events-without-responsible',
-        priority: 6,
-        tone: 'critical',
-        title: `${eventsWithoutResponsibleCount} ${pluralize(
-          eventsWithoutResponsibleCount,
-          'evento sin responsable',
-          'eventos sin responsable',
-        )}`,
-        description: 'Asigna responsables para no frenar seguimiento.',
-        actionLabel: 'Asignar',
-        actionPath: '/monitoreo/seguimiento',
-      });
-    }
+      const assignedMonitorIds = templateMonitorIdsMap.get(template.id) || [];
+      const assignedProfiles = assignedMonitorIds
+        .map((monitorId) => profileById.get(monitorId))
+        .filter(Boolean);
+      const assignedChief =
+        assignedProfiles.find((profile) => profile.role === 'jefe_area') ||
+        assignedProfiles[0] ||
+        null;
+      const chiefName = assignedChief?.name || 'Sin jefe asignado';
+      const chiefRole = assignedChief?.role || '';
 
-    return items.sort((a, b) => a.priority - b.priority).slice(0, 3);
-  }, [
-    draftTemplatesCount,
-    dueSoonTemplatesCount,
-    dueTodayTemplatesCount,
-    eventsWithoutResponsibleCount,
-    overdueTemplatesCount,
-    pendingReportsCount,
-  ]);
-
-  const agendaEvents = useMemo(() => {
-    const templateEventsById = new Map(events.map((event) => [event.id, event]));
-    const syntheticTemplateEvents = publishedTemplates
-      .filter((template) => {
-        const startAt = toSafeDate(template?.availability?.startAt);
-        const endAt = toSafeDate(template?.availability?.endAt);
-        return startAt && endAt && !templateEventsById.has(template.id);
-      })
-      .map((template) => ({
+      return {
         id: template.id,
-        title: template.title,
-        event_type: 'monitoring',
-        status: normalizeTemplateEventStatus(template),
-        start_at: template.availability.startAt,
-        end_at: template.availability.endAt,
-        created_at: template.created_at,
-        updated_at: template.updated_at,
-        monitoring_event_responsibles: [],
+        title: template.title || 'Monitoreo sin titulo',
+        area,
+        completed: Math.round(safeCompleted),
+        goal: Math.round(safeGoal),
+        progress,
+        responsibleName: chiefName,
+        chiefName,
+        chiefRole,
+        endAt: template?.availability?.endAt || null,
+        lastUpdate: latestInstance?.updated_at || template?.updated_at || template?.created_at,
+      };
+    });
+  }, [filteredTemplates, instances, profileById, templateMonitorIdsMap]);
+
+  const areaStats = useMemo(() => {
+    const map = new Map();
+
+    templateStats.forEach((row) => {
+      if (!map.has(row.area)) {
+        map.set(row.area, {
+          area: row.area,
+          completed: 0,
+          goalSum: 0,
+          monitorings: 0,
+        });
+      }
+      const item = map.get(row.area);
+      item.completed += row.completed;
+      item.goalSum += row.goal;
+      item.monitorings += 1;
+    });
+
+    return Array.from(map.values())
+      .map((row) => ({
+        ...row,
+        goal: row.monitorings > 0 ? clampPercent(row.goalSum / row.monitorings) : 0,
+        real: row.monitorings > 0 ? clampPercent(row.completed / row.monitorings) : 0,
+        progress:
+          row.goalSum > 0
+            ? clampPercent((row.completed / row.goalSum) * 100)
+            : 0,
+      }))
+      .sort((a, b) => b.progress - a.progress);
+  }, [templateStats]);
+
+  const bestArea = areaStats[0] || null;
+  const worstArea = areaStats[areaStats.length - 1] || null;
+
+  const globalProgress = useMemo(() => {
+    if (!templateStats.length) return { completed: 0, goal: 0, progress: 0 };
+    const completed = templateStats.reduce((acc, row) => acc + row.completed, 0);
+    const goal = templateStats.reduce((acc, row) => acc + row.goal, 0);
+    return {
+      completed,
+      goal,
+      progress: goal > 0 ? clampPercent((completed / goal) * 100) : 0,
+    };
+  }, [templateStats]);
+
+  const topChiefs = useMemo(() => {
+    const validRoles = new Set(['jefe_area']);
+    const grouped = new Map();
+
+    templateStats.forEach((row) => {
+      if (!validRoles.has(String(row.chiefRole || '').toLowerCase())) return;
+      const key = row.chiefName || 'Sin jefe';
+      if (!grouped.has(key)) {
+        grouped.set(key, { name: key, completed: 0, goal: 0, progressSum: 0, monitorings: 0 });
+      }
+      const item = grouped.get(key);
+      item.completed += row.completed;
+      item.goal += row.goal;
+      item.progressSum += row.progress;
+      item.monitorings += 1;
+    });
+
+    return Array.from(grouped.values())
+      .map((row) => ({
+        ...row,
+        goal: Math.max(row.goal, 0),
+        efficiency: row.monitorings > 0 ? clampPercent(row.progressSum / row.monitorings) : 0,
+      }))
+      .sort((a, b) => b.efficiency - a.efficiency)
+      .slice(0, 5);
+  }, [templateStats]);
+
+  const detailedRows = useMemo(
+    () => [...templateStats].sort((a, b) => new Date(b.lastUpdate || 0).getTime() - new Date(a.lastUpdate || 0).getTime()).slice(0, 10),
+    [templateStats],
+  );
+
+  const highPriorityRows = useMemo(() => {
+    const nowDate = new Date();
+    const sevenDays = new Date(nowDate);
+    sevenDays.setDate(sevenDays.getDate() + 7);
+
+    return templateStats
+      .filter((row) => {
+        const endAt = toSafeDate(row.endAt);
+        if (!endAt) return false;
+        return row.progress < 70 && endAt >= nowDate && endAt <= sevenDays;
+      })
+      .sort((a, b) => a.progress - b.progress)
+      .slice(0, 3);
+  }, [templateStats]);
+
+  const pendingTasks = useMemo(() => {
+    const rows = templateStats
+      .filter((row) => row.progress < 100)
+      .sort((a, b) => a.progress - b.progress)
+      .slice(0, 4)
+      .map((row) => ({
+        id: row.id,
+        text: `Validar avances de ${row.title}`,
+        detail: `${row.area} · ${formatPercent(row.progress)}`,
       }));
 
-    return [...events, ...syntheticTemplateEvents];
-  }, [events, publishedTemplates]);
-
-  const upcomingAgenda = useMemo(() => {
-    const today = new Date();
-    const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-    const weekLimit = addDays(startOfToday, ALERT_WINDOW_DAYS);
-
-    return agendaEvents
-      .filter((event) => {
-        if (!isAdmin && event.status === 'hidden') return false;
-        const startAt = toSafeDate(event.start_at);
-        const endAt = toSafeDate(event.end_at);
-        return isRangeOverlapping(startAt, endAt, startOfToday, weekLimit);
-      })
-      .sort((left, right) => {
-        const leftStart = toSafeDate(left.start_at)?.getTime() || 0;
-        const rightStart = toSafeDate(right.start_at)?.getTime() || 0;
-        return leftStart - rightStart;
-      })
-      .slice(0, AGENDA_ITEMS_LIMIT);
-  }, [agendaEvents, isAdmin]);
-
-  const adminAlerts = useMemo(() => {
-    const items = [];
-
-    if (overdueTemplatesCount > 0) {
-      items.push({
-        id: 'admin-overdue',
-        priority: 1,
-        tone: 'critical',
-        title: `${overdueTemplatesCount} ${pluralize(
-          overdueTemplatesCount,
-          'monitoreo vencido en el sistema',
-          'monitoreos vencidos en el sistema',
-        )}`,
-        description: 'Requiere supervision y cierre.',
-        actionLabel: 'Ver reportes',
-        actionPath: '/monitoreo/reportes',
-      });
+    if (!rows.length) {
+      return [{ id: 'none', text: 'No hay tareas pendientes de CdD.', detail: 'Todo en orden.' }];
     }
 
-    if (eventsWithoutResponsibleCount > 0) {
-      items.push({
-        id: 'admin-no-responsible',
-        priority: 2,
-        tone: 'critical',
-        title: `${eventsWithoutResponsibleCount} ${pluralize(
-          eventsWithoutResponsibleCount,
-          'evento sin responsable',
-          'eventos sin responsable',
-        )}`,
-        description: 'Asigna especialista para mantener continuidad operativa.',
-        actionLabel: 'Ir a seguimiento',
-        actionPath: '/monitoreo/seguimiento',
-      });
-    }
+    return rows;
+  }, [templateStats]);
 
-    if (dueTodayTemplatesCount > 0) {
-      items.push({
-        id: 'admin-due-today',
-        priority: 3,
-        tone: 'warning',
-        title: `${dueTodayTemplatesCount} ${pluralize(
-          dueTodayTemplatesCount,
-          'monitoreo vence hoy',
-          'monitoreos vencen hoy',
-        )}`,
-        description: 'Prioriza el seguimiento de cierre.',
-        actionLabel: 'Revisar',
-        actionPath: '/monitoreo/seguimiento',
-      });
-    }
-
-    if (pendingReportsCount > 0) {
-      items.push({
-        id: 'admin-pending-reports',
-        priority: 4,
-        tone: 'info',
-        title: `${pendingReportsCount} ${pluralize(pendingReportsCount, 'reporte pendiente', 'reportes pendientes')}`,
-        description: 'Hay reportes en curso pendientes de finalizar.',
-        actionLabel: 'Abrir reportes',
-        actionPath: '/monitoreo/reportes',
-      });
-    }
-
-    if (draftTemplatesCount > 0) {
-      items.push({
-        id: 'admin-drafts',
-        priority: 5,
-        tone: 'warning',
-        title: `${draftTemplatesCount} ${pluralize(
-          draftTemplatesCount,
-          'borrador sin publicar',
-          'borradores sin publicar',
-        )}`,
-        description: 'Completa y publica las plantillas pendientes.',
-        actionLabel: 'Ir a monitoreos',
-        actionPath: '/monitoreo',
-      });
-    }
-
-    return items.sort((a, b) => a.priority - b.priority).slice(0, 3);
-  }, [
-    draftTemplatesCount,
-    dueTodayTemplatesCount,
-    eventsWithoutResponsibleCount,
-    overdueTemplatesCount,
-    pendingReportsCount,
-  ]);
-
-  const adminMetrics = useMemo(
-    () => [
-      {
-        id: 'active-templates',
-        label: 'Monitoreos activos',
-        value: activeTemplates.length,
-        className: 'border-cyan-500/35 bg-cyan-500/10 text-cyan-100',
-      },
-      {
-        id: 'pending-reports',
-        label: 'Reportes pendientes',
-        value: pendingReportsCount,
-        className: 'border-indigo-500/35 bg-indigo-500/10 text-indigo-100',
-      },
-      {
-        id: 'overdue-templates',
-        label: 'Monitoreos vencidos',
-        value: overdueTemplatesCount,
-        className: 'border-rose-500/35 bg-rose-500/10 text-rose-100',
-      },
-      {
-        id: 'events-without-responsible',
-        label: 'Sin responsable',
-        value: eventsWithoutResponsibleCount,
-        className: 'border-amber-500/35 bg-amber-500/10 text-amber-100',
-      },
-    ],
-    [activeTemplates.length, eventsWithoutResponsibleCount, overdueTemplatesCount, pendingReportsCount],
-  );
-
-  const hasSpecialistPriorityActions = priorityActions.length > 0;
-  const hasAdminAlerts = adminAlerts.length > 0;
-  const activeHomeWidgets =
-    HOME_WIDGETS_BY_ROLE[userRole] || HOME_WIDGETS_BY_ROLE[ROLE_SPECIALIST] || [];
-  const hasWidget = (widgetKey) => activeHomeWidgets.includes(widgetKey);
-  const recommendedAction = useMemo(() => {
-    if (isAdmin) return adminAlerts[0] || null;
-    return priorityActions[0] || null;
-  }, [adminAlerts, isAdmin, priorityActions]);
-
-  const quickActions = useMemo(() => {
-    const definition = HOME_QUICK_ACTIONS_BY_ROLE[userRole] || HOME_QUICK_ACTIONS_BY_ROLE[ROLE_SPECIALIST] || [];
-    return definition.map((item) => ({
-      ...item,
-      icon: quickActionIconByKey[item.iconKey] || ClipboardList,
-    }));
-  }, [userRole]);
-
-  const showUnifiedEmptyState = useMemo(() => {
-    if (loading) return false;
-    const hasAnyOperationalWidget =
-      hasWidget('admin_global_alerts') ||
-      hasWidget('specialist_priority_actions') ||
-      hasWidget('specialist_agenda');
-    if (!hasAnyOperationalWidget) return false;
-    return !recommendedAction && !hasAdminAlerts && !hasSpecialistPriorityActions && upcomingAgenda.length === 0;
-  }, [
-    hasAdminAlerts,
-    hasSpecialistPriorityActions,
-    loading,
-    recommendedAction,
-    upcomingAgenda.length,
-    hasWidget,
-  ]);
+  const hasData = templateStats.length > 0;
 
   return (
     <div className="flex flex-col gap-4 md:gap-6">
-      {showDenied ? (
-        <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2.5 text-xs text-amber-200 md:px-4 md:py-3 md:text-sm">
-          No tienes permisos para acceder.
-        </div>
-      ) : null}
-
-      {loadError ? (
-        <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-3 py-2.5 text-xs text-rose-200 md:px-4 md:py-3 md:text-sm">
-          {loadError}
-        </div>
-      ) : null}
-
       <Card className="flex items-center justify-between gap-2 px-3 py-2.5 md:gap-3 md:px-4 md:py-3">
-        <SectionHeader
-          title="Inicio"
-          size="page"
-        />
+        <SectionHeader title="Inicio" size="page" description="Dashboard de Compromiso de Desempeño" />
       </Card>
 
-      {hasWidget('admin_global_metrics') ? (
-        <Card className="w-full rounded-[14px] border border-white/10 bg-white/[0.03] px-3 py-2 shadow-[0_8px_24px_-20px_rgba(0,0,0,0.6)]">
-          <div className="flex flex-wrap items-center gap-2">
-            <p className="inline-flex h-7 items-center rounded-lg border border-slate-700/60 bg-slate-900/50 px-2.5 text-[10px] uppercase tracking-[0.12em] text-slate-400">
-              Estado actual
-            </p>
-            {loading ? (
-              <span className="text-sm text-slate-400">Cargando metricas...</span>
-            ) : (
-              adminMetrics.map((metric) => (
-                <span
-                  key={metric.id}
-                  className={`inline-flex h-7 items-center gap-1.5 rounded-lg border px-2.5 text-[12px] ${metric.className}`}
-                >
-                  <span className="font-semibold">{metric.value}</span>
-                  <span>{metric.label}</span>
-                </span>
-              ))
-            )}
-          </div>
+      {!hasDashboardAccess ? (
+        <Card className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-4 text-sm text-amber-200">
+          Esta vista está habilitada solo para los roles Director, Jefe de Area y Administrador. Tu rol actual: {roleLabel}.
         </Card>
       ) : null}
 
-      {(hasWidget('admin_global_alerts') || hasWidget('specialist_priority_actions')) ? (
-        <Card className="flex flex-col gap-2.5 px-3 py-3 md:gap-3 md:px-4 md:py-4">
-          <SectionHeader
-            eyebrow="Prioridad"
-            title="Que revisar ahora"
-            description={loading ? 'Cargando prioridad...' : recommendedAction ? recommendedAction.title : 'Todo en orden'}
-          />
-          {!loading && recommendedAction && !showUnifiedEmptyState ? (
-            <p className="text-sm text-slate-300 md:text-[15px]">{recommendedAction.description}</p>
-          ) : null}
-          <div className="flex flex-wrap items-center justify-between gap-2.5">
-            {loading ? (
-              <span className="text-xs text-slate-400 md:text-sm">Preparando accion sugerida...</span>
-            ) : recommendedAction && !showUnifiedEmptyState ? (
-              <button
-                type="button"
-                onClick={() => navigate(recommendedAction.actionPath)}
-                className="ds-btn ds-btn-primary h-9 px-3.5 md:h-10 md:px-4"
-              >
-                {recommendedAction.actionLabel}
-                <MoveRight size={14} />
-              </button>
-            ) : (
-              <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/35 bg-emerald-500/10 px-2.5 py-1 text-xs font-medium text-emerald-100">
-                <span className="text-sm leading-none">✔</span>
-                Todo en orden
-              </span>
-            )}
-          </div>
-        </Card>
+      {error ? (
+        <Card className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-4 text-sm text-rose-200">{error}</Card>
       ) : null}
 
-      {hasWidget('admin_global_alerts') && !showUnifiedEmptyState ? (
-        <Card className="flex flex-col gap-2.5 px-3 py-3 md:gap-3 md:px-4 md:py-4">
-          <SectionHeader eyebrow="Atencion" title="Lo pendiente" />
-          {loading ? (
-            <p className="text-xs text-slate-400 md:text-sm">Cargando alertas...</p>
-          ) : !hasAdminAlerts ? (
-            <p className="text-xs text-emerald-200 md:text-sm">No hay alertas globales activas.</p>
-          ) : (
-            <div className="space-y-1.5">
-              {adminAlerts.map((alert) => {
-                const Icon = iconByAlert[alert.tone] || AlertTriangle;
-                return (
-                  <button
-                    key={alert.id}
-                    type="button"
-                    onClick={() => navigate(alert.actionPath)}
-                    className="flex w-full items-center gap-2 rounded-lg border border-slate-800/70 bg-slate-900/45 px-3 py-2 text-left transition-all duration-200 hover:-translate-y-[1px] hover:border-slate-600/70 hover:bg-slate-900/72"
+      {hasDashboardAccess ? (
+        <>
+          <section className="grid grid-cols-1 gap-4 xl:grid-cols-12">
+            <Card className="xl:col-span-8 rounded-2xl border border-slate-800/80 bg-slate-900/55 p-4">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">Filtros CdD</p>
+              <div className="mt-3 grid gap-3 md:grid-cols-5">
+                <label className="flex flex-col gap-1 text-xs text-slate-300">
+                  <span>Año</span>
+                  <select
+                    value={pendingFilters.year}
+                    onChange={(event) => setPendingFilters((prev) => ({ ...prev, year: event.target.value }))}
+                    className="rounded-xl border border-slate-700/60 bg-slate-950/60 px-3 py-2 text-sm text-slate-100"
                   >
-                    <span className={`inline-flex h-6 w-6 items-center justify-center rounded-full border ${
-                      toneClassByAlert[alert.tone] || toneClassByAlert.info
-                    }`}>
-                      <Icon size={13} />
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-semibold text-slate-100">{alert.title}</p>
-                      <p className="text-[11px] text-slate-400">{alert.description}</p>
-                    </div>
-                    <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-slate-300">
-                      {alert.actionLabel}
-                      <MoveRight size={13} className="shrink-0 text-slate-400" />
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          )}
-        </Card>
-      ) : null}
-
-      {hasWidget('specialist_priority_actions') && !showUnifiedEmptyState ? (
-        <Card className="flex flex-col gap-2.5 px-3 py-3 md:gap-3 md:px-4 md:py-4">
-          <SectionHeader eyebrow="Atencion" title="Lo pendiente" />
-          {loading ? (
-            <p className="text-xs text-slate-400 md:text-sm">Cargando acciones...</p>
-          ) : !hasSpecialistPriorityActions ? (
-            <p className="text-xs text-emerald-200 md:text-sm">No tienes acciones urgentes.</p>
-          ) : (
-            <div className="space-y-1.5">
-              {priorityActions.map((action) => {
-                const Icon = iconByAlert[action.tone] || AlertTriangle;
-                return (
-                  <button
-                    key={action.id}
-                    type="button"
-                    onClick={() => navigate(action.actionPath)}
-                    className="flex w-full items-center gap-2 rounded-lg border border-slate-800/70 bg-slate-900/45 px-3 py-2 text-left transition-all duration-200 hover:-translate-y-[1px] hover:border-slate-600/70 hover:bg-slate-900/72"
+                    {yearOptions.map((year) => (
+                      <option key={year} value={year}>{year}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="flex flex-col gap-1 text-xs text-slate-300">
+                  <span>Mes</span>
+                  <select
+                    value={pendingFilters.month}
+                    onChange={(event) => setPendingFilters((prev) => ({ ...prev, month: event.target.value }))}
+                    className="rounded-xl border border-slate-700/60 bg-slate-950/60 px-3 py-2 text-sm text-slate-100"
                   >
-                    <span className={`inline-flex h-6 w-6 items-center justify-center rounded-full border ${
-                      toneClassByAlert[action.tone] || toneClassByAlert.info
-                    }`}>
-                      <Icon size={13} />
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-semibold text-slate-100">{action.title}</p>
-                      <p className="text-[11px] text-slate-400">{action.description}</p>
-                    </div>
-                    <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-slate-300">
-                      {action.actionLabel}
-                      <MoveRight size={13} className="shrink-0 text-slate-400" />
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          )}
-        </Card>
-      ) : null}
-
-      {hasWidget('specialist_agenda') && !showUnifiedEmptyState ? (
-        <Card className="flex flex-col gap-2.5 px-3 py-3 md:gap-3 md:px-4 md:py-4">
-          <SectionHeader eyebrow="Agenda" title="Actividades proximas" />
-          {loading ? (
-            <p className="text-xs text-slate-400 md:text-sm">Cargando agenda...</p>
-          ) : upcomingAgenda.length === 0 ? (
-            <p className="text-xs text-slate-400 md:text-sm">No hay eventos proximos.</p>
-          ) : (
-            <ul className="divide-y divide-slate-800/70 rounded-lg border border-slate-800/70 bg-slate-900/35">
-              {upcomingAgenda.map((event) => (
-                <li key={event.id} className="flex flex-wrap items-center justify-between gap-2 px-3 py-1.5 md:py-2">
-                  <p title={event.title} className="min-w-0 flex-1 truncate text-sm text-slate-100">
-                    {truncateLabel(event.title, 62)}
-                  </p>
-                  <span className="text-[11px] text-slate-400">{formatAgendaRange(event.start_at, event.end_at)}</span>
-                  <span className="rounded-full border border-cyan-500/35 bg-cyan-500/10 px-2 py-0.5 text-[10px] text-cyan-100">
-                    {eventTypeLabel(event.event_type)}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </Card>
-      ) : null}
-
-      {showUnifiedEmptyState ? (
-        <Card className="flex flex-col gap-2.5 px-3 py-3 md:gap-3 md:px-4 md:py-4">
-          <p className="text-sm font-medium text-slate-200 md:text-base">No hay monitoreos ni actividades pendientes.</p>
-          <p className="text-xs text-slate-400 md:text-sm">Todo en orden para el periodo actual.</p>
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={() => navigate('/monitoreo/seguimiento')}
-              className="ds-btn ds-btn-secondary h-8 px-3 text-xs md:h-9"
-            >
-              Ir a seguimiento
-            </button>
-            <button
-              type="button"
-              onClick={() => navigate('/monitoreo/gestion')}
-              className="ds-btn ds-btn-primary h-8 px-3 text-xs md:h-9"
-            >
-              Crear monitoreo
-            </button>
-          </div>
-        </Card>
-      ) : null}
-
-      {hasWidget('quick_actions') ? (
-        <Card className="flex flex-col gap-2.5 px-3 py-3 md:gap-3 md:px-4 md:py-4">
-          <SectionHeader eyebrow="Acciones" title="Acciones rapidas" />
-          <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
-            {quickActions.map((action) => {
-              const Icon = action.icon;
-              return (
+                    {MONTH_OPTIONS.map((month) => (
+                      <option key={month.value} value={month.value}>{month.label}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="flex flex-col gap-1 text-xs text-slate-300">
+                  <span>Día</span>
+                  <select
+                    value={pendingFilters.day}
+                    onChange={(event) => setPendingFilters((prev) => ({ ...prev, day: event.target.value }))}
+                    className="rounded-xl border border-slate-700/60 bg-slate-950/60 px-3 py-2 text-sm text-slate-100"
+                  >
+                    {dayOptions.map((day) => (
+                      <option key={day} value={day}>{day === 'all' ? 'Todos' : day}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="flex flex-col gap-1 text-xs text-slate-300">
+                  <span>Area</span>
+                  <select
+                    value={pendingFilters.area}
+                    onChange={(event) => setPendingFilters((prev) => ({ ...prev, area: event.target.value }))}
+                    className="rounded-xl border border-slate-700/60 bg-slate-950/60 px-3 py-2 text-sm text-slate-100"
+                  >
+                    {areaOptions.map((area) => (
+                      <option key={area} value={area}>{area === 'all' ? 'Todas' : area}</option>
+                    ))}
+                  </select>
+                </label>
                 <button
-                  key={action.id}
                   type="button"
-                  onClick={() => navigate(action.path)}
-                  className="ds-btn ds-btn-secondary h-9 text-xs md:h-10 md:text-sm"
+                  onClick={() => setAppliedFilters({ ...pendingFilters })}
+                  className="inline-flex h-10 items-center justify-center gap-2 self-end rounded-xl border border-cyan-400/50 bg-cyan-500/15 px-4 text-sm font-semibold text-cyan-100 transition hover:border-cyan-300/70"
                 >
-                  <Icon size={14} />
-                  {action.label}
+                  <CalendarDays size={14} />
+                  Aplicar
                 </button>
-              );
-            })}
-          </div>
-        </Card>
+              </div>
+            </Card>
+
+            <Card className="xl:col-span-2 rounded-2xl border border-emerald-500/35 bg-emerald-500/10 p-4">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-emerald-100/80">Total Progress (Mejor area)</p>
+              {bestArea ? (
+                <>
+                  <p className="mt-3 text-3xl font-extrabold text-emerald-100">{formatPercent(bestArea.progress)}</p>
+                  <p className="mt-1 text-xs text-emerald-100/80">{bestArea.area}</p>
+                  <p className="mt-2 text-[11px] text-emerald-100/80">
+                    Real: {formatPercent(bestArea.real)} · Meta: {formatPercent(bestArea.goal)}
+                  </p>
+                </>
+              ) : (
+                <p className="mt-4 text-sm text-emerald-100/80">Sin datos</p>
+              )}
+            </Card>
+
+            <Card className="xl:col-span-2 rounded-2xl border border-rose-500/35 bg-rose-500/10 p-4">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-rose-100/80">Total Progress (Peor area)</p>
+              {worstArea ? (
+                <>
+                  <p className="mt-3 text-3xl font-extrabold text-rose-100">{formatPercent(worstArea.progress)}</p>
+                  <p className="mt-1 text-xs text-rose-100/80">{worstArea.area}</p>
+                  <p className="mt-2 text-[11px] text-rose-100/80">
+                    Real: {formatPercent(worstArea.real)} · Meta: {formatPercent(worstArea.goal)}
+                  </p>
+                </>
+              ) : (
+                <p className="mt-4 text-sm text-rose-100/80">Sin datos</p>
+              )}
+            </Card>
+          </section>
+
+          <section className="grid grid-cols-1 gap-4">
+            <Card className="rounded-2xl border border-slate-800/80 bg-slate-900/55 p-4 md:p-5">
+              <div className="mb-4 flex items-center justify-between gap-2">
+                <div>
+                  <h3 className="text-sm font-semibold uppercase tracking-[0.08em] text-slate-100">Progress by Area</h3>
+                  <p className="text-xs text-slate-400">Comparativo por area: meta vs avance real de CdD</p>
+                </div>
+                <span className="rounded-full border border-slate-700/60 px-2.5 py-1 text-[11px] text-slate-300">
+                  Global: {formatPercent(globalProgress.progress)}
+                </span>
+              </div>
+
+              {isLoading ? (
+                <div className="flex items-center gap-2 text-sm text-slate-300"><Loader2 size={14} className="animate-spin" /> Cargando metricas...</div>
+              ) : !hasData ? (
+                <p className="text-sm text-slate-400">No hay monitoreos con Compromiso de Desempeño para el filtro aplicado.</p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <div className="flex min-w-[780px] items-end gap-4 rounded-xl border border-slate-800/70 bg-slate-950/40 p-4">
+                    {areaStats.map((row) => {
+                      const maxHeight = 200;
+                      const goalHeight = Math.max(4, Math.round((clampPercent(row.goal) / 100) * maxHeight));
+                      const realHeight = Math.max(4, Math.round((clampPercent(row.real) / 100) * maxHeight));
+                      return (
+                        <div key={row.area} className="flex w-[130px] flex-col items-center gap-2">
+                          <div className="flex h-[220px] items-end gap-2">
+                            <div className="flex w-10 flex-col items-center gap-1">
+                              <span className="text-[10px] font-semibold text-slate-300">{formatPercent(row.goal)}</span>
+                              <div className="w-full rounded-t-md bg-slate-500/40" style={{ height: `${goalHeight}px` }} />
+                              <span className="text-[10px] uppercase tracking-[0.12em] text-slate-400">Meta</span>
+                            </div>
+                            <div className="flex w-10 flex-col items-center gap-1">
+                              <span className="text-[10px] font-semibold text-cyan-100">{formatPercent(row.real)}</span>
+                              <div className="w-full rounded-t-md bg-cyan-400/80" style={{ height: `${realHeight}px` }} />
+                              <span className="text-[10px] uppercase tracking-[0.12em] text-cyan-200">Real</span>
+                            </div>
+                          </div>
+                          <p className="line-clamp-2 text-center text-xs font-semibold text-slate-200">{row.area}</p>
+                          <p className="text-[11px] text-slate-400">Cumplimiento: {formatPercent(row.progress)}</p>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </Card>
+          </section>
+
+          <section className="grid grid-cols-1 gap-4 xl:grid-cols-12">
+            <Card className="xl:col-span-4 rounded-2xl border border-slate-800/80 bg-slate-900/55 p-4 md:p-5">
+              <div className="mb-4 flex items-center justify-between gap-2">
+                <h3 className="text-sm font-semibold uppercase tracking-[0.08em] text-slate-100">Top Eficiencia Jefes</h3>
+                <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-cyan-200">Este periodo</span>
+              </div>
+
+              {isLoading ? (
+                <div className="flex items-center gap-2 text-sm text-slate-300"><Loader2 size={14} className="animate-spin" /> Cargando...</div>
+              ) : !topChiefs.length ? (
+                <p className="text-sm text-slate-400">No hay jefes con datos suficientes.</p>
+              ) : (
+                <div className="space-y-3">
+                  {topChiefs.map((chief) => (
+                    <div key={chief.name} className="space-y-1.5">
+                      <div className="flex items-center justify-between gap-2 text-xs">
+                        <p className="truncate font-semibold text-slate-100">{chief.name}</p>
+                        <span className="text-cyan-200">{formatPercent(chief.efficiency)}</span>
+                      </div>
+                      <div className="h-2 overflow-hidden rounded-full bg-slate-800/70">
+                        <div className="h-full rounded-full bg-cyan-400/80" style={{ width: `${clampPercent(chief.efficiency)}%` }} />
+                      </div>
+                      <p className="text-[11px] text-slate-400">{Math.round(chief.completed)}/{Math.round(chief.goal)} · {pluralize(chief.monitorings, 'monitoreo', 'monitoreos')}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </Card>
+
+            <Card className="xl:col-span-8 rounded-2xl border border-slate-800/80 bg-slate-900/55 p-0">
+              <div className="flex items-center justify-between border-b border-slate-800/80 px-4 py-4 md:px-5">
+                <h3 className="text-sm font-semibold text-slate-100">Actividad de Monitoreo Detallada</h3>
+                <span className="text-[11px] text-slate-400">{pluralize(detailedRows.length, 'registro', 'registros')}</span>
+              </div>
+              {isLoading ? (
+                <div className="px-4 py-4 text-sm text-slate-300"><Loader2 size={14} className="mr-2 inline animate-spin" />Cargando actividad...</div>
+              ) : !detailedRows.length ? (
+                <p className="px-4 py-4 text-sm text-slate-400">Sin actividad para el filtro aplicado.</p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="min-w-full text-left text-xs">
+                    <thead>
+                      <tr className="border-b border-slate-800/80 text-[10px] uppercase tracking-[0.12em] text-slate-500">
+                        <th className="px-4 py-3">Nombre del monitoreo</th>
+                        <th className="px-4 py-3">Monitor responsable</th>
+                        <th className="px-4 py-3">Area</th>
+                        <th className="px-4 py-3">Ultima actualización</th>
+                        <th className="px-4 py-3">Progreso/Meta</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {detailedRows.map((row) => (
+                        <tr key={row.id} className="border-b border-slate-800/60 hover:bg-slate-900/60">
+                          <td className="px-4 py-3">
+                            <p className="font-semibold text-slate-100">{row.title}</p>
+                            <p className="text-[11px] text-slate-400">Ref: #{String(row.id).slice(0, 8).toUpperCase()}</p>
+                          </td>
+                          <td className="px-4 py-3 text-slate-200">{row.responsibleName}</td>
+                          <td className="px-4 py-3 text-slate-200">{row.area}</td>
+                          <td className="px-4 py-3 text-slate-300">{formatDateTime(row.lastUpdate)}</td>
+                          <td className="px-4 py-3">
+                            <div className="w-36">
+                              <div className="mb-1 flex justify-between text-[11px] text-slate-300">
+                                <span>{formatPercent(row.progress)}</span>
+                                <span>{row.completed}/{row.goal}</span>
+                              </div>
+                              <div className="h-1.5 overflow-hidden rounded-full bg-slate-800/80">
+                                <div className={`h-full rounded-full ${row.progress >= 80 ? 'bg-emerald-400/80' : row.progress >= 50 ? 'bg-cyan-400/80' : 'bg-amber-400/80'}`} style={{ width: `${clampPercent(row.progress)}%` }} />
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </Card>
+          </section>
+
+          <section className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+            <Card className="rounded-2xl border border-slate-800/80 bg-slate-900/55 p-4 md:p-5">
+              <h3 className="mb-4 flex items-center gap-2 text-sm font-semibold text-slate-100">
+                <AlertTriangle size={14} className="text-amber-300" /> Alta Prioridad
+              </h3>
+              {!highPriorityRows.length ? (
+                <p className="text-sm text-slate-400">No hay alertas críticas en este momento.</p>
+              ) : (
+                <div className="space-y-3">
+                  {highPriorityRows.map((row) => (
+                    <div key={`priority-${row.id}`} className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-sm font-semibold text-rose-100">{row.title}</p>
+                        <span className="rounded-full border border-rose-400/40 px-2 py-0.5 text-[10px] text-rose-100">{formatPercent(row.progress)}</span>
+                      </div>
+                      <p className="mt-1 text-xs text-rose-100/80">{row.area} · Vence: {formatDateTime(row.endAt)}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </Card>
+
+            <Card className="rounded-2xl border border-slate-800/80 bg-slate-900/55 p-4 md:p-5">
+              <h3 className="mb-4 flex items-center gap-2 text-sm font-semibold text-slate-100">
+                <ClipboardList size={14} className="text-cyan-300" /> Tareas Pendientes
+              </h3>
+              <div className="space-y-2">
+                {pendingTasks.map((task) => (
+                  <div key={task.id} className="flex items-start gap-2 rounded-xl border border-slate-800/70 bg-slate-950/40 px-3 py-2.5">
+                    {task.id === 'none' ? (
+                      <CheckCircle2 size={14} className="mt-0.5 text-emerald-300" />
+                    ) : (
+                      <TrendingDown size={14} className="mt-0.5 text-amber-300" />
+                    )}
+                    <div>
+                      <p className="text-sm text-slate-100">{task.text}</p>
+                      <p className="text-xs text-slate-400">{task.detail}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="mt-4 flex items-center justify-end gap-2 text-xs text-slate-400">
+                <TrendingUp size={13} className="text-cyan-300" />
+                Seguimiento continuo en tiempo real
+              </div>
+            </Card>
+          </section>
+        </>
       ) : null}
     </div>
   );

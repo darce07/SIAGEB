@@ -456,14 +456,15 @@ export default function Login() {
         return;
       }
 
-      const effectiveRole = requestedAdminAccess ? 'admin' : 'user';
+      const effectiveRole = requestedAdminAccess ? 'admin' : accountRole || 'user';
 
       const payload = {
         role: effectiveRole,
-        accountRole: isAccountAdmin ? 'admin' : 'user',
+        accountRole: accountRole || 'user',
         accessMode: requestedAdminAccess ? 'admin' : 'especialista',
         email: profile?.email || data.user.email,
         docNumber: profile?.doc_number || form.docNumber.trim(),
+        id: profile?.id || data.user.id || '',
         name: profile?.full_name || `${profile?.first_name || ''} ${profile?.last_name || ''}`.trim(),
       };
       localStorage.setItem(AUTH_KEY, JSON.stringify(payload));

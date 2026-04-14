@@ -21,18 +21,27 @@ import Input from '../components/ui/Input.jsx';
 import Select from '../components/ui/Select.jsx';
 import SectionHeader from '../components/ui/SectionHeader.jsx';
 import { supabase } from '../lib/supabase.js';
+import { getRoleLabel } from '../lib/roles.js';
 
 const emptyForm = {
   id: null,
   firstName: '',
   lastName: '',
   email: '',
-  role: 'user',
+  role: 'especialista',
   status: 'active',
   docType: 'DNI',
   docNumber: '',
   password: '',
 };
+
+const ROLE_OPTIONS = [
+  { value: 'especialista', label: 'Especialista' },
+  { value: 'user', label: 'Especialista (legacy)' },
+  { value: 'jefe_area', label: 'Jefe de Area' },
+  { value: 'director', label: 'Director' },
+  { value: 'admin', label: 'Administrador' },
+];
 
 const PASSWORD_LENGTH = 9;
 const buildFullName = (firstName, lastName) => `${firstName || ''} ${lastName || ''}`.trim();
@@ -226,12 +235,28 @@ export default function MonitoreoUsuarios() {
 
     const invokeWithCurrentSession = async (accessToken) => {
       try {
-        supabase.functions.setAuth(accessToken);
+        const debugAuth =
+          typeof window !== 'undefined' &&
+          (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+        const { data: authUserData } = await supabase.auth.getUser();
+        const authUserId = authUserData?.user?.id || '';
+        const authUserEmail = authUserData?.user?.email || '';
+
         const { data, error } = await supabase.functions.invoke('admin-users', {
           body: {
             ...(body || {}),
             access_token: accessToken,
+            requester_id: currentAuth?.id || currentProfile?.id || authUserId || '',
+            requester_email: currentAuth?.email || currentProfile?.email || authUserEmail || '',
+            requester_doc_number: currentAuth?.docNumber || currentProfile?.doc_number || '',
+            ...(debugAuth ? { debug_auth: true } : {}),
           },
+          headers: accessToken
+            ? {
+                Authorization: `Bearer ${accessToken}`,
+                'x-client-authorization': `Bearer ${accessToken}`,
+              }
+            : undefined,
         });
 
         if (error) {
@@ -693,7 +718,7 @@ export default function MonitoreoUsuarios() {
       `Correo: ${detailsTarget.email || ''}`,
       `Tipo documento: ${detailsTarget.doc_type || ''}`,
       `Documento: ${detailsTarget.doc_number || ''}`,
-      `Rol: ${detailsTarget.role === 'admin' ? 'Administrador' : 'Especialista'}`,
+      `Rol: ${getRoleLabel(detailsTarget.role)}`,
       `Estado: ${detailsTarget.status === 'active' ? 'Activo' : 'Desactivado'}`,
       `Creado: ${detailsTarget.created_at ? new Date(detailsTarget.created_at).toLocaleString() : '-'}`,
       `Actualizado: ${detailsTarget.updated_at ? new Date(detailsTarget.updated_at).toLocaleString() : '-'}`,
@@ -857,8 +882,11 @@ export default function MonitoreoUsuarios() {
                         onChange={(event) => setForm((prev) => ({ ...prev, role: event.target.value }))}
                         disabled={isEditingLastActiveAdmin}
                       >
-                        <option value="user">Especialista</option>
-                        <option value="admin">Administrador</option>
+                        {ROLE_OPTIONS.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
                       </Select>
                       <Input id="email" label="Correo institucional" value={form.email} onChange={(event) => setForm((prev) => ({ ...prev, email: event.target.value }))} placeholder="usuario@ugel.gob.pe" />
 
@@ -960,8 +988,11 @@ export default function MonitoreoUsuarios() {
               <Input id="search" label="Buscar" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Nombre o correo" />
               <Select id="roleFilter" label="Rol" value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)}>
                 <option value="all">Todos</option>
-                <option value="user">Especialista</option>
-                <option value="admin">Administrador</option>
+                {ROLE_OPTIONS.map((option) => (
+                  <option key={`filter-${option.value}`} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
               </Select>
               <Select id="statusFilter" label="Estado" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
                 <option value="all">Todos</option>
@@ -1007,7 +1038,7 @@ export default function MonitoreoUsuarios() {
                       </div>
                       <div className="mt-2.5 flex flex-wrap items-center gap-2">
                         <span className="rounded-full border border-slate-700/60 bg-slate-900/60 px-2.5 py-0.5 text-[11px] text-slate-300">
-                          {user.role === 'admin' ? 'Administrador' : 'Especialista'}
+                          {getRoleLabel(user.role)}
                         </span>
                         <span className={`rounded-full border px-2.5 py-0.5 text-[11px] font-semibold ${user.status === 'active' ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200' : 'border-amber-500/40 bg-amber-500/10 text-amber-200'}`}>
                           {user.status === 'active' ? 'Activo' : 'Desactivado'}
@@ -1112,7 +1143,7 @@ export default function MonitoreoUsuarios() {
                       ['Apellidos', detailsTarget.last_name],
                       ['Correo', detailsTarget.email],
                       ['Documento', `${detailsTarget.doc_type || '-'} ${detailsTarget.doc_number || '-'}`],
-                      ['Rol', detailsTarget.role === 'admin' ? 'Administrador' : 'Especialista'],
+                      ['Rol', getRoleLabel(detailsTarget.role)],
                       ['Estado', detailsTarget.status === 'active' ? 'Activo' : 'Desactivado'],
                       ['Creado', detailsTarget.created_at ? new Date(detailsTarget.created_at).toLocaleString() : '-'],
                       ['Actualizado', detailsTarget.updated_at ? new Date(detailsTarget.updated_at).toLocaleString() : '-'],
@@ -1154,7 +1185,7 @@ export default function MonitoreoUsuarios() {
                     <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">Acceso y estado</p>
                     <div className="mt-3 grid gap-3 md:grid-cols-2">
                       {[
-                        ['Rol', detailsTarget.role === 'admin' ? 'Administrador' : 'Especialista'],
+                        ['Rol', getRoleLabel(detailsTarget.role)],
                         ['Estado', detailsTarget.status === 'active' ? 'Activo' : 'Desactivado'],
                       ].map(([label, value]) => (
                         <button key={label} type="button" onClick={() => copyField(value, label)} className="flex min-h-14 items-center justify-between rounded-xl border border-slate-800/70 bg-slate-900/60 px-4 py-3 text-left transition hover:border-slate-600/70">

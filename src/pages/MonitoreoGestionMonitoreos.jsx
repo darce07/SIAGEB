@@ -42,12 +42,14 @@ const REQUEST_EDITABLE_KEYS = [
   'startDate',
   'endDate',
   'cdd',
+  'cddArea',
   'managementFilters',
   'modalityFilters',
   'typeFilters',
   'levelFilters',
   'restriction',
   'institutions',
+  'assignedMonitorIds',
   'sheets',
 ];
 
@@ -104,6 +106,7 @@ const MANAGEMENT_OPTION_SET = new Set([
 const PUBLIC_MANAGEMENT_OPTION_SET = new Set(PUBLIC_MANAGEMENT_OPTIONS.map((item) => item.value));
 const MODALITY_OPTION_SET = new Set(MODALITY_OPTIONS.map((item) => item.value));
 const TYPE_OPTION_SET = new Set(TYPE_OPTIONS.map((item) => item.value));
+const MONITOR_ROLE_SET = new Set(['user', 'especialista', 'jefe_area']);
 
 const sanitizeManagementFilters = (values) => {
   const safeValues = Array.isArray(values) ? values : [];
@@ -149,6 +152,11 @@ const sanitizeTypeFilters = (values) => {
   return valid.length ? [valid[0]] : [];
 };
 
+const sanitizeAssignedMonitorIds = (values) => {
+  const safeValues = Array.isArray(values) ? values : [];
+  return [...new Set(safeValues.map((value) => String(value || '').trim()).filter(Boolean))];
+};
+
 const normalizeRequestDraft = (draft) => {
   const modalityFilters = sanitizeModalityFilters(draft.modalityFilters);
   return {
@@ -157,6 +165,7 @@ const normalizeRequestDraft = (draft) => {
     modalityFilters,
     typeFilters: sanitizeTypeFilters(draft.typeFilters),
     levelFilters: sanitizeLevelFilters(draft.levelFilters, modalityFilters),
+    assignedMonitorIds: sanitizeAssignedMonitorIds(draft.assignedMonitorIds),
   };
 };
 
@@ -255,6 +264,7 @@ const buildPendingChangesSummary = (request) => {
   addSimpleChange('Fecha de inicio', base.startDate, next.startDate);
   addSimpleChange('Fecha de cierre', base.endDate, next.endDate);
   addSimpleChange('CdD', base.cdd, next.cdd);
+  addSimpleChange('Area CdD', base.cddArea, next.cddArea);
   addSimpleChange('Restriccion', base.restriction, next.restriction);
 
   const beforeManagement = formatFilterList(base.managementFilters);
@@ -277,6 +287,12 @@ const buildPendingChangesSummary = (request) => {
   const afterInstitutions = Array.isArray(next.institutions) ? next.institutions.length : 0;
   if (beforeInstitutions !== afterInstitutions) {
     changes.push(`Instituciones focalizadas: ${beforeInstitutions} -> ${afterInstitutions}`);
+  }
+
+  const beforeMonitors = Array.isArray(base.assignedMonitorIds) ? base.assignedMonitorIds.length : 0;
+  const afterMonitors = Array.isArray(next.assignedMonitorIds) ? next.assignedMonitorIds.length : 0;
+  if (beforeMonitors !== afterMonitors) {
+    changes.push(`Monitores asignados: ${beforeMonitors} -> ${afterMonitors}`);
   }
 
   const beforeStructure = countRequestStructure(base);
@@ -413,12 +429,14 @@ const mapRequestFromDbRow = (row) => ({
   startDate: toDateTimeLocalValue(row.start_date),
   endDate: toDateTimeLocalValue(row.end_date),
   cdd: row.cdd || 'no',
+  cddArea: row.cdd_area || '',
   managementFilters: Array.isArray(row.management_filters) ? row.management_filters : [],
   modalityFilters: Array.isArray(row.modality_filters) ? row.modality_filters : [],
   typeFilters: Array.isArray(row.type_filters) ? row.type_filters : [],
   levelFilters: Array.isArray(row.level_filters) ? row.level_filters : [],
   restriction: row.restriction || 'none',
   institutions: Array.isArray(row.institutions) ? row.institutions : [],
+  assignedMonitorIds: Array.isArray(row.assigned_monitor_ids) ? row.assigned_monitor_ids : [],
   sheets: Array.isArray(row.sheets) ? row.sheets : [],
   status: row.status || 'pending',
   createdBy: row.created_by || '',
@@ -441,12 +459,14 @@ const mapRequestToDbRow = (request) => {
     start_date: request.startDate || null,
     end_date: request.endDate || null,
     cdd: request.cdd || 'no',
+    cdd_area: String(request.cddArea || '').trim() || null,
     management_filters: normalized.managementFilters,
     modality_filters: normalized.modalityFilters,
     type_filters: normalized.typeFilters,
     level_filters: normalized.levelFilters,
     restriction: request.restriction || 'none',
     institutions: Array.isArray(request.institutions) ? request.institutions : [],
+    assigned_monitor_ids: sanitizeAssignedMonitorIds(request.assignedMonitorIds),
     sheets: Array.isArray(request.sheets) ? request.sheets : [],
     status: request.status || 'pending',
     created_by: request.createdBy || null,
@@ -513,12 +533,14 @@ const createEmptyRequestDraft = () => ({
   startDate: '',
   endDate: '',
   cdd: 'no',
+  cddArea: '',
   managementFilters: [],
   modalityFilters: [],
   typeFilters: [],
   levelFilters: [],
   restriction: 'none',
   institutions: [],
+  assignedMonitorIds: [],
 });
 
 const createEmptySheetDraft = () => ({
@@ -553,12 +575,14 @@ const mapRequestToDraft = (request) =>
     startDate: toDateTimeLocalValue(request.startDate),
     endDate: toDateTimeLocalValue(request.endDate),
     cdd: request.cdd || 'no',
+    cddArea: request.cddArea || '',
     managementFilters: Array.isArray(request.managementFilters) ? request.managementFilters : [],
     modalityFilters: Array.isArray(request.modalityFilters) ? request.modalityFilters : [],
     typeFilters: Array.isArray(request.typeFilters) ? request.typeFilters : [],
     levelFilters: Array.isArray(request.levelFilters) ? request.levelFilters : [],
     restriction: request.restriction || 'none',
     institutions: Array.isArray(request.institutions) ? request.institutions : [],
+    assignedMonitorIds: sanitizeAssignedMonitorIds(request.assignedMonitorIds),
   });
 
 const toggleArrayValue = (values, value) => {
@@ -587,6 +611,22 @@ const mapInstitution = (row) => ({
   level: row.nivel || '',
   modality: row.modalidad || '',
 });
+
+const mapMonitorProfile = (row) => {
+  const composedName = [row?.first_name, row?.last_name]
+    .map((value) => String(value || '').trim())
+    .filter(Boolean)
+    .join(' ')
+    .trim();
+  const fullName = String(row?.full_name || '').trim();
+  const displayName = fullName || composedName || String(row?.email || '').trim() || 'Monitor sin nombre';
+  return {
+    id: String(row?.id || '').trim(),
+    name: displayName,
+    email: String(row?.email || '').trim(),
+    role: String(row?.role || '').trim(),
+  };
+};
 
 const createSection = (name) => ({
   id: crypto.randomUUID(),
@@ -726,12 +766,14 @@ const buildTemplateLevelsConfig = (request) => ({
   scope: {
     requestCode: request?.code || '',
     cdd: request?.cdd || 'no',
+    cddArea: request?.cddArea || '',
     managementFilters: Array.isArray(request?.managementFilters) ? request.managementFilters : [],
     modalityFilters: Array.isArray(request?.modalityFilters) ? request.modalityFilters : [],
     typeFilters: Array.isArray(request?.typeFilters) ? request.typeFilters : [],
     levelFilters: Array.isArray(request?.levelFilters) ? request.levelFilters : [],
     restriction: request?.restriction || 'none',
     institutions: Array.isArray(request?.institutions) ? request.institutions : [],
+    assignedMonitorIds: sanitizeAssignedMonitorIds(request?.assignedMonitorIds),
   },
   builder: {
     sheets: Array.isArray(request?.sheets)
@@ -857,6 +899,9 @@ export default function MonitoreoGestionMonitoreos({ embedded = false, initialCr
   const [institutionCatalog, setInstitutionCatalog] = useState([]);
   const [isInstitutionsLoading, setIsInstitutionsLoading] = useState(false);
   const [institutionSearch, setInstitutionSearch] = useState('');
+  const [monitorCatalog, setMonitorCatalog] = useState([]);
+  const [isMonitorsLoading, setIsMonitorsLoading] = useState(false);
+  const [monitorSearch, setMonitorSearch] = useState('');
 
   const [sheetDraft, setSheetDraft] = useState(createEmptySheetDraft());
   const [selectedSheetId, setSelectedSheetId] = useState('');
@@ -983,6 +1028,9 @@ export default function MonitoreoGestionMonitoreos({ embedded = false, initialCr
     if (!selectedRequestQuestionCount) {
       return 'Agrega al menos una pregunta antes de publicar el monitoreo.';
     }
+    if (!sanitizeAssignedMonitorIds(selectedRequest.assignedMonitorIds).length) {
+      return 'Asigna al menos un monitor de Equipo antes de publicar.';
+    }
     if (missingQuestionSheetTitles.length) {
       const preview = missingQuestionSheetTitles.slice(0, 2).join(', ');
       const suffix = missingQuestionSheetTitles.length > 2 ? '...' : '';
@@ -1096,10 +1144,50 @@ export default function MonitoreoGestionMonitoreos({ embedded = false, initialCr
   }, []);
 
   useEffect(() => {
+    let active = true;
+    const fetchMonitors = async () => {
+      if (!isAdmin) {
+        if (active) setMonitorCatalog([]);
+        return;
+      }
+
+      setIsMonitorsLoading(true);
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('id,first_name,last_name,full_name,email,role,status')
+        .eq('status', 'active');
+
+      if (!active) return;
+
+      if (error) {
+        console.error(error);
+        setMonitorCatalog([]);
+      } else {
+        const mapped = (data || [])
+          .filter((row) => MONITOR_ROLE_SET.has(String(row?.role || '').toLowerCase()))
+          .map(mapMonitorProfile)
+          .filter((item) => item.id);
+        setMonitorCatalog(
+          mapped.sort((left, right) =>
+            String(left.name || '').localeCompare(String(right.name || ''), 'es', { sensitivity: 'base' }),
+          ),
+        );
+      }
+      setIsMonitorsLoading(false);
+    };
+
+    fetchMonitors();
+    return () => {
+      active = false;
+    };
+  }, [isAdmin]);
+
+  useEffect(() => {
     if (!editableRequest) return;
     setRequestDraft(mapRequestToDraft(editableRequest));
     setFilterInfo('');
     setShowNonFocalizedInstitutions(false);
+    setMonitorSearch('');
     setReviewComment('');
   }, [editableRequest]);
 
@@ -1165,6 +1253,32 @@ export default function MonitoreoGestionMonitoreos({ embedded = false, initialCr
       })
       .slice(0, 8);
   }, [institutionCatalog, institutionSearch, requestDraft.institutions]);
+
+  const selectedMonitorBadges = useMemo(() => {
+    const selectedIds = sanitizeAssignedMonitorIds(requestDraft.assignedMonitorIds);
+    if (!selectedIds.length) return [];
+    const byId = new Map(monitorCatalog.map((item) => [item.id, item]));
+    return selectedIds.map((id) => byId.get(id)).filter(Boolean);
+  }, [monitorCatalog, requestDraft.assignedMonitorIds]);
+  const selectedMonitorIdSet = useMemo(
+    () => new Set(sanitizeAssignedMonitorIds(requestDraft.assignedMonitorIds)),
+    [requestDraft.assignedMonitorIds],
+  );
+
+  const filteredMonitorRows = useMemo(() => {
+    const term = normalizeText(monitorSearch);
+    const rows = monitorCatalog.filter((item) => {
+      if (!term) return true;
+      const searchable = `${item.name} ${item.email}`;
+      return normalizeText(searchable).includes(term);
+    });
+    return rows.sort((left, right) => {
+      const leftSelected = selectedMonitorIdSet.has(left.id);
+      const rightSelected = selectedMonitorIdSet.has(right.id);
+      if (leftSelected !== rightSelected) return leftSelected ? -1 : 1;
+      return String(left.name || '').localeCompare(String(right.name || ''), 'es', { sensitivity: 'base' });
+    });
+  }, [monitorCatalog, monitorSearch, selectedMonitorIdSet]);
 
   const updateSelectedRequest = (updater, options = {}) => {
     const { markPendingForSpecialist = true } = options;
@@ -1381,6 +1495,25 @@ export default function MonitoreoGestionMonitoreos({ embedded = false, initialCr
     });
   };
 
+  const handleToggleMonitorAssignment = (monitorId) => {
+    if (!monitorId) return;
+    setRequestDraft((prev) => {
+      const current = sanitizeAssignedMonitorIds(prev.assignedMonitorIds);
+      const next = current.includes(monitorId)
+        ? current.filter((id) => id !== monitorId)
+        : [...current, monitorId];
+      return {
+        ...prev,
+        assignedMonitorIds: next,
+      };
+    });
+    setRequestErrors((prev) => {
+      const nextErrors = { ...prev };
+      delete nextErrors.assignedMonitorIds;
+      return nextErrors;
+    });
+  };
+
   const validateRequestDraft = (draft) => {
     const currentDraft = normalizeRequestDraft(draft);
     const nextErrors = {};
@@ -1395,6 +1528,9 @@ export default function MonitoreoGestionMonitoreos({ embedded = false, initialCr
       new Date(currentDraft.startDate).getTime() > new Date(currentDraft.endDate).getTime()
     ) {
       nextErrors.endDate = 'La fecha de cierre debe ser posterior al inicio.';
+    }
+    if (currentDraft.cdd === 'si' && !String(currentDraft.cddArea || '').trim()) {
+      nextErrors.cddArea = 'Define el area para monitoreos con Compromiso de Desempeño.';
     }
 
     if (!currentDraft.managementFilters.some((value) => MANAGEMENT_OPTIONS.some((item) => item.value === value))) {
@@ -1417,6 +1553,9 @@ export default function MonitoreoGestionMonitoreos({ embedded = false, initialCr
       nextErrors.levelFilters = 'Selecciona al menos un nivel compatible con la modalidad elegida.';
     } else if (currentDraft.levelFilters.some((value) => !availableLevelSet.has(value))) {
       nextErrors.levelFilters = 'Hay niveles no compatibles con la modalidad seleccionada.';
+    }
+    if (isAdmin && !sanitizeAssignedMonitorIds(currentDraft.assignedMonitorIds).length) {
+      nextErrors.assignedMonitorIds = 'Selecciona al menos un monitor para este monitoreo.';
     }
 
     setRequestErrors(nextErrors);
@@ -1622,6 +1761,37 @@ export default function MonitoreoGestionMonitoreos({ embedded = false, initialCr
         message: 'No se pudo publicar en Monitoreos. Revisa permisos o estructura de la solicitud.',
       });
       return;
+    }
+
+    const selectedMonitorIds = sanitizeAssignedMonitorIds(selectedRequest.assignedMonitorIds);
+    const { error: clearAssignmentsError } = await supabase
+      .from('monitoring_template_monitors')
+      .delete()
+      .eq('template_id', selectedRequest.id);
+    if (clearAssignmentsError) {
+      console.error(clearAssignmentsError);
+      setNotice({
+        tone: 'warning',
+        message: 'No se pudo actualizar la lista de monitores asignados.',
+      });
+      return;
+    }
+    if (selectedMonitorIds.length) {
+      const assignmentRows = selectedMonitorIds.map((userId) => ({
+        template_id: selectedRequest.id,
+        user_id: userId,
+      }));
+      const { error: insertAssignmentsError } = await supabase
+        .from('monitoring_template_monitors')
+        .insert(assignmentRows);
+      if (insertAssignmentsError) {
+        console.error(insertAssignmentsError);
+        setNotice({
+          tone: 'warning',
+          message: 'No se pudo guardar la asignacion de monitores.',
+        });
+        return;
+      }
     }
 
     let eventSyncWarning = '';
@@ -2463,7 +2633,7 @@ export default function MonitoreoGestionMonitoreos({ embedded = false, initialCr
               </div>
             ) : null}
 
-            <div className="grid gap-3 md:grid-cols-2">
+            <div className="grid gap-3 md:grid-cols-3">
               <Input
                 id="requestName"
                 label="Nombre del monitoreo"
@@ -2475,11 +2645,26 @@ export default function MonitoreoGestionMonitoreos({ embedded = false, initialCr
                 id="requestCdd"
                 label="Compromiso de desempeno (CdD)"
                 value={requestDraft.cdd}
-                onChange={(event) => setRequestDraft((prev) => ({ ...prev, cdd: event.target.value }))}
+                onChange={(event) =>
+                  setRequestDraft((prev) => ({
+                    ...prev,
+                    cdd: event.target.value,
+                    cddArea: event.target.value === 'si' ? prev.cddArea : '',
+                  }))
+                }
               >
                 <option value="no">No aplica</option>
                 <option value="si">Si aplica</option>
               </Select>
+              <Input
+                id="requestCddArea"
+                label="Area (CdD)"
+                value={requestDraft.cddArea}
+                onChange={(event) => setRequestDraft((prev) => ({ ...prev, cddArea: event.target.value }))}
+                placeholder={requestDraft.cdd === 'si' ? 'Ej. Comprension lectora' : 'Opcional'}
+                disabled={requestDraft.cdd !== 'si'}
+                error={requestErrors.cddArea}
+              />
             </div>
 
             <Textarea
@@ -2611,6 +2796,84 @@ export default function MonitoreoGestionMonitoreos({ embedded = false, initialCr
                 {filterInfo ? <p className="text-small mt-2 text-amber-200">{filterInfo}</p> : null}
                 {requestErrors.levelFilters ? (
                   <p className="text-small mt-2 text-rose-300">{requestErrors.levelFilters}</p>
+                ) : null}
+              </div>
+
+              <div className="rounded-xl border border-slate-800/80 bg-slate-900/45 p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="ds-field-label">Monitores con acceso</p>
+                  <span className="ds-badge ds-badge-info">
+                    {selectedMonitorBadges.length} seleccionado{selectedMonitorBadges.length === 1 ? '' : 's'}
+                  </span>
+                </div>
+                <p className="text-small mt-1">
+                  Solo los monitores seleccionados podran visualizar este monitoreo en la seccion Monitoreos.
+                </p>
+                {!isAdmin ? (
+                  <p className="text-small mt-2 text-amber-200">
+                    Solo administracion puede modificar esta asignacion desde Equipo.
+                  </p>
+                ) : (
+                  <>
+                    <div className="mt-2 grid gap-2 md:grid-cols-[minmax(0,1fr)_auto]">
+                      <Input
+                        id="monitorSearch"
+                        label="Buscar monitor"
+                        value={monitorSearch}
+                        onChange={(event) => setMonitorSearch(event.target.value)}
+                        placeholder="Nombre o correo"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setMonitorSearch('')}
+                        className="ds-btn ds-btn-secondary h-10 self-end"
+                      >
+                        Limpiar
+                      </button>
+                    </div>
+                    {isMonitorsLoading ? <p className="text-small mt-2">Cargando equipo...</p> : null}
+                    {!isMonitorsLoading ? (
+                      <div className="mt-2 max-h-48 space-y-1 overflow-auto rounded-xl border border-slate-800/80 bg-slate-900/60 p-2">
+                        {filteredMonitorRows.length ? (
+                          filteredMonitorRows.map((monitor) => {
+                            const checked = selectedMonitorIdSet.has(monitor.id);
+                            return (
+                              <button
+                                key={monitor.id}
+                                type="button"
+                                onClick={() => handleToggleMonitorAssignment(monitor.id)}
+                                className={`flex w-full items-center justify-between rounded-lg border px-2.5 py-2 text-left text-xs transition ${
+                                  checked
+                                    ? 'border-cyan-400/60 bg-cyan-500/20 text-cyan-100'
+                                    : 'border-slate-700/70 bg-slate-900/45 text-slate-300 hover:border-slate-500'
+                                }`}
+                              >
+                                <span className="truncate pr-2">{monitor.name}</span>
+                                <span className="truncate text-[11px] opacity-80">{monitor.email || 'Sin correo'}</span>
+                              </button>
+                            );
+                          })
+                        ) : (
+                          <p className="text-small px-1 py-2">No se encontraron monitores activos.</p>
+                        )}
+                      </div>
+                    ) : null}
+                  </>
+                )}
+                {selectedMonitorBadges.length ? (
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {selectedMonitorBadges.map((monitor) => (
+                      <span
+                        key={monitor.id}
+                        className="inline-flex items-center rounded-full border border-cyan-400/40 bg-cyan-500/15 px-2 py-0.5 text-[11px] text-cyan-100"
+                      >
+                        {monitor.name}
+                      </span>
+                    ))}
+                  </div>
+                ) : null}
+                {requestErrors.assignedMonitorIds ? (
+                  <p className="text-small mt-2 text-rose-300">{requestErrors.assignedMonitorIds}</p>
                 ) : null}
               </div>
             </div>
