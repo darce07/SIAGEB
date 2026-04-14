@@ -33,6 +33,7 @@ const MONTH_OPTIONS = [
 
 const STATUS_FILTER_OPTIONS = [
   { value: 'all', label: 'Todos' },
+  { value: 'in_progress', label: 'En proceso' },
   { value: 'pending', label: 'Pendientes' },
   { value: 'expired', label: 'Vencidos' },
 ];
@@ -94,7 +95,8 @@ const isCddPublishedTemplate = (template) => {
 const getTemplateFilterStatus = (template) => {
   const status = getTemplateStatus(template);
   if (status === 'closed') return 'expired';
-  return 'pending';
+  if (status === 'scheduled') return 'pending';
+  return 'in_progress';
 };
 
 const getDateWindowFromFilter = (filter) => {
