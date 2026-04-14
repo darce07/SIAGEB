@@ -24,7 +24,7 @@ import chatbotIcon from '../assets/chatbot-icon.png';
 import { SIDEBAR_SECTIONS } from '../data/fichaEscritura.js';
 import { supabase } from '../lib/supabase.js';
 import { SIDEBAR_GROUPS_BY_ROLE, SIDEBAR_ITEM_DEFINITIONS } from '../config/roleUiConfig.js';
-import { ROLE_ADMIN, ROLE_SPECIALIST, resolveUserRole } from '../lib/roles.js';
+import { ROLE_ADMIN, ROLE_SPECIALIST, getRoleLabel, resolveUserRole } from '../lib/roles.js';
 import ErrorBoundary from '../components/ErrorBoundary.jsx';
 import ConfirmModal from '../components/ui/ConfirmModal.jsx';
 
@@ -1239,7 +1239,7 @@ export default function MonitoreoLayout() {
     if (auth?.docNumber) return auth.docNumber;
     return 'Cargando...';
   }, [auth, profile]);
-  const roleLabel = auth?.role === 'admin' ? 'Administrador' : 'Especialista';
+  const roleLabel = getRoleLabel(auth?.role);
   const initials = displayName
     .split(' ')
     .filter(Boolean)

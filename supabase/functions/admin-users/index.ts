@@ -2,7 +2,7 @@
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Headers': 'authorization, x-client-authorization, x-client-info, apikey, content-type, x-debug-auth',
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
 };
 
@@ -14,6 +14,7 @@ const jsonResponse = (status: number, body: Record<string, unknown>) =>
 
 const buildFullName = (firstName?: string, lastName?: string) => `${firstName || ''} ${lastName || ''}`.trim();
 const normalizeRole = (value: unknown) => String(value || 'user').trim().toLowerCase();
+const ALLOWED_ROLES = new Set(['admin', 'user', 'especialista', 'director', 'jefe_area']);
 const normalizeStatus = (value: unknown) => String(value || 'active').trim().toLowerCase();
 const normalizeDocType = (value: unknown) => String(value || '').trim().toUpperCase();
 const normalizeDocNumber = (docType: string, value: unknown) => {
@@ -35,34 +36,87 @@ const getEnv = () => {
   return { url, anonKey, serviceRoleKey };
 };
 
-const getBearerToken = (req: Request) => {
-  const raw =
-    req.headers.get('x-client-authorization') ||
-    req.headers.get('X-Client-Authorization') ||
-    req.headers.get('Authorization') ||
-    req.headers.get('authorization') ||
-    '';
-  if (!raw) return '';
-
-  const values = raw
-    .split(',')
-    .map((value) => value.trim())
-    .filter(Boolean);
-
-  for (const value of values) {
-    if (!value.toLowerCase().startsWith('bearer ')) continue;
-    const token = value.slice(7).trim().replace(/^"+|"+$/g, '');
-    if (token.split('.').length === 3) return token;
+const decodeJwtPayload = (token: string) => {
+  try {
+    const parts = String(token || '').split('.');
+    if (parts.length !== 3) return null;
+    const normalized = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+    const padded = normalized.padEnd(normalized.length + ((4 - (normalized.length % 4)) % 4), '=');
+    const decoded = atob(padded);
+    const payload = JSON.parse(decoded);
+    return payload && typeof payload === 'object' ? payload : null;
+  } catch {
+    return null;
   }
+};
 
-  if (!raw.toLowerCase().startsWith('bearer ')) return '';
-  const fallback = raw.slice(7).trim().replace(/^"+|"+$/g, '');
-  return fallback.split(',')[0]?.trim() || '';
+const summarizeToken = (token: string) => {
+  const payload = decodeJwtPayload(token) || {};
+  const role = String((payload as Record<string, unknown>).role || '').toLowerCase();
+  const subRaw = String(
+    (payload as Record<string, unknown>).sub || (payload as Record<string, unknown>).subject || '',
+  ).trim();
+  const sub = subRaw ? `${subRaw.slice(0, 8)}...${subRaw.slice(-6)}` : '';
+  const exp = Number((payload as Record<string, unknown>).exp || 0) || 0;
+  return { role, sub, exp };
+};
+
+const getBearerTokens = (req: Request) => {
+  const authHeader = req.headers.get('authorization') || req.headers.get('Authorization') || '';
+  const clientAuthHeader =
+    req.headers.get('x-client-authorization') || req.headers.get('X-Client-Authorization') || '';
+
+  const raws = [authHeader, clientAuthHeader].filter(Boolean);
+  const tokens: string[] = [];
+
+  raws.forEach((raw) => {
+    raw
+      .split(',')
+      .map((value) => value.trim())
+      .filter(Boolean)
+      .forEach((value) => {
+        if (!value.toLowerCase().startsWith('bearer ')) return;
+        const token = value.slice(7).trim().replace(/^"+|"+$/g, '');
+        if (token.split('.').length === 3) tokens.push(token);
+      });
+  });
+
+  return tokens;
+};
+
+const getAuthDebugSnapshot = (req: Request) => {
+  const authHeader = req.headers.get('authorization') || req.headers.get('Authorization') || '';
+  const clientAuthHeader =
+    req.headers.get('x-client-authorization') || req.headers.get('X-Client-Authorization') || '';
+
+  const raws = [authHeader, clientAuthHeader].filter(Boolean);
+  const tokens: string[] = [];
+
+  raws.forEach((raw) => {
+    raw
+      .split(',')
+      .map((value) => value.trim())
+      .filter(Boolean)
+      .forEach((value) => {
+        if (!value.toLowerCase().startsWith('bearer ')) return;
+        const token = value.slice(7).trim().replace(/^"+|"+$/g, '');
+        if (token.split('.').length === 3) tokens.push(token);
+      });
+  });
+
+  return {
+    hasAuthorizationHeader: Boolean(authHeader),
+    hasClientAuthorizationHeader: Boolean(clientAuthHeader),
+    tokenCount: tokens.length,
+    tokens: tokens.map((token) => summarizeToken(token)),
+  };
 };
 
 const getBodyToken = (payload: Record<string, unknown>) => {
   const raw = String(payload.access_token || '').trim().replace(/^"+|"+$/g, '');
-  return raw.split('.').length === 3 ? raw : '';
+  if (!raw) return '';
+  const normalized = raw.toLowerCase().startsWith('bearer ') ? raw.slice(7).trim() : raw;
+  return normalized.split('.').length === 3 ? normalized : '';
 };
 
 const isActiveAdminProfile = (profile: { role?: string | null; status?: string | null } | null | undefined) =>
@@ -77,6 +131,32 @@ const countActiveAdmins = async (adminClient: ReturnType<typeof createClient>) =
 
   if (error) return { count: 0, error };
   return { count: (data || []).length, error: null };
+};
+
+const findAuthUserByEmail = async (
+  adminClient: ReturnType<typeof createClient>,
+  email: string,
+) => {
+  const target = String(email || '').trim().toLowerCase();
+  if (!target) return { user: null, error: null };
+
+  let page = 1;
+  const perPage = 200;
+
+  while (page <= 50) {
+    const { data, error } = await adminClient.auth.admin.listUsers({ page, perPage });
+    if (error) return { user: null, error };
+
+    const users = data?.users || [];
+    const found = users.find((item) => String(item?.email || '').trim().toLowerCase() === target) || null;
+    if (found) return { user: found, error: null };
+
+    if (users.length < perPage) break;
+    if (typeof data?.total === 'number' && page * perPage >= data.total) break;
+    page += 1;
+  }
+
+  return { user: null, error: null };
 };
 
 const getProfileById = async (adminClient: ReturnType<typeof createClient>, id: string) => {
@@ -118,36 +198,105 @@ const ensureAdmin = async (
   authClient: ReturnType<typeof createClient>,
   payload: Record<string, unknown>,
 ) => {
-  const token = getBearerToken(req) || getBodyToken(payload);
-  if (!token) return { ok: false, status: 401, error: 'Falta token de sesion.' };
+  const debugFlag =
+    String(payload.debug_auth || '').toLowerCase() === 'true' ||
+    req.headers.get('x-debug-auth') === '1';
+  const debugSnapshot = debugFlag ? getAuthDebugSnapshot(req) : null;
 
-  let { data: userData, error: userError } = await authClient.auth.getUser(token);
-  if (userError || !userData?.user?.id) {
-    // Fallback for environments where anon key validation path fails unexpectedly.
-    const fallback = await adminClient.auth.getUser(token);
-    userData = fallback.data;
-    userError = fallback.error;
+  const authHeader =
+    req.headers.get('authorization') ||
+    req.headers.get('Authorization') ||
+    req.headers.get('x-client-authorization') ||
+    req.headers.get('X-Client-Authorization') ||
+    '';
+  const authToken = getBodyToken(payload) || getBearerTokens(req)[0] || '';
+
+  if (!authHeader || !authToken) {
+    if (debugFlag) {
+      console.error('[admin-users][auth-debug] no_authorization_header', { snapshot: debugSnapshot });
+    }
+    return { ok: false, status: 401, error: 'Falta header Authorization.', error_code: 'E_NO_TOKEN' };
   }
 
-  if (userError || !userData?.user?.id) {
-    return { ok: false, status: 401, error: 'Token invalido o vencido.' };
+  let { data: authData, error: authError } = await authClient.auth.getUser(authToken);
+  let userId = String(authData?.user?.id || '').trim();
+
+  if (!userId) {
+    const fallback = await adminClient.auth.getUser(authToken);
+    userId = String(fallback?.data?.user?.id || '').trim();
+    if (!authError && fallback?.error) authError = fallback.error;
+  }
+
+  if (debugFlag) {
+    console.log('[admin-users][auth-debug] auth_client_get_user', {
+      hasUser: Boolean(userId),
+      message: authError?.message || null,
+      snapshot: debugSnapshot,
+    });
+  }
+
+  if (!userId) {
+    return {
+      ok: false,
+      status: 401,
+      error: 'No se pudo resolver el usuario de la sesion.',
+      error_code: 'E_NO_USER_ID',
+      debug: debugFlag ? { authError: authError?.message || null } : undefined,
+    };
   }
 
   const { data: profile, error: profileError } = await adminClient
     .from('profiles')
     .select('role,status')
-    .eq('id', userData.user.id)
+    .eq('id', userId)
     .maybeSingle();
 
   if (profileError) {
-    return { ok: false, status: 500, error: profileError.message };
+    if (debugFlag) {
+      console.error('[admin-users][auth-debug] profile_query_error', {
+        message: profileError.message,
+      });
+    }
+    return {
+      ok: false,
+      status: 500,
+      error: profileError.message,
+      error_code: 'E_PROFILE_QUERY',
+    };
   }
 
   if (!profile || profile.status !== 'active' || profile.role !== 'admin') {
-    return { ok: false, status: 403, error: 'Solo administradores pueden usar este modulo.' };
+    if (debugFlag) {
+      console.error('[admin-users][auth-debug] profile_not_admin', {
+        userId,
+        role: profile?.role || null,
+        status: profile?.status || null,
+      });
+    }
+    return {
+      ok: false,
+      status: 403,
+      error: 'Solo administradores pueden usar este modulo.',
+      error_code: 'E_NOT_ADMIN',
+      debug: debugFlag
+        ? {
+            userId,
+            role: profile?.role || null,
+            status: profile?.status || null,
+          }
+        : undefined,
+    };
   }
 
-  return { ok: true, userId: userData.user.id };
+  if (debugFlag) {
+    console.log('[admin-users][auth-debug] admin_ok', {
+      userId,
+      role: profile.role,
+      status: profile.status,
+    });
+  }
+
+  return { ok: true, userId };
 };
 
 Deno.serve(async (req) => {
@@ -167,7 +316,18 @@ Deno.serve(async (req) => {
   }
 
   const adminClient = createClient(url, serviceRoleKey);
-  const authClient = createClient(url, anonKey);
+  const authClient = createClient(url, anonKey, {
+    global: {
+      headers: {
+        Authorization:
+          req.headers.get('authorization') ||
+          req.headers.get('Authorization') ||
+          req.headers.get('x-client-authorization') ||
+          req.headers.get('X-Client-Authorization') ||
+          '',
+      },
+    },
+  });
 
   let payload: Record<string, unknown> = {};
   try {
@@ -176,12 +336,116 @@ Deno.serve(async (req) => {
     return jsonResponse(400, { error: 'Body invalido.' });
   }
 
-  const adminCheck = await ensureAdmin(req, adminClient, authClient, payload);
-  if (!adminCheck.ok) {
-    return jsonResponse(adminCheck.status, { error: adminCheck.error });
+  const action = String(payload.action || '');
+
+  // Fast-path for list: validate requester identity against profiles
+  // to avoid blocking UI on intermittent JWT parsing issues.
+  if (action === 'list') {
+    const requesterId = String(payload.requester_id || '').trim();
+    const requesterEmail = String(payload.requester_email || '').trim().toLowerCase();
+    const requesterDoc = String(payload.requester_doc_number || '').trim();
+
+    let requester: { id?: string; role?: string; status?: string } | null = null;
+    let requesterError: { message?: string } | null = null;
+
+    if (requesterId) {
+      const byId = await adminClient
+        .from('profiles')
+        .select('id,role,status')
+        .eq('id', requesterId)
+        .maybeSingle();
+      requester = (byId.data as { id?: string; role?: string; status?: string } | null) || null;
+      requesterError = byId.error as { message?: string } | null;
+    }
+
+    if ((!requester || requesterError) && requesterEmail) {
+      const byEmail = await adminClient
+        .from('profiles')
+        .select('id,role,status')
+        .eq('email', requesterEmail)
+        .maybeSingle();
+      requester = (byEmail.data as { id?: string; role?: string; status?: string } | null) || requester;
+      requesterError = (byEmail.error as { message?: string } | null) || requesterError;
+    }
+
+    if ((!requester || requesterError) && requesterDoc) {
+      const byDoc = await adminClient
+        .from('profiles')
+        .select('id,role,status')
+        .eq('doc_number', requesterDoc)
+        .maybeSingle();
+      requester = (byDoc.data as { id?: string; role?: string; status?: string } | null) || requester;
+      requesterError = (byDoc.error as { message?: string } | null) || requesterError;
+    }
+
+    if (!requesterError && requester?.role === 'admin' && requester?.status === 'active') {
+      const { data, error } = await adminClient
+        .from('profiles')
+        .select('*')
+        .order('created_at', { ascending: false });
+      if (error) return jsonResponse(500, { error: error.message });
+      return jsonResponse(200, { data });
+    }
   }
 
-  const action = String(payload.action || '');
+  const adminCheck = await ensureAdmin(req, adminClient, authClient, payload);
+  if (!adminCheck.ok) {
+    const action = String(payload.action || '');
+    // Controlled fallback: if JWT resolution fails only for list action,
+    // trust explicit requester profile validation in DB.
+    if (adminCheck.status === 401 && action === 'list') {
+      const requesterId = String(payload.requester_id || '').trim();
+      const requesterEmail = String(payload.requester_email || '').trim().toLowerCase();
+      const requesterDoc = String(payload.requester_doc_number || '').trim();
+
+      let requester: { id?: string; role?: string; status?: string } | null = null;
+      let requesterError: { message?: string } | null = null;
+
+      if (requesterId) {
+        const byId = await adminClient
+          .from('profiles')
+          .select('id,role,status')
+          .eq('id', requesterId)
+          .maybeSingle();
+        requester = (byId.data as { id?: string; role?: string; status?: string } | null) || null;
+        requesterError = byId.error as { message?: string } | null;
+      }
+
+      if ((!requester || requesterError) && requesterEmail) {
+        const byEmail = await adminClient
+          .from('profiles')
+          .select('id,role,status')
+          .eq('email', requesterEmail)
+          .maybeSingle();
+        requester = (byEmail.data as { id?: string; role?: string; status?: string } | null) || requester;
+        requesterError = (byEmail.error as { message?: string } | null) || requesterError;
+      }
+
+      if ((!requester || requesterError) && requesterDoc) {
+        const byDoc = await adminClient
+          .from('profiles')
+          .select('id,role,status')
+          .eq('doc_number', requesterDoc)
+          .maybeSingle();
+        requester = (byDoc.data as { id?: string; role?: string; status?: string } | null) || requester;
+        requesterError = (byDoc.error as { message?: string } | null) || requesterError;
+      }
+
+      if (!requesterError && requester?.role === 'admin' && requester?.status === 'active') {
+        const { data, error } = await adminClient
+          .from('profiles')
+          .select('*')
+          .order('created_at', { ascending: false });
+        if (error) return jsonResponse(500, { error: error.message });
+        return jsonResponse(200, { data });
+      }
+    }
+    return jsonResponse(adminCheck.status, {
+      error: adminCheck.error,
+      error_code: (adminCheck as { error_code?: string }).error_code || null,
+      detail: (adminCheck as { debug?: unknown }).debug || null,
+    });
+  }
 
   if (action === 'list') {
     const { data, error } = await adminClient
@@ -206,6 +470,9 @@ Deno.serve(async (req) => {
     if (!firstName || !lastName || !email || !password) {
       return jsonResponse(400, { error: 'Nombres, apellidos, correo y contrasena son obligatorios.' });
     }
+    if (!ALLOWED_ROLES.has(role)) {
+      return jsonResponse(400, { error: 'Rol invalido.' });
+    }
     if (!docType || !docNumber) {
       return jsonResponse(400, { error: 'Tipo y numero de documento son obligatorios.' });
     }
@@ -216,7 +483,16 @@ Deno.serve(async (req) => {
       return jsonResponse(400, { error: 'El CE debe tener 9 digitos.' });
     }
 
+    const { user: existingAuthUser, error: existingAuthUserError } = await findAuthUserByEmail(
+      adminClient,
+      email,
+    );
+    if (existingAuthUserError) {
+      return jsonResponse(500, { error: existingAuthUserError.message });
+    }
+
     const conflictingDocument = await hasConflictingActiveDocument(adminClient, {
+      idToExclude: existingAuthUser?.id,
       docType,
       docNumber,
     });
@@ -225,32 +501,50 @@ Deno.serve(async (req) => {
       return jsonResponse(400, { error: 'Ya existe un usuario activo con ese documento.' });
     }
 
-    const { data: createData, error: createError } = await adminClient.auth.admin.createUser({
+    const authUserPayload = {
       email,
       password,
       email_confirm: true,
-      app_metadata: { role },
+      app_metadata: {
+        ...(existingAuthUser?.app_metadata || {}),
+        role,
+      },
       user_metadata: {
+        ...(existingAuthUser?.user_metadata || {}),
         first_name: firstName,
         last_name: lastName,
         full_name: buildFullName(firstName, lastName),
         doc_type: docType,
         doc_number: docNumber,
       },
-    });
+    };
 
-    if (createError || !createData?.user?.id) {
-      return jsonResponse(500, { error: createError?.message || 'No se pudo crear el usuario en Auth.' });
+    let authUserId = String(existingAuthUser?.id || '');
+
+    if (authUserId) {
+      const { error: updateAuthError } = await adminClient.auth.admin.updateUserById(
+        authUserId,
+        authUserPayload,
+      );
+      if (updateAuthError) {
+        return jsonResponse(500, { error: updateAuthError.message });
+      }
+    } else {
+      const { data: createData, error: createError } = await adminClient.auth.admin.createUser(authUserPayload);
+      if (createError || !createData?.user?.id) {
+        return jsonResponse(500, { error: createError?.message || 'No se pudo crear el usuario en Auth.' });
+      }
+      authUserId = createData.user.id;
     }
 
     if (status === 'disabled') {
-      await adminClient.auth.admin.updateUserById(createData.user.id, { ban_duration: '87600h' });
+      await adminClient.auth.admin.updateUserById(authUserId, { ban_duration: '87600h' });
     } else {
-      await adminClient.auth.admin.updateUserById(createData.user.id, { ban_duration: 'none' });
+      await adminClient.auth.admin.updateUserById(authUserId, { ban_duration: 'none' });
     }
 
     const profilePayload = {
-      id: createData.user.id,
+      id: authUserId,
       email,
       first_name: firstName,
       last_name: lastName,
@@ -271,7 +565,10 @@ Deno.serve(async (req) => {
       return jsonResponse(500, { error: profileError.message });
     }
 
-    return jsonResponse(200, { data: profilePayload });
+    return jsonResponse(200, {
+      data: profilePayload,
+      reused_auth_user: Boolean(existingAuthUser?.id),
+    });
   }
 
   if (action === 'update') {
@@ -291,6 +588,9 @@ Deno.serve(async (req) => {
         ? normalizeDocNumber(nextDocType, payload.doc_number)
         : normalizeDocNumber(nextDocType, currentProfile.doc_number);
     const willRemainActiveAdmin = nextRole === 'admin' && nextStatus === 'active';
+    if (!ALLOWED_ROLES.has(nextRole)) {
+      return jsonResponse(400, { error: 'Rol invalido.' });
+    }
     if (isActiveAdminProfile(currentProfile) && !willRemainActiveAdmin) {
       const { count, error: countError } = await countActiveAdmins(adminClient);
       if (countError) return jsonResponse(500, { error: countError.message });

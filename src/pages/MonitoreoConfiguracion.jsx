@@ -18,6 +18,7 @@ import SectionHeader from '../components/ui/SectionHeader.jsx';
 import ConfirmModal from '../components/ui/ConfirmModal.jsx';
 import Toast from '../components/ui/Toast.jsx';
 import { supabase } from '../lib/supabase.js';
+import { getRoleLabel } from '../lib/roles.js';
 import {
   applyVisualPreferences,
   ASSISTANT_AUTO_CLOSE_KEY,
@@ -220,7 +221,7 @@ export default function MonitoreoConfiguracion() {
     [assistantUserKey],
   );
 
-  const roleLabel = auth?.role === 'admin' ? 'Administrador' : 'Especialista';
+  const roleLabel = getRoleLabel(auth?.role);
   const isAdmin = auth?.role === 'admin';
   const sections = useMemo(
     () =>

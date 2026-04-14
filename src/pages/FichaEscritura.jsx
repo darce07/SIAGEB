@@ -720,6 +720,7 @@ export default function FichaEscritura() {
   }, [defaultLevels, selectedTemplate]);
   const isReadOnly = templateStatus !== 'active';
   const [toast, setToast] = useState('');
+  const [isSaving, setIsSaving] = useState(false);
   const [isResetConfirmOpen, setIsResetConfirmOpen] = useState(false);
   const [institutionCatalog, setInstitutionCatalog] = useState([]);
   const [isInstitutionCatalogLoading, setIsInstitutionCatalogLoading] = useState(true);
@@ -1053,6 +1054,8 @@ export default function FichaEscritura() {
   };
 
   const handleSave = async () => {
+    if (isSaving) return;
+    setIsSaving(true);
     const errors = {};
     const headerErrors = {};
 
@@ -1157,6 +1160,7 @@ export default function FichaEscritura() {
           setActiveSection(firstErrorSectionId);
         }
       }
+      setIsSaving(false);
       return;
     }
 
@@ -1172,6 +1176,7 @@ export default function FichaEscritura() {
     if (!isReadOnly && !instanceToSave) {
       pushAutosaveAlert('No se pudo crear la ficha activa para guardar tus cambios.');
       setToast('No se pudo preparar el guardado. Intenta nuevamente.');
+      setIsSaving(false);
       return;
     }
 
@@ -1187,6 +1192,7 @@ export default function FichaEscritura() {
       } catch {
         pushAutosaveAlert('No se pudieron guardar tus cambios en Supabase.');
         setToast('Error de guardado. Verifica tu conexion e intenta nuevamente.');
+        setIsSaving(false);
         return;
       }
     }
@@ -1199,6 +1205,7 @@ export default function FichaEscritura() {
     dispatch({ type: 'SET_ERRORS', payload: {} });
     setToast('Cambios guardados correctamente.');
     clearAutosaveAlert();
+    setIsSaving(false);
   };
 
   const handleReset = () => {
@@ -1443,30 +1450,36 @@ export default function FichaEscritura() {
             >
               Volver
             </Link>
-            <Badge
-              label={state.meta.saved ? 'Guardado' : 'Pendiente'}
-              tone={state.meta.saved ? 'success' : 'warning'}
-            />
-            {!isReadOnly ? (
-              <>
-                <button
-                  type="button"
-                  onClick={handleSave}
-                  className="inline-flex items-center gap-2 rounded-full border border-emerald-500/40 bg-emerald-500/20 px-4 py-2 text-xs font-semibold text-emerald-100 transition hover:border-emerald-400/70"
-                >
-                  <Save size={14} />
-                  Guardar cambios
-                </button>
-                <button
-                  type="button"
-                  onClick={handleReset}
-                  className="inline-flex items-center gap-2 rounded-full border border-slate-700/60 px-4 py-2 text-xs font-semibold text-slate-300 transition hover:border-slate-500"
-                >
-                  <RefreshCw size={14} />
-                  Reset
-                </button>
-              </>
-            ) : (
+              <Badge
+                label={state.meta.saved ? 'Guardado' : 'Pendiente'}
+                tone={state.meta.saved ? 'success' : 'warning'}
+              />
+              {isSaving ? (
+                <span className="rounded-full border border-cyan-500/40 bg-cyan-500/10 px-3 py-1 text-xs text-cyan-200">
+                  Guardando cambios...
+                </span>
+              ) : null}
+              {!isReadOnly ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={handleReset}
+                    className="inline-flex items-center gap-2 rounded-full border border-slate-700/60 px-4 py-2 text-xs font-semibold text-slate-300 transition hover:border-slate-500"
+                  >
+                    <RefreshCw size={14} />
+                    Reset
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleSave}
+                    disabled={isSaving}
+                    className="inline-flex items-center gap-2 rounded-full border border-emerald-500/40 bg-emerald-500/20 px-4 py-2 text-xs font-semibold text-emerald-100 transition hover:border-emerald-400/70 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {isSaving ? <RefreshCw size={14} className="animate-spin" /> : <Save size={14} />}
+                    {isSaving ? 'Guardando...' : 'Guardar cambios'}
+                  </button>
+                </>
+              ) : (
               <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-3 py-1 text-xs text-amber-200">
                 Monitoreo no disponible. Solo lectura.
               </span>

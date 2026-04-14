@@ -1,4 +1,4 @@
-import { ROLE_ADMIN, ROLE_SPECIALIST } from '../lib/roles.js';
+import { ROLE_ADMIN, ROLE_AREA_CHIEF, ROLE_DIRECTOR, ROLE_SPECIALIST } from '../lib/roles.js';
 
 export const SIDEBAR_ITEM_DEFINITIONS = {
   inicio: { id: 'inicio', label: 'Inicio', path: '/monitoreo/inicio', iconKey: 'dashboard' },
@@ -32,11 +32,23 @@ export const SIDEBAR_GROUPS_BY_ROLE = {
     { id: 'gestion', label: 'Gestion', itemIds: ['elegir', 'seguimiento'] },
     { id: 'organizacion', label: 'Organizacion', itemIds: ['usuarios', 'instituciones'] },
   ],
+  [ROLE_DIRECTOR]: [
+    { id: 'principal', label: 'Principal', itemIds: ['inicio', 'reportes'] },
+    { id: 'gestion', label: 'Gestion', itemIds: ['elegir', 'seguimiento'] },
+    { id: 'organizacion', label: 'Organizacion', itemIds: ['usuarios', 'instituciones'] },
+  ],
+  [ROLE_AREA_CHIEF]: [
+    { id: 'principal', label: 'Principal', itemIds: ['inicio', 'reportes'] },
+    { id: 'gestion', label: 'Gestion', itemIds: ['elegir', 'seguimiento'] },
+    { id: 'organizacion', label: 'Organizacion', itemIds: ['usuarios', 'instituciones'] },
+  ],
 };
 
 export const HOME_WIDGETS_BY_ROLE = {
   [ROLE_SPECIALIST]: ['specialist_priority_actions', 'specialist_agenda', 'quick_actions'],
   [ROLE_ADMIN]: ['admin_global_metrics', 'admin_global_alerts', 'quick_actions'],
+  [ROLE_DIRECTOR]: ['admin_global_metrics', 'admin_global_alerts', 'quick_actions'],
+  [ROLE_AREA_CHIEF]: ['admin_global_metrics', 'admin_global_alerts', 'quick_actions'],
 };
 
 export const HOME_QUICK_ACTIONS_BY_ROLE = {
@@ -71,5 +83,17 @@ export const HOME_QUICK_ACTIONS_BY_ROLE = {
       path: '/monitoreo/configuracion',
       iconKey: 'settings',
     },
+  ],
+  [ROLE_DIRECTOR]: [
+    { id: 'quick-view-reports-director', label: 'Ver reportes', path: '/monitoreo/reportes', iconKey: 'fileClock' },
+    { id: 'quick-review-monitoring-director', label: 'Revisar monitoreos', path: '/monitoreo', iconKey: 'clipboard' },
+    { id: 'quick-go-tracking-director', label: 'Ir a seguimiento', path: '/monitoreo/seguimiento', iconKey: 'calendar' },
+    { id: 'quick-settings-director', label: 'Configuracion', path: '/monitoreo/configuracion', iconKey: 'settings' },
+  ],
+  [ROLE_AREA_CHIEF]: [
+    { id: 'quick-view-reports-chief', label: 'Ver reportes', path: '/monitoreo/reportes', iconKey: 'fileClock' },
+    { id: 'quick-review-monitoring-chief', label: 'Revisar monitoreos', path: '/monitoreo', iconKey: 'clipboard' },
+    { id: 'quick-go-tracking-chief', label: 'Ir a seguimiento', path: '/monitoreo/seguimiento', iconKey: 'calendar' },
+    { id: 'quick-settings-chief', label: 'Configuracion', path: '/monitoreo/configuracion', iconKey: 'settings' },
   ],
 };

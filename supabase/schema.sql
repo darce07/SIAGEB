@@ -167,7 +167,7 @@ create table if not exists public.profiles (
   first_name text,
   last_name text,
   full_name text,
-  role text default 'user' check (role in ('admin', 'user', 'especialista')),
+  role text default 'user' check (role in ('admin', 'user', 'especialista', 'director', 'jefe_area')),
   status text default 'active' check (status in ('active', 'disabled')),
   doc_type text,
   doc_number text,
@@ -180,7 +180,7 @@ create table if not exists public.profiles (
 alter table public.profiles add column if not exists temp_credential text;
 alter table public.profiles drop constraint if exists profiles_role_check;
 alter table public.profiles
-  add constraint profiles_role_check check (role in ('admin', 'user', 'especialista'));
+  add constraint profiles_role_check check (role in ('admin', 'user', 'especialista', 'director', 'jefe_area'));
 
 alter table public.profiles enable row level security;
 
