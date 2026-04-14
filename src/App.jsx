@@ -144,6 +144,7 @@ export default function App() {
         <Route path="configuracion" element={<MonitoreoConfiguracion />} />
         <Route path="perfil" element={<Navigate to="/monitoreo/configuracion?seccion=cuenta" replace />} />
         <Route path="reportes" element={<MonitoreoReportes />} />
+        <Route path="reportes/:templateId" element={<MonitoreoReportes />} />
         <Route
           path="instituciones"
           element={(

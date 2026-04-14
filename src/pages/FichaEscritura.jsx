@@ -1,6 +1,6 @@
 import { useCallback, useContext, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { CheckCircle2, RefreshCw, Save } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import Card from '../components/ui/Card.jsx';
 import ConfirmModal from '../components/ui/ConfirmModal.jsx';
 import Input from '../components/ui/Input.jsx';
@@ -489,7 +489,8 @@ const formatInstitutionLevel = (value) => {
 };
 
 export default function FichaEscritura() {
-  const { setActiveSection } = useContext(SidebarContext);
+  const { activeSection, setActiveSection } = useContext(SidebarContext);
+  const location = useLocation();
   const [selectedTemplate, setSelectedTemplate] = useState(null);
   const [templateError, setTemplateError] = useState('');
   const [isTemplateLoading, setIsTemplateLoading] = useState(true);
@@ -736,6 +737,123 @@ export default function FichaEscritura() {
     [templateSections],
   );
 
+  const returnContext = useMemo(() => {
+    const params = new URLSearchParams(location.search || '');
+    const from = String(params.get('from') || '').toLowerCase();
+    const returnTo = String(params.get('returnTo') || '').trim();
+    if (returnTo.startsWith('/monitoreo')) {
+      return {
+        path: returnTo,
+        label: from === 'reportes' ? '← Volver a reportes' : '← Volver a monitoreos',
+      };
+    }
+    if (from === 'reportes') {
+      return { path: '/monitoreo/reportes', label: '← Volver a reportes' };
+    }
+    return { path: '/monitoreo', label: '← Volver a monitoreos' };
+  }, [location.search]);
+
+  const isAnsweredQuestion = useCallback((question) => {
+    const data = state.questions?.[question.id] || {};
+    const kind = resolveQuestionKind(question);
+    const answer = data.answer;
+    const hasAnswer = answer !== null && answer !== undefined && String(answer).trim() !== '';
+    if (!hasAnswer) return false;
+    if (kind === 'yes_no_levels' && String(answer).toUpperCase() === 'SI') {
+      return data.level !== null && data.level !== undefined && String(data.level).trim() !== '';
+    }
+    return true;
+  }, [state.questions]);
+
+  const hasAnyQuestionAnswerInSection = useCallback((section) => {
+    const questions = Array.isArray(section?.questions) ? section.questions : [];
+    return questions.some((question) => {
+      const answer = state.questions?.[question.id]?.answer;
+      return answer !== null && answer !== undefined && String(answer).trim() !== '';
+    });
+  }, [state.questions]);
+
+  const formNavItems = useMemo(() => {
+    const items = [];
+    if (showExecutionHeaderSection) {
+      const requiredKeys = ['institucion', 'lugarIe', 'director', 'docente', 'condicion', 'area'];
+      const filledCount = requiredKeys.reduce((acc, key) => {
+        const value = state.header?.[key];
+        return acc + (value !== null && value !== undefined && String(value).trim() !== '' ? 1 : 0);
+      }, 0);
+      items.push({
+        id: 'datos',
+        label: 'Datos generales',
+        status: filledCount === 0 ? 'pending' : filledCount >= requiredKeys.length ? 'completed' : 'in_progress',
+        detail: `${filledCount}/${requiredKeys.length}`,
+      });
+    }
+
+    templateSections.forEach((section, index) => {
+      const questions = Array.isArray(section?.questions) ? section.questions : [];
+      const total = questions.length;
+      const answered = questions.reduce((acc, question) => acc + (isAnsweredQuestion(question) ? 1 : 0), 0);
+      const any = hasAnyQuestionAnswerInSection(section);
+      items.push({
+        id: section.id,
+        label: section.title || `Seccion ${index + 1}`,
+        status: answered >= total && total > 0 ? 'completed' : any ? 'in_progress' : 'pending',
+        detail: total > 0 ? `${answered}/${total}` : '0/0',
+      });
+    });
+
+    if (showClosingContainer) {
+      const checks = [
+        showGeneralObservation ? state.general?.observacion : 'ok',
+        showGeneralCommitment ? state.general?.compromiso : 'ok',
+        showClosingPlace ? state.cierre?.lugar : 'ok',
+        showClosingDate ? state.cierre?.fecha : 'ok',
+        showMonitoredDni ? state.firmas?.docente?.dni : 'ok',
+        showMonitorDni ? state.firmas?.monitor?.dni : 'ok',
+      ];
+      const required = checks.filter((value) => value !== 'ok');
+      const done = required.filter((value) => value !== null && value !== undefined && String(value).trim() !== '').length;
+      items.push({
+        id: 'cierre',
+        label: 'Cierre',
+        status: required.length === 0 ? 'pending' : done === 0 ? 'pending' : done >= required.length ? 'completed' : 'in_progress',
+        detail: required.length ? `${done}/${required.length}` : '0/0',
+      });
+    }
+
+    return items;
+  }, [
+    hasAnyQuestionAnswerInSection,
+    isAnsweredQuestion,
+    showExecutionHeaderSection,
+    showClosingContainer,
+    showGeneralObservation,
+    showGeneralCommitment,
+    showClosingPlace,
+    showClosingDate,
+    showMonitoredDni,
+    showMonitorDni,
+    state.header,
+    state.general,
+    state.cierre,
+    state.firmas,
+    templateSections,
+  ]);
+
+  const formProgress = useMemo(() => {
+    const total = formNavItems.length;
+    if (!total) return 0;
+    const completed = formNavItems.filter((item) => item.status === 'completed').length;
+    return Math.round((completed / total) * 100);
+  }, [formNavItems]);
+
+  const scrollToSection = useCallback((sectionId) => {
+    const element = document.getElementById(sectionId);
+    if (!element) return;
+    element.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    setActiveSection(sectionId);
+  }, [setActiveSection]);
+
   const getInstitutionSuggestions = useCallback(
     (rawTerm, limit = 8) => {
       const term = String(rawTerm || '')
@@ -959,29 +1077,8 @@ export default function FichaEscritura() {
     }
   }, [activeInstance, templateSections]);
 
-  useEffect(() => {
-    if (!activeInstance || isReadOnly) return;
-    let active = true;
-    const persistDraft = async () => {
-      try {
-        const now = new Date().toISOString();
-        const payload = {
-          ...activeInstance,
-          updated_at: now,
-          status: activeInstance.status || 'in_progress',
-          data: serializeStateWithSheet(state, selectedSheetId),
-        };
-        await upsertInstance(payload);
-        if (active) clearAutosaveAlert();
-      } catch {
-        if (active) pushAutosaveAlert('No se pudieron guardar los cambios automaticos de la ficha.');
-      }
-    };
-    persistDraft();
-    return () => {
-      active = false;
-    };
-  }, [activeInstance, isReadOnly, selectedSheetId, state]);
+  // Guardado automatico desactivado para evitar crear/actualizar reportes vacios
+  // cuando se entra por error y se sale sin confirmar.
 
   useEffect(() => {
     if (
@@ -1149,9 +1246,9 @@ export default function FichaEscritura() {
     }
     if (Object.keys(firmasErrors).length > 0) errors.firmas = firmasErrors;
 
-    if (Object.keys(errors).length > 0) {
-      dispatch({ type: 'SET_ERRORS', payload: errors });
-      setToast('Completa los campos obligatorios para guardar.');
+    const hasValidationErrors = Object.keys(errors).length > 0;
+    dispatch({ type: 'SET_ERRORS', payload: errors });
+    if (hasValidationErrors) {
       const firstErrorSectionId = getFirstErrorSectionId(errors);
       if (firstErrorSectionId) {
         const target = document.getElementById(firstErrorSectionId);
@@ -1160,8 +1257,6 @@ export default function FichaEscritura() {
           setActiveSection(firstErrorSectionId);
         }
       }
-      setIsSaving(false);
-      return;
     }
 
     let instanceToSave = activeInstance;
@@ -1189,9 +1284,9 @@ export default function FichaEscritura() {
           status: instanceToSave.status || 'in_progress',
           data: serializeStateWithSheet(state, selectedSheetId),
         });
-      } catch {
+      } catch (error) {
         pushAutosaveAlert('No se pudieron guardar tus cambios en Supabase.');
-        setToast('Error de guardado. Verifica tu conexion e intenta nuevamente.');
+        setToast(`Error de guardado. ${error?.message || 'Verifica tu conexion e intenta nuevamente.'}`);
         setIsSaving(false);
         return;
       }
@@ -1202,8 +1297,11 @@ export default function FichaEscritura() {
       value: true,
       lastSavedAt: new Date().toISOString(),
     });
-    dispatch({ type: 'SET_ERRORS', payload: {} });
-    setToast('Cambios guardados correctamente.');
+    setToast(
+      hasValidationErrors
+        ? 'Cambios guardados. Aun faltan campos obligatorios por completar.'
+        : 'Cambios guardados correctamente.',
+    );
     clearAutosaveAlert();
     setIsSaving(false);
   };
@@ -1420,10 +1518,10 @@ export default function FichaEscritura() {
           <SectionHeader eyebrow="Error" title="No se pudo cargar el formulario" />
           <p className="text-sm text-slate-400">{templateError}</p>
           <Link
-            to="/monitoreo"
+            to={returnContext.path}
             className="inline-flex items-center gap-2 self-start rounded-full border border-slate-700/60 px-4 py-2 text-xs font-semibold text-slate-300 transition hover:border-slate-500"
           >
-            Volver a monitoreos
+            {returnContext.label}
           </Link>
         </Card>
       </div>
@@ -1431,7 +1529,7 @@ export default function FichaEscritura() {
   }
 
   return (
-    <div className="flex flex-col gap-8">
+    <div className="flex flex-col gap-8 pb-28">
       <div className="glass-panel sticky top-6 z-30 rounded-2xl px-6 py-4">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="flex flex-col gap-1">
@@ -1445,10 +1543,10 @@ export default function FichaEscritura() {
           </div>
           <div className="flex flex-wrap items-center gap-3">
             <Link
-              to="/monitoreo"
+              to={returnContext.path}
               className="inline-flex items-center gap-2 rounded-full border border-slate-700/60 px-4 py-2 text-xs font-semibold text-slate-300 transition hover:border-slate-500"
             >
-              Volver
+              {returnContext.label}
             </Link>
               <Badge
                 label={state.meta.saved ? 'Guardado' : 'Pendiente'}
@@ -1459,34 +1557,45 @@ export default function FichaEscritura() {
                   Guardando cambios...
                 </span>
               ) : null}
-              {!isReadOnly ? (
-                <>
-                  <button
-                    type="button"
-                    onClick={handleReset}
-                    className="inline-flex items-center gap-2 rounded-full border border-slate-700/60 px-4 py-2 text-xs font-semibold text-slate-300 transition hover:border-slate-500"
-                  >
-                    <RefreshCw size={14} />
-                    Reset
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleSave}
-                    disabled={isSaving}
-                    className="inline-flex items-center gap-2 rounded-full border border-emerald-500/40 bg-emerald-500/20 px-4 py-2 text-xs font-semibold text-emerald-100 transition hover:border-emerald-400/70 disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    {isSaving ? <RefreshCw size={14} className="animate-spin" /> : <Save size={14} />}
-                    {isSaving ? 'Guardando...' : 'Guardar cambios'}
-                  </button>
-                </>
-              ) : (
+              {isReadOnly ? (
               <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-3 py-1 text-xs text-amber-200">
                 Monitoreo no disponible. Solo lectura.
               </span>
-            )}
+            ) : null}
           </div>
         </div>
       </div>
+
+      <div className="grid gap-6 xl:grid-cols-[260px_minmax(0,1fr)]">
+        <aside className="xl:sticky xl:top-24 xl:h-fit">
+          <Card className="space-y-3">
+            <SectionHeader eyebrow="Navegacion" title="Secciones del formulario" />
+            <p className="text-xs text-slate-400">{formProgress}% completado · {formNavItems.filter((item) => item.status === 'completed').length}/{formNavItems.length} secciones</p>
+            <div className="space-y-2">
+              {formNavItems.map((item) => {
+                const isActive = activeSection === item.id;
+                const toneClass = item.status === 'completed'
+                  ? 'border-emerald-500/35 bg-emerald-500/10 text-emerald-100'
+                  : item.status === 'in_progress'
+                    ? 'border-cyan-500/35 bg-cyan-500/10 text-cyan-100'
+                    : 'border-slate-700/70 bg-slate-900/45 text-slate-300';
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => scrollToSection(item.id)}
+                    className={`w-full rounded-xl border px-3 py-2 text-left transition ${toneClass} ${isActive ? 'ring-1 ring-cyan-400/50' : 'hover:border-slate-500'}`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-semibold">{item.label}</span>
+                      <span className="text-[10px] opacity-80">{item.detail}</span>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </Card>
+        </aside>
 
       <fieldset disabled={isReadOnly} className={isReadOnly ? 'opacity-90' : ''}>
         {isBuilderTemplate && selectedSheetQuestionCount === 0 ? (
@@ -2193,14 +2302,50 @@ export default function FichaEscritura() {
       ) : null}
 
       </fieldset>
+      </div>
 
       <div className="glass-panel flex items-center justify-between rounded-2xl px-6 py-4 text-sm text-slate-300">
         <div className="flex items-center gap-2">
           <CheckCircle2 size={18} className="text-emerald-300" />
-          <span>Auto guardado activo en Supabase.</span>
+          <span>Guardado manual activo. Usa "Guardar cambios" para confirmar.</span>
         </div>
         <span className="text-xs text-slate-500">Listo para conectarse a API.</span>
       </div>
+
+      {!isReadOnly ? (
+        <div className="fixed bottom-4 left-1/2 z-50 w-[min(920px,calc(100vw-2rem))] -translate-x-1/2">
+          <div className="glass-panel flex items-center justify-between gap-2 rounded-2xl border border-slate-700/70 px-3 py-2 shadow-[0_10px_30px_rgba(2,6,23,0.45)]">
+            <div className="flex items-center gap-2 text-xs">
+              <span className={state.meta.saved ? 'text-emerald-200' : 'text-amber-200'}>
+                {state.meta.saved ? '✔ Guardado correctamente' : '● Cambios sin guardar'}
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+            <Badge
+              label={state.meta.saved ? 'Guardado' : 'Pendiente'}
+              tone={state.meta.saved ? 'success' : 'warning'}
+            />
+            <button
+              type="button"
+              onClick={handleReset}
+              className="inline-flex items-center gap-2 rounded-full border border-slate-700/60 px-3 py-2 text-xs font-semibold text-slate-300 transition hover:border-slate-500"
+            >
+              <RefreshCw size={14} />
+              Reset
+            </button>
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={isSaving}
+              className="inline-flex items-center gap-2 rounded-full border border-emerald-500/40 bg-emerald-500/20 px-3 py-2 text-xs font-semibold text-emerald-100 transition hover:border-emerald-400/70 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {isSaving ? <RefreshCw size={14} className="animate-spin" /> : <Save size={14} />}
+              {isSaving ? 'Guardando...' : 'Guardar cambios'}
+            </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       <ConfirmModal
         open={isResetConfirmOpen}
