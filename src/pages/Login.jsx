@@ -200,7 +200,7 @@ export default function Login() {
   useEffect(() => {
     const reason = localStorage.getItem(SESSION_LOGOUT_REASON_KEY);
     if (reason === SESSION_LOGOUT_REASON_INACTIVITY) {
-      setSessionNotice('Tu sesion se cerro automaticamente tras 30 minutos de inactividad.');
+      setSessionNotice('Tu sesion se cerro automaticamente tras 40 minutos de inactividad.');
     }
     localStorage.removeItem(SESSION_LOGOUT_REASON_KEY);
   }, []);
