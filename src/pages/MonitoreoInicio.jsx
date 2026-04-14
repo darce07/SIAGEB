@@ -49,6 +49,13 @@ const formatDateTime = (value) => {
   }).format(date);
 };
 
+const formatDateHeader = (value) =>
+  new Intl.DateTimeFormat('es-PE', {
+    day: '2-digit',
+    month: 'long',
+    year: 'numeric',
+  }).format(value);
+
 const getTemplateScope = (template) => {
   const levelsConfig = template?.levels_config;
   if (!levelsConfig || typeof levelsConfig !== 'object') return {};
@@ -118,11 +125,22 @@ const doesTemplateMatchDateFilter = (template, filter) => {
 const normalizeText = (value) => String(value || '').trim();
 
 const formatPercent = (value) => `${Math.round(Number(value) || 0)}%`;
+const formatPercentPrecise = (value) => {
+  const numeric = Number(value) || 0;
+  const fixed = numeric.toFixed(1);
+  return `${fixed.endsWith('.0') ? fixed.slice(0, -2) : fixed}%`;
+};
 
 const clampPercent = (value) => {
   const numeric = Number(value) || 0;
   if (numeric < 0) return 0;
   if (numeric > 100) return 100;
+  return numeric;
+};
+
+const clampNonNegative = (value) => {
+  const numeric = Number(value) || 0;
+  if (numeric < 0) return 0;
   return numeric;
 };
 
@@ -172,7 +190,9 @@ const isRealProgressQuestionLabel = (label) => {
   if (!text) return false;
   if (text.includes('cuanto tienen de avance real')) return true;
   if (text.includes('avance real')) return true;
-  return text.includes('avance') && text.includes('real');
+  if (text.includes('avance')) return true;
+  if (text.includes('progreso')) return true;
+  return text.includes('real');
 };
 
 const extractNumericAnswer = (value) => {
@@ -187,6 +207,8 @@ const extractNumericAnswer = (value) => {
   }
   return parseNumericValue(value);
 };
+
+const isGoalOrRealLabel = (label) => isGoalQuestionLabel(label) || isRealProgressQuestionLabel(label);
 
 const pluralize = (count, singular, plural) => `${count} ${count === 1 ? singular : plural}`;
 
@@ -207,6 +229,11 @@ export default function MonitoreoInicio() {
 
   const hasDashboardAccess = hasCddDashboardAccessRole(auth?.role);
   const roleLabel = getRoleLabel(auth?.role);
+  const userLabel =
+    normalizeText(auth?.fullName) ||
+    normalizeText(auth?.email) ||
+    normalizeText(auth?.docNumber) ||
+    'Usuario';
 
   const [templates, setTemplates] = useState([]);
   const [instances, setInstances] = useState([]);
@@ -407,14 +434,16 @@ export default function MonitoreoInicio() {
           const question = questionMap.get(String(questionId));
           const parsed = extractNumericAnswer(value);
           if (parsed === null) return;
-          if (question && !isNumericQuestion(question)) return;
           const rawLabelFromAnswer =
             typeof value === 'object' && value
               ? value.label || value.question || value.question_text || value.prompt || value.title || ''
               : '';
+          const normalizedLabel = normalizeForMatch(getQuestionLabel(question) || rawLabelFromAnswer);
+          const canUseValue = !question || isNumericQuestion(question) || isGoalOrRealLabel(normalizedLabel);
+          if (!canUseValue) return;
           numericRows.push({
             value: parsed,
-            label: normalizeForMatch(getQuestionLabel(question) || rawLabelFromAnswer),
+            label: normalizedLabel,
           });
         });
       }
@@ -442,8 +471,8 @@ export default function MonitoreoInicio() {
         completed = numericRows[0].value;
       }
 
-      const safeGoal = clampPercent(goal ?? 100);
-      const safeCompleted = clampPercent(completed ?? 0);
+      const safeGoal = clampNonNegative(goal ?? 0);
+      const safeCompleted = clampNonNegative(completed ?? 0);
       const progress = safeGoal > 0 ? clampPercent((safeCompleted / safeGoal) * 100) : 0;
 
       const assignedMonitorIds = templateMonitorIdsMap.get(template.id) || [];
@@ -463,6 +492,8 @@ export default function MonitoreoInicio() {
         area,
         completed: Math.round(safeCompleted),
         goal: Math.round(safeGoal),
+        goalBarPercent: safeGoal > 0 ? 100 : 0,
+        realBarPercent: progress,
         progress,
         responsibleName: chiefName,
         chiefName,
@@ -494,8 +525,10 @@ export default function MonitoreoInicio() {
     return Array.from(map.values())
       .map((row) => ({
         ...row,
-        goal: row.monitorings > 0 ? clampPercent(row.goalSum / row.monitorings) : 0,
-        real: row.monitorings > 0 ? clampPercent(row.completed / row.monitorings) : 0,
+        goal: row.monitorings > 0 ? row.goalSum / row.monitorings : 0,
+        real: row.monitorings > 0 ? row.completed / row.monitorings : 0,
+        goalBarPercent: row.goalSum > 0 ? 100 : 0,
+        realBarPercent: row.goalSum > 0 ? clampPercent((row.completed / row.goalSum) * 100) : 0,
         progress:
           row.goalSum > 0
             ? clampPercent((row.completed / row.goalSum) * 100)
@@ -526,12 +559,11 @@ export default function MonitoreoInicio() {
       if (!validRoles.has(String(row.chiefRole || '').toLowerCase())) return;
       const key = row.chiefName || 'Sin jefe';
       if (!grouped.has(key)) {
-        grouped.set(key, { name: key, completed: 0, goal: 0, progressSum: 0, monitorings: 0 });
+        grouped.set(key, { name: key, completed: 0, goal: 0, monitorings: 0 });
       }
       const item = grouped.get(key);
       item.completed += row.completed;
       item.goal += row.goal;
-      item.progressSum += row.progress;
       item.monitorings += 1;
     });
 
@@ -539,7 +571,7 @@ export default function MonitoreoInicio() {
       .map((row) => ({
         ...row,
         goal: Math.max(row.goal, 0),
-        efficiency: row.monitorings > 0 ? clampPercent(row.progressSum / row.monitorings) : 0,
+        efficiency: row.goal > 0 ? clampPercent((row.completed / row.goal) * 100) : 0,
       }))
       .sort((a, b) => b.efficiency - a.efficiency)
       .slice(0, 5);
@@ -587,8 +619,13 @@ export default function MonitoreoInicio() {
 
   return (
     <div className="flex flex-col gap-4 md:gap-6">
-      <Card className="flex items-center justify-between gap-2 px-3 py-2.5 md:gap-3 md:px-4 md:py-3">
-        <SectionHeader title="Inicio" size="page" description="Dashboard de Compromiso de Desempeño" />
+      <Card className="flex flex-wrap items-start justify-between gap-3 px-3 py-2.5 md:gap-3 md:px-4 md:py-3">
+        <SectionHeader title="Inicio" size="page" description="Resumen operativo de Compromiso de Desempeño" />
+        <div className="rounded-xl border border-slate-700/70 bg-slate-900/55 px-3 py-2 text-right">
+          <p className="text-[10px] uppercase tracking-[0.14em] text-slate-500">Hoy</p>
+          <p className="text-xs font-semibold text-slate-200">{formatDateHeader(new Date())}</p>
+          <p className="text-[11px] text-slate-400">{userLabel}</p>
+        </div>
       </Card>
 
       {!hasDashboardAccess ? (
@@ -673,7 +710,7 @@ export default function MonitoreoInicio() {
                   <p className="mt-3 text-3xl font-extrabold text-emerald-100">{formatPercent(bestArea.progress)}</p>
                   <p className="mt-1 text-xs text-emerald-100/80">{bestArea.area}</p>
                   <p className="mt-2 text-[11px] text-emerald-100/80">
-                    Real: {formatPercent(bestArea.real)} · Meta: {formatPercent(bestArea.goal)}
+                    Real/Meta: {Math.round(bestArea.real)}/{Math.round(bestArea.goal)}
                   </p>
                 </>
               ) : (
@@ -688,7 +725,7 @@ export default function MonitoreoInicio() {
                   <p className="mt-3 text-3xl font-extrabold text-rose-100">{formatPercent(worstArea.progress)}</p>
                   <p className="mt-1 text-xs text-rose-100/80">{worstArea.area}</p>
                   <p className="mt-2 text-[11px] text-rose-100/80">
-                    Real: {formatPercent(worstArea.real)} · Meta: {formatPercent(worstArea.goal)}
+                    Real/Meta: {Math.round(worstArea.real)}/{Math.round(worstArea.goal)}
                   </p>
                 </>
               ) : (
@@ -715,27 +752,26 @@ export default function MonitoreoInicio() {
                 <p className="text-sm text-slate-400">No hay monitoreos con Compromiso de Desempeño para el filtro aplicado.</p>
               ) : (
                 <div className="overflow-x-auto">
-                  <div className="flex min-w-[780px] items-end gap-4 rounded-xl border border-slate-800/70 bg-slate-950/40 p-4">
+                  <div className="flex min-w-[780px] items-end gap-4 rounded-xl border border-slate-800/70 bg-slate-950/40 p-4 pt-6">
                     {areaStats.map((row) => {
-                      const maxHeight = 200;
-                      const goalHeight = Math.max(4, Math.round((clampPercent(row.goal) / 100) * maxHeight));
-                      const realHeight = Math.max(4, Math.round((clampPercent(row.real) / 100) * maxHeight));
+                      const maxHeight = 176;
+                      const goalHeight = Math.max(4, Math.round((clampPercent(row.goalBarPercent) / 100) * maxHeight));
+                      const realHeight = Math.max(4, Math.round((clampPercent(row.realBarPercent) / 100) * maxHeight));
                       return (
                         <div key={row.area} className="flex w-[130px] flex-col items-center gap-2">
-                          <div className="flex h-[220px] items-end gap-2">
+                          <div className="flex h-[204px] items-end gap-2">
                             <div className="flex w-10 flex-col items-center gap-1">
-                              <span className="text-[10px] font-semibold text-slate-300">{formatPercent(row.goal)}</span>
+                              <span className="text-[10px] font-semibold text-slate-400">META {Math.round(row.goal)}</span>
                               <div className="w-full rounded-t-md bg-slate-500/40" style={{ height: `${goalHeight}px` }} />
                               <span className="text-[10px] uppercase tracking-[0.12em] text-slate-400">Meta</span>
                             </div>
                             <div className="flex w-10 flex-col items-center gap-1">
-                              <span className="text-[10px] font-semibold text-cyan-100">{formatPercent(row.real)}</span>
+                              <span className="text-[10px] font-semibold text-cyan-200">REAL {formatPercentPrecise(row.realBarPercent)}</span>
                               <div className="w-full rounded-t-md bg-cyan-400/80" style={{ height: `${realHeight}px` }} />
                               <span className="text-[10px] uppercase tracking-[0.12em] text-cyan-200">Real</span>
                             </div>
                           </div>
                           <p className="line-clamp-2 text-center text-xs font-semibold text-slate-200">{row.area}</p>
-                          <p className="text-[11px] text-slate-400">Cumplimiento: {formatPercent(row.progress)}</p>
                         </div>
                       );
                     })}

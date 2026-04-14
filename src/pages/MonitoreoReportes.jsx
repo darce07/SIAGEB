@@ -1,18 +1,13 @@
 ﻿import { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import {
   ArrowUpDown,
-  CalendarDays,
-  ChevronDown,
-  ChevronRight,
   Download,
   Eye,
   FileText,
   Loader2,
   Search,
   Trash2,
-  UserRound,
-  X,
 } from 'lucide-react';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -734,6 +729,8 @@ const buildPdf = (template, instance, statusLabel) => {
 
 export default function MonitoreoReportes() {
   const navigate = useNavigate();
+  const location = useLocation();
+  const { templateId: detailTemplateId = '' } = useParams();
   const auth = useMemo(() => {
     try {
       return JSON.parse(localStorage.getItem(AUTH_KEY));
@@ -752,8 +749,6 @@ export default function MonitoreoReportes() {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [sortBy, setSortBy] = useState('recent');
-  const [selectedReportId, setSelectedReportId] = useState('');
-  const [expandedGroups, setExpandedGroups] = useState({});
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [noticeModal, setNoticeModal] = useState({
@@ -959,6 +954,7 @@ export default function MonitoreoReportes() {
     () => filteredRows.filter((row) => row.hasReport).length,
     [filteredRows],
   );
+  const isDetailView = Boolean(detailTemplateId);
 
   const groupedReports = useMemo(() => {
       const groupsMap = new Map();
@@ -1054,44 +1050,10 @@ export default function MonitoreoReportes() {
     return groups;
   }, [filteredRows, sortBy]);
 
-  useEffect(() => {
-    setExpandedGroups((prev) => {
-      const validKeys = new Set(groupedReports.map((group) => group.groupKey));
-      const next = {};
-
-      Object.entries(prev).forEach(([key, value]) => {
-        if (value && validKeys.has(key)) next[key] = true;
-      });
-
-      return next;
-    });
-  }, [groupedReports]);
-
-  useEffect(() => {
-    if (!selectedReportId) return;
-    const exists = filteredRows.some((row) => row.id === selectedReportId);
-    if (!exists) setSelectedReportId('');
-  }, [filteredRows, selectedReportId]);
-
-  const selectedRow = useMemo(
-    () => filteredRows.find((row) => row.id === selectedReportId) || null,
-    [filteredRows, selectedReportId],
+  const detailGroup = useMemo(
+    () => groupedReports.find((group) => String(group.templateId || '') === String(detailTemplateId || '')) || null,
+    [groupedReports, detailTemplateId],
   );
-
-  const selectedGroup = useMemo(() => {
-    if (!selectedReportId) return null;
-    return groupedReports.find((group) =>
-      group.reports.some((report) => report.id === selectedReportId),
-    ) || null;
-  }, [groupedReports, selectedReportId]);
-
-  const isSelectedDetailVisible = Boolean(
-    selectedRow &&
-      selectedGroup &&
-      expandedGroups[selectedGroup.groupKey],
-  );
-
-  const canDeleteSelected = selectedRow ? isAdmin || selectedRow.state !== 'expired' : false;
 
   const stateFilters = [
     { value: 'all', label: 'Todos' },
@@ -1114,6 +1076,21 @@ export default function MonitoreoReportes() {
     } finally {
       setPdfLoadingId(null);
     }
+  };
+
+  const navigateToFicha = (templateId, instanceId = '', sheetId = '') => {
+    const returnTo = `${location.pathname}${location.search || ''}`;
+    const params = new URLSearchParams({
+      from: 'reportes',
+      returnTo,
+    });
+    if (instanceId) localStorage.setItem('monitoreoInstanceActive', instanceId);
+    else localStorage.removeItem('monitoreoInstanceActive');
+    localStorage.setItem('monitoreoTemplateSelected', templateId || '');
+    if (sheetId) {
+      localStorage.setItem('monitoreoTemplateSheetSelected', sheetId);
+    }
+    navigate(`/monitoreo/ficha-escritura?${params.toString()}`);
   };
 
   const handleCreateReport = async (template, { reuseExisting = true } = {}) => {
@@ -1143,43 +1120,11 @@ export default function MonitoreoReportes() {
 
       const existing = existingData?.[0];
       if (existing?.id) {
-        localStorage.setItem('monitoreoInstanceActive', existing.id);
-        localStorage.setItem('monitoreoTemplateSelected', template.id);
-        navigate('/monitoreo/ficha-escritura');
+        navigateToFicha(template.id, existing.id);
         return;
       }
     }
-
-    const now = new Date().toISOString();
-    const payload = {
-      template_id: template.id,
-      created_by: userId || null,
-      status: 'in_progress',
-      data: null,
-      created_at: now,
-      updated_at: now,
-    };
-
-    const { data, error } = await supabase
-      .from('monitoring_instances')
-      .insert([payload])
-      .select('*')
-      .single();
-
-    if (error || !data?.id) {
-      console.error(error);
-      openNoticeModal(
-        'No se pudo crear el reporte',
-        'No se pudo crear el primer reporte de este monitoreo.',
-        'danger',
-      );
-      return;
-    }
-
-    setInstances((prev) => [data, ...prev]);
-    localStorage.setItem('monitoreoInstanceActive', data.id);
-    localStorage.setItem('monitoreoTemplateSelected', template.id);
-    navigate('/monitoreo/ficha-escritura');
+    navigateToFicha(template.id);
   };
 
   const handleRequestDelete = ({ instanceId, isAdminAction, details }) => {
@@ -1213,9 +1158,6 @@ export default function MonitoreoReportes() {
     }
 
     setInstances((prev) => prev.filter((item) => item.id !== deleteTarget.instanceId));
-    if (selectedReportId === deleteTarget.instanceId) {
-      setSelectedReportId('');
-    }
     setIsDeleting(false);
     setDeleteTarget(null);
   };
@@ -1226,20 +1168,7 @@ export default function MonitoreoReportes() {
       handleCreateReport(row.template);
       return;
     }
-    localStorage.setItem('monitoreoInstanceActive', row.id);
-    localStorage.setItem('monitoreoTemplateSelected', row.templateId || '');
-    if (row.sheetId) {
-      localStorage.setItem('monitoreoTemplateSheetSelected', row.sheetId);
-    }
-    navigate('/monitoreo/ficha-escritura');
-  };
-
-  const toggleGroup = (groupKey) => {
-    setSelectedReportId('');
-    setExpandedGroups((prev) => ({
-      ...prev,
-      [groupKey]: !prev[groupKey],
-    }));
+    navigateToFicha(row.templateId || '', row.id, row.sheetId || '');
   };
 
   return (
@@ -1336,13 +1265,6 @@ export default function MonitoreoReportes() {
               <Loader2 size={16} className="animate-spin" />
               <p>Cargando reportes...</p>
             </div>
-            <div className="mt-3 h-1.5 overflow-hidden rounded-full border border-slate-700/60 bg-slate-900/70">
-              <span className="block h-full w-1/3 animate-pulse rounded-full bg-cyan-400/70" />
-            </div>
-            <div className="mt-3 space-y-2" aria-hidden="true">
-              <div className="h-3 w-2/3 animate-pulse rounded-lg bg-slate-800/80" />
-              <div className="h-3 w-1/2 animate-pulse rounded-lg bg-slate-800/65" />
-            </div>
           </div>
         ) : reportRows.length === 0 ? (
           <div className="rounded-2xl border border-slate-800/70 bg-slate-900/50 px-4 py-5 text-sm text-slate-400">
@@ -1352,348 +1274,117 @@ export default function MonitoreoReportes() {
           <div className="rounded-2xl border border-slate-800/70 bg-slate-900/50 px-4 py-5 text-sm text-slate-400">
             No hay resultados con esos filtros.
           </div>
-        ) : (
-          <div className={`grid gap-4 ${isSelectedDetailVisible ? 'xl:grid-cols-[minmax(0,1fr)_340px]' : ''}`}>
-            <div className="space-y-4">
-              {groupedReports.map((group) => {
-                const groupMeta = REPORT_STATE_META[group.groupState] || REPORT_STATE_META.active;
-                const isExpanded = Boolean(expandedGroups[group.groupKey]);
-                const templateRow = group.reports.find((row) => row?.template?.id) || null;
-                return (
-                  <section
-                    key={group.groupKey}
-                    role="button"
-                    tabIndex={0}
-                    aria-expanded={isExpanded}
-                    onClick={() => toggleGroup(group.groupKey)}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter' || event.key === ' ') {
-                        event.preventDefault();
-                        toggleGroup(group.groupKey);
-                      }
-                    }}
-                    className={`rounded-2xl border border-slate-800/70 bg-slate-900/45 px-3 py-3 shadow-[0_10px_26px_rgba(2,6,23,0.22)] transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/50 ${
-                      'cursor-pointer hover:-translate-y-0.5 hover:border-cyan-400/35 hover:shadow-[0_16px_34px_rgba(6,182,212,0.12)]'
-                    }`}
-                  >
-                    <div className="flex w-full items-start justify-between gap-3 rounded-xl px-1 py-1 text-left">
-                      <div className="min-w-0">
-                        <p title={group.templateTitle} className="max-w-[68ch] truncate text-sm font-semibold text-slate-100">
-                          {truncateLabel(group.templateTitle, 74)}
-                        </p>
-                        <p className="mt-1 text-xs text-slate-400">
-                          {group.rangeLabel} ·{' '}
-                          {group.reportCount > 0
-                            ? `${group.reportCount} ${pluralize(group.reportCount, 'reporte', 'reportes')}`
-                            : 'Sin reportes aún'}
-                          {Array.isArray(group.sheetGroups) && group.sheetGroups.length > 1
-                            ? ` · ${group.sheetGroups.length} fichas`
-                            : ''}
-                        </p>
-                      </div>
-
-                      <div className="flex shrink-0 items-center gap-2">
-                        <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${groupMeta.className}`}>
-                          {groupMeta.label}
-                        </span>
-                        <span className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-slate-700/70 text-slate-300">
-                          {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                        </span>
-                      </div>
+        ) : !isDetailView ? (
+          <div className="space-y-4">
+            {groupedReports.map((group) => {
+              const groupMeta = REPORT_STATE_META[group.groupState] || REPORT_STATE_META.active;
+              return (
+                <article key={group.groupKey} className="rounded-2xl border border-slate-800/70 bg-slate-900/45 px-4 py-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="truncate text-base font-semibold text-slate-100">{truncateLabel(group.templateTitle, 84)}</p>
+                      <p className="mt-1 text-xs text-slate-400">
+                        {group.rangeLabel} · {group.reportCount} {pluralize(group.reportCount, 'reporte', 'reportes')}
+                      </p>
                     </div>
-
-                    {templateRow?.template?.id ? (
-                      <div className="mt-2.5 flex justify-end">
+                    <div className="flex items-center gap-2">
+                      <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${groupMeta.className}`}>
+                        {groupMeta.label}
+                      </span>
+                      {group.templateId ? (
                         <button
                           type="button"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            event.preventDefault();
-                            handleCreateReport(templateRow.template, {
-                              reuseExisting: false,
-                            });
-                          }}
+                          onClick={() => navigate(`/monitoreo/reportes/${group.templateId}`)}
                           className="inline-flex items-center gap-2 rounded-full border border-cyan-500/35 bg-cyan-500/10 px-3 py-1.5 text-xs font-semibold text-cyan-100 transition hover:border-cyan-400/65"
                         >
-                          Crear reporte
+                          Ver reportes
                         </button>
-                      </div>
-                    ) : null}
-
-                    {isExpanded ? (
-                      <div className="mt-2.5 space-y-2.5">
-                        {(group.sheetGroups || []).map((sheetGroup) => (
-                          <div key={`${group.groupKey}-${sheetGroup.sheetKey}`} className="space-y-2">
-                            <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-800/60 bg-slate-900/35 px-3 py-2">
-                              <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-300">
-                                Ficha: {truncateLabel(sheetGroup.sheetTitle || 'Ficha general', 52)}
-                              </p>
-                              <span className="text-[11px] text-slate-400">
-                                {sheetGroup.reportCount}{' '}
-                                {pluralize(sheetGroup.reportCount, 'reporte', 'reportes')}
-                              </span>
-                            </div>
-                            {sheetGroup.reports.map((row) => {
-                              if (!row.hasReport) {
-                                return (
-                                  <article
-                                    key={row.id}
-                                    className="rounded-xl border border-slate-800/70 bg-slate-950/30 px-3 py-3"
-                                  >
-                                    <div className="flex flex-wrap items-center justify-between gap-2">
-                                      <p className="truncate text-sm font-semibold text-slate-100">
-                                        Sin formularios todavía
-                                      </p>
-                                      <span
-                                        className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${
-                                          REPORT_STATE_META[row.state]?.className ||
-                                          REPORT_STATE_META.active.className
-                                        }`}
-                                      >
-                                        {REPORT_STATE_META[row.state]?.label || 'Activo'}
-                                      </span>
-                                    </div>
-                                    <p className="mt-1 text-xs text-slate-400">
-                                      Aun no hay reportes registrados. Este monitoreo esta activo pero aun no tiene formularios completados.
-                                    </p>
-                                    <div className="mt-2.5 flex flex-wrap gap-2">
-                                      <button
-                                        type="button"
-                                        onClick={() => handleCreateReport(row.template, { reuseExisting: false })}
-                                        className="inline-flex items-center gap-2 rounded-full border border-cyan-400/60 bg-cyan-500/20 px-3 py-1.5 text-xs font-semibold text-cyan-100 transition hover:border-cyan-300 hover:bg-cyan-500/30"
-                                      >
-                                        Crear reporte
-                                      </button>
-                                      <button
-                                        type="button"
-                                        onClick={() => navigate('/monitoreo')}
-                                        className="inline-flex items-center gap-2 rounded-full border border-slate-700/60 px-3 py-1.5 text-xs font-semibold text-slate-100 transition hover:border-cyan-400/60"
-                                      >
-                                        Ir a Monitoreos
-                                      </button>
-                                    </div>
-                                  </article>
-                                );
-                              }
-
-                              const stateMeta = REPORT_STATE_META[row.state] || REPORT_STATE_META.active;
-                              const isSelected = row.id === selectedReportId;
-                              const canDeleteRow = isAdmin || row.state !== 'expired';
-                              return (
-                                <article
-                                  key={row.id}
-                                  role="button"
-                                  tabIndex={0}
-                                  aria-pressed={isSelected}
-                                  onClick={() => setSelectedReportId(row.id)}
-                                  onKeyDown={(event) => {
-                                    if (event.key === 'Enter' || event.key === ' ') {
-                                      event.preventDefault();
-                                      setSelectedReportId(row.id);
-                                    }
-                                  }}
-                                  className={`cursor-pointer rounded-xl border px-3 py-2.5 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/50 ${
-                                    isSelected
-                                      ? 'border-cyan-400/50 bg-cyan-500/10'
-                                      : 'border-slate-800/70 bg-slate-950/30 hover:border-cyan-400/35'
-                                  }`}
-                                >
-                                  <div className="flex flex-wrap items-center justify-between gap-2">
-                                    <p className="truncate text-sm font-semibold text-slate-100">
-                                      {truncateLabel(row.displayName || 'Reporte registrado', 58)}
-                                    </p>
-                                    <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${stateMeta.className}`}>
-                                      {stateMeta.label}
-                                    </span>
-                                  </div>
-                                  <p className="mt-1 truncate text-xs text-slate-300">
-                                    IE: {truncateLabel(row.institution || 'No registrada', 68)}
-                                  </p>
-                                  <p className="mt-1 truncate text-xs text-slate-300">
-                                    Ficha: {truncateLabel(row.sheetTitle || 'Ficha general', 60)}
-                                  </p>
-                                  <p className="mt-1 truncate text-xs text-slate-300">
-                                    Respuesta:{' '}
-                                    {truncateLabel(
-                                      row.responseIsBinary && row.responseQuestion
-                                        ? `${row.responseQuestion}: ${row.responsePreview || 'Sin respuesta registrada'}`
-                                        : row.responsePreview || 'Sin respuesta registrada',
-                                      92,
-                                    )}
-                                  </p>
-                                  <p className="mt-1 truncate text-xs text-slate-400">
-                                    Actualizado: {row.updatedDateLabel}
-                                  </p>
-                                  <p className="mt-1 text-[11px] text-slate-500">
-                                    Haz clic para ver el detalle del reporte.
-                                  </p>
-
-                                  <div className="mt-2.5 flex flex-wrap gap-2">
-                                    <button
-                                      type="button"
-                                      onClick={(event) => {
-                                        event.stopPropagation();
-                                        openReport(row);
-                                      }}
-                                      className="inline-flex items-center gap-2 rounded-full border border-slate-700/60 px-3 py-1.5 text-xs font-semibold text-slate-100 transition hover:border-cyan-400/60"
-                                    >
-                                      <Eye size={13} />
-                                      Ver
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={(event) => {
-                                        event.stopPropagation();
-                                        openPdf(row.template, row.instance);
-                                      }}
-                                      disabled={pdfLoadingId === row.id || !row.template}
-                                      className="inline-flex items-center gap-2 rounded-full border border-rose-500/35 bg-rose-500/10 px-3 py-1.5 text-xs font-semibold text-rose-100 transition hover:border-rose-400/70 disabled:cursor-not-allowed disabled:opacity-60"
-                                    >
-                                      {pdfLoadingId === row.id ? (
-                                        <Loader2 size={13} className="animate-spin" />
-                                      ) : (
-                                        <Download size={13} />
-                                      )}
-                                      {pdfLoadingId === row.id ? 'Generando...' : 'PDF'}
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={(event) => {
-                                        event.stopPropagation();
-                                        handleRequestDelete({
-                                          instanceId: row.id,
-                                          isAdminAction: isAdmin,
-                                          details: `${row.templateTitle} - ${row.displayName || 'Reporte registrado'}`,
-                                        });
-                                      }}
-                                      disabled={!canDeleteRow}
-                                      title={!canDeleteRow ? 'Monitoreo vencido: solo administrador puede eliminar.' : undefined}
-                                      className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
-                                        canDeleteRow
-                                          ? 'border-rose-500/30 text-rose-200 hover:border-rose-400/60'
-                                          : 'cursor-not-allowed border-slate-700/70 text-slate-500'
-                                      }`}
-                                    >
-                                      <Trash2 size={13} />
-                                      Eliminar
-                                    </button>
-                                  </div>
-                                </article>
-                              );
-                            })}
-                          </div>
-                        ))}
-                      </div>
-                    ) : null}
-                  </section>
-                );
-              })}
+                      ) : null}
+                    </div>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        ) : !detailGroup ? (
+          <div className="rounded-2xl border border-slate-800/70 bg-slate-900/50 px-4 py-5 text-sm text-slate-400">
+            No se encontró el monitoreo seleccionado.
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <div className="rounded-2xl border border-slate-800/70 bg-slate-900/45 px-4 py-4">
+              <button
+                type="button"
+                onClick={() => navigate('/monitoreo/reportes')}
+                className="mb-2 inline-flex items-center gap-2 rounded-full border border-slate-700/60 px-3 py-1 text-xs font-semibold text-slate-300 transition hover:border-slate-500"
+              >
+                ← Volver a Reportes
+              </button>
+              <p className="text-base font-semibold text-slate-100">{detailGroup.templateTitle}</p>
+              <p className="mt-1 text-xs text-slate-400">{detailGroup.rangeLabel}</p>
+              <div className="mt-3 grid gap-2 sm:grid-cols-4">
+                <div className="rounded-xl border border-slate-800/70 bg-slate-950/40 px-3 py-2 text-xs text-slate-300">Total fichas: <span className="font-semibold text-slate-100">{detailGroup.reportCount}</span></div>
+                <div className="rounded-xl border border-cyan-500/30 bg-cyan-500/10 px-3 py-2 text-xs text-cyan-100">En progreso: <span className="font-semibold">{detailGroup.stateCount.in_progress}</span></div>
+                <div className="rounded-xl border border-indigo-500/30 bg-indigo-500/10 px-3 py-2 text-xs text-indigo-100">Completadas: <span className="font-semibold">{detailGroup.stateCount.completed}</span></div>
+                <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">Vencidas: <span className="font-semibold">{detailGroup.stateCount.expired}</span></div>
+              </div>
             </div>
 
-            {isSelectedDetailVisible ? (
-              <aside className="rounded-2xl border border-slate-800/70 bg-slate-900/45 px-4 py-4 xl:sticky xl:top-4 xl:h-fit">
-                <div className="space-y-4">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="space-y-2">
-                      <p className="text-[11px] uppercase tracking-[0.22em] text-slate-500">Detalle del reporte</p>
-                      <p title={selectedRow.templateTitle} className="text-base font-semibold text-slate-100">
-                        {truncateLabel(selectedRow.templateTitle, 74)}
-                      </p>
-                      <span className={`inline-flex rounded-full border px-2.5 py-1 text-[11px] font-semibold ${REPORT_STATE_META[selectedRow.state]?.className || REPORT_STATE_META.active.className}`}>
-                        {REPORT_STATE_META[selectedRow.state]?.label || 'Activo'}
-                      </span>
+            {detailGroup.sheetGroups.flatMap((sheetGroup) => sheetGroup.reports).map((row) => {
+              const stateMeta = REPORT_STATE_META[row.state] || REPORT_STATE_META.active;
+              const canDeleteRow = isAdmin || row.state !== 'expired';
+              return (
+                <article key={row.id} className="rounded-2xl border border-slate-800/70 bg-slate-900/45 px-4 py-4">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="space-y-1">
+                      <p className="text-sm font-semibold text-slate-100">{truncateLabel(row.displayName || 'Reporte registrado', 84)}</p>
+                      <p className="text-xs text-slate-400">Ficha: {row.sheetTitle || 'Ficha general'}</p>
+                      <p className="text-xs text-slate-400">Actualizado: {row.updatedDateLabel}</p>
+                      <p className="text-xs text-slate-300">IE: {row.institution || 'No registrada'}</p>
                     </div>
+                    <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${stateMeta.className}`}>
+                      {stateMeta.label}
+                    </span>
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-2">
                     <button
                       type="button"
-                      onClick={() => setSelectedReportId('')}
-                      className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-700/70 text-slate-300 transition hover:border-slate-500"
-                      aria-label="Cerrar detalle"
-                      title="Cerrar detalle"
-                    >
-                      <X size={14} />
-                    </button>
-                  </div>
-
-                  <div className="space-y-2 text-xs text-slate-300">
-                    {selectedRow.displayName ? (
-                      <p className="flex items-center gap-2">
-                        <UserRound size={13} className="text-slate-400" />
-                        {selectedRow.displayType || selectedRow.referenceType}:{' '}
-                        <span className="font-medium text-slate-100">{selectedRow.displayName}</span>
-                      </p>
-                    ) : null}
-                    {selectedRow.institution ? (
-                      <p className="flex items-center gap-2">
-                        <FileText size={13} className="text-slate-400" />
-                        IE: <span className="font-medium text-slate-100">{selectedRow.institution}</span>
-                      </p>
-                    ) : null}
-                    {selectedRow.responsePreview ? (
-                      <p className="text-slate-300">
-                        Respuesta clave:{' '}
-                        <span className="font-medium text-slate-100">
-                          {truncateLabel(
-                            selectedRow.responseIsBinary && selectedRow.responseQuestion
-                              ? `${selectedRow.responseQuestion}: ${selectedRow.responsePreview}`
-                              : selectedRow.responsePreview,
-                            120,
-                          )}
-                        </span>
-                      </p>
-                    ) : null}
-                    <p className="flex items-center gap-2">
-                      <CalendarDays size={13} className="text-slate-400" />
-                      Rango: <span className="font-medium text-slate-100">{selectedRow.rangeLabel}</span>
-                    </p>
-                    <p className="flex items-center gap-2">
-                      <FileText size={13} className="text-slate-400" />
-                      Actualizado: <span className="font-medium text-slate-100">{selectedRow.updatedLabel}</span>
-                    </p>
-                    <p className="text-slate-400">
-                      Este monitoreo tiene{' '}
-                      <span className="font-medium text-slate-100">{selectedGroup?.reportCount || 1}</span>{' '}
-                      {pluralize(selectedGroup?.reportCount || 1, 'reporte', 'reportes')}.
-                    </p>
-                  </div>
-
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      onClick={() => openReport(selectedRow)}
+                      onClick={() => openReport(row)}
                       className="inline-flex items-center gap-2 rounded-full border border-slate-700/60 px-3 py-1.5 text-xs font-semibold text-slate-100 transition hover:border-cyan-400/60"
                     >
                       <Eye size={13} />
-                      Ver / Editar
+                      Ver
                     </button>
                     <button
                       type="button"
-                      onClick={() => openPdf(selectedRow.template, selectedRow.instance)}
-                      disabled={pdfLoadingId === selectedRow.id || !selectedRow.template}
+                      onClick={() => openReport(row)}
+                      className="inline-flex items-center gap-2 rounded-full border border-cyan-500/35 bg-cyan-500/10 px-3 py-1.5 text-xs font-semibold text-cyan-100 transition hover:border-cyan-400/65"
+                    >
+                      <FileText size={13} />
+                      Editar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => openPdf(row.template, row.instance)}
+                      disabled={pdfLoadingId === row.id || !row.template}
                       className="inline-flex items-center gap-2 rounded-full border border-rose-500/35 bg-rose-500/10 px-3 py-1.5 text-xs font-semibold text-rose-100 transition hover:border-rose-400/70 disabled:cursor-not-allowed disabled:opacity-60"
                     >
-                      {pdfLoadingId === selectedRow.id ? (
-                        <Loader2 size={13} className="animate-spin" />
-                      ) : (
-                        <Download size={13} />
-                      )}
-                      Descargar PDF
+                      {pdfLoadingId === row.id ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />}
+                      {pdfLoadingId === row.id ? 'Generando...' : 'PDF'}
                     </button>
-                  </div>
-
-                  <div className="border-t border-slate-800/70 pt-3">
                     <button
                       type="button"
                       onClick={() =>
                         handleRequestDelete({
-                          instanceId: selectedRow.id,
+                          instanceId: row.id,
                           isAdminAction: isAdmin,
-                          details: `${selectedRow.templateTitle} - ${selectedRow.displayName || 'Reporte registrado'}`,
+                          details: `${row.templateTitle} - ${row.displayName || 'Reporte registrado'}`,
                         })
                       }
-                      disabled={!canDeleteSelected}
-                      title={!canDeleteSelected ? 'Monitoreo vencido: solo administrador puede eliminar.' : undefined}
+                      disabled={!canDeleteRow}
+                      title={!canDeleteRow ? 'Monitoreo vencido: solo administrador puede eliminar.' : undefined}
                       className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
-                        canDeleteSelected
+                        canDeleteRow
                           ? 'border-rose-500/30 text-rose-200 hover:border-rose-400/60'
                           : 'cursor-not-allowed border-slate-700/70 text-slate-500'
                       }`}
@@ -1702,9 +1393,9 @@ export default function MonitoreoReportes() {
                       Eliminar
                     </button>
                   </div>
-                </div>
-              </aside>
-            ) : null}
+                </article>
+              );
+            })}
           </div>
         )}
       </Card>

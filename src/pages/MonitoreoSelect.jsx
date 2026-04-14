@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Loader2, Plus } from 'lucide-react';
 import Card from '../components/ui/Card.jsx';
 import ConfirmModal from '../components/ui/ConfirmModal.jsx';
@@ -121,6 +121,7 @@ const formatDateLabel = (value) => {
 
 export default function MonitoreoSelect() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [templates, setTemplates] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [showDrafts, setShowDrafts] = useState(false);
@@ -267,7 +268,7 @@ export default function MonitoreoSelect() {
     return source.slice().sort(compareTemplatesForDisplay);
   }, [isAdmin, showDrafts, templates]);
 
-  const createInstanceForTemplate = async (template, selectedSheetId = '') => {
+  const prepareInstanceForTemplate = async (template, selectedSheetId = '') => {
     if (template.status !== 'published') {
       openNoticeModal(
         'Monitoreo no disponible',
@@ -295,9 +296,7 @@ export default function MonitoreoSelect() {
       );
       return false;
     }
-    const now = new Date().toISOString();
-
-    // Reutiliza una instancia en progreso para evitar duplicados al retomar la ficha.
+    // Reutiliza una instancia en progreso para retomar la ficha si ya existe.
     const { data: existingRows, error: existingError } = await supabase
       .from('monitoring_instances')
       .select('id,data,updated_at')
@@ -329,35 +328,8 @@ export default function MonitoreoSelect() {
       localStorage.setItem('monitoreoInstanceActive', matched.id);
       return true;
     }
-
-    const { data, error } = await supabase
-      .from('monitoring_instances')
-      .insert([
-        {
-          template_id: template.id,
-          created_by: userId,
-          status: 'in_progress',
-          data: {
-            meta: {
-              selectedSheetId: selectedSheetId || null,
-            },
-          },
-          created_at: now,
-          updated_at: now,
-        },
-      ])
-      .select('*')
-      .single();
-    if (error) {
-      console.error(error);
-      openNoticeModal(
-        'No se pudo crear',
-        'No se pudo crear el monitoreo. Intentalo nuevamente.',
-        'danger',
-      );
-      return false;
-    }
-    localStorage.setItem('monitoreoInstanceActive', data.id);
+    // No crear instancia automaticamente: se crea al presionar "Guardar cambios" en la ficha.
+    localStorage.removeItem('monitoreoInstanceActive');
     return true;
   };
 
@@ -365,7 +337,7 @@ export default function MonitoreoSelect() {
     setIsOpeningTemplate(true);
     selectTemplate(template.id);
     selectTemplateSheet(sheetId);
-    const created = await createInstanceForTemplate(template, sheetId);
+    const created = await prepareInstanceForTemplate(template, sheetId);
     setIsOpeningTemplate(false);
     if (created) {
       setSheetSelection({
@@ -374,7 +346,12 @@ export default function MonitoreoSelect() {
         sheets: [],
         selectedSheetId: '',
       });
-      navigate('/monitoreo/ficha-escritura');
+      const returnTo = `${location.pathname}${location.search || ''}`;
+      const params = new URLSearchParams({
+        from: 'monitoreos',
+        returnTo,
+      });
+      navigate(`/monitoreo/ficha-escritura?${params.toString()}`);
     }
   };
 
