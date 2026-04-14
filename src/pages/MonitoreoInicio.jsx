@@ -31,6 +31,12 @@ const MONTH_OPTIONS = [
   { value: '12', label: 'Diciembre' },
 ];
 
+const STATUS_FILTER_OPTIONS = [
+  { value: 'all', label: 'Todos' },
+  { value: 'pending', label: 'Pendientes' },
+  { value: 'expired', label: 'Vencidos' },
+];
+
 const toSafeDate = (value) => {
   const parsed = value ? new Date(value) : null;
   if (!parsed || Number.isNaN(parsed.getTime())) return null;
@@ -80,9 +86,15 @@ const getTemplateStatus = (template) => {
 
 const isCddPublishedTemplate = (template) => {
   if (template?.status !== 'published') return false;
-  if (getTemplateStatus(template) !== 'active') return false;
+  if (getTemplateStatus(template) === 'hidden') return false;
   const scope = getTemplateScope(template);
   return String(scope?.cdd || '').toLowerCase() === 'si';
+};
+
+const getTemplateFilterStatus = (template) => {
+  const status = getTemplateStatus(template);
+  if (status === 'closed') return 'expired';
+  return 'pending';
 };
 
 const getDateWindowFromFilter = (filter) => {
@@ -248,12 +260,14 @@ export default function MonitoreoInicio() {
     month: 'all',
     day: 'all',
     area: 'all',
+    status: 'all',
   });
   const [appliedFilters, setAppliedFilters] = useState({
     year: String(now.getFullYear()),
     month: 'all',
     day: 'all',
     area: 'all',
+    status: 'all',
   });
 
   useEffect(() => {
@@ -402,8 +416,11 @@ export default function MonitoreoInicio() {
 
   const filteredTemplates = useMemo(() => {
     const selectedArea = appliedFilters.area;
+    const selectedStatus = appliedFilters.status || 'all';
     return cddTemplates.filter((template) => {
       if (!doesTemplateMatchDateFilter(template, appliedFilters)) return false;
+      const filterStatus = getTemplateFilterStatus(template);
+      if (selectedStatus !== 'all' && selectedStatus !== filterStatus) return false;
       const area = normalizeText(getTemplateScope(template)?.cddArea);
       if (selectedArea !== 'all' && area !== selectedArea) return false;
       return true;
@@ -643,7 +660,7 @@ export default function MonitoreoInicio() {
           <section className="grid grid-cols-1 gap-4 xl:grid-cols-12">
             <Card className="xl:col-span-8 rounded-2xl border border-slate-800/80 bg-slate-900/55 p-4">
               <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">Filtros CdD</p>
-              <div className="mt-3 grid gap-3 md:grid-cols-5">
+              <div className="mt-3 grid gap-3 md:grid-cols-6">
                 <label className="flex flex-col gap-1 text-xs text-slate-300">
                   <span>Año</span>
                   <select
@@ -689,6 +706,18 @@ export default function MonitoreoInicio() {
                   >
                     {areaOptions.map((area) => (
                       <option key={area} value={area}>{area === 'all' ? 'Todas' : area}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="flex flex-col gap-1 text-xs text-slate-300">
+                  <span>Estado</span>
+                  <select
+                    value={pendingFilters.status}
+                    onChange={(event) => setPendingFilters((prev) => ({ ...prev, status: event.target.value }))}
+                    className="rounded-xl border border-slate-700/60 bg-slate-950/60 px-3 py-2 text-sm text-slate-100"
+                  >
+                    {STATUS_FILTER_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
                     ))}
                   </select>
                 </label>
