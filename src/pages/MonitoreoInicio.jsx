@@ -284,46 +284,25 @@ export default function MonitoreoInicio() {
       setIsLoading(true);
       setError('');
 
-      const templatesReq = supabase
-        .from('monitoring_templates')
-        .select('id,title,status,availability,levels_config,sections,created_by,created_at,updated_at')
-        .order('updated_at', { ascending: false });
-
-      const instancesReq = supabase
-        .from('monitoring_instances')
-        .select('id,template_id,status,created_by,created_at,updated_at,data')
-        .order('updated_at', { ascending: false });
-
-      const templateMonitorsReq = supabase
-        .from('monitoring_template_monitors')
-        .select('template_id,user_id,created_at');
-
-      const profilesReq = supabase
-        .from('profiles')
-        .select('id,full_name,first_name,last_name,email,doc_number,role,status')
-        .eq('status', 'active');
-
-      const [templatesRes, instancesRes, templateMonitorsRes, profilesRes] = await Promise.all([
-        templatesReq,
-        instancesReq,
-        templateMonitorsReq,
-        profilesReq,
-      ]);
+      const sourceRes = await supabase.rpc('get_cdd_dashboard_source');
 
       if (!active) return;
 
-      const errors = [];
-      if (templatesRes.error) errors.push(`Monitoreos: ${templatesRes.error.message}`);
-      if (instancesRes.error) errors.push(`Instancias: ${instancesRes.error.message}`);
-
-      if (errors.length) {
-        setError(`No se pudo cargar el dashboard (${errors.join(' | ')}).`);
+      if (sourceRes.error) {
+        setError(`No se pudo cargar el dashboard (${sourceRes.error.message}).`);
+        setTemplates([]);
+        setInstances([]);
+        setTemplateMonitors([]);
+        setProfiles([]);
+        setIsLoading(false);
+        return;
       }
 
-      setTemplates(templatesRes.data || []);
-      setInstances(instancesRes.data || []);
-      setTemplateMonitors(templateMonitorsRes.error ? [] : templateMonitorsRes.data || []);
-      setProfiles(profilesRes.error ? [] : profilesRes.data || []);
+      const payload = sourceRes.data && typeof sourceRes.data === 'object' ? sourceRes.data : {};
+      setTemplates(Array.isArray(payload.templates) ? payload.templates : []);
+      setInstances(Array.isArray(payload.instances) ? payload.instances : []);
+      setTemplateMonitors(Array.isArray(payload.template_monitors) ? payload.template_monitors : []);
+      setProfiles(Array.isArray(payload.profiles) ? payload.profiles : []);
       setIsLoading(false);
     };
 
