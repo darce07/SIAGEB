@@ -3683,8 +3683,8 @@ export default function MonitoreoLayout() {
     : 'content-surface w-full min-w-0 max-w-full overflow-x-hidden rounded-3xl px-3.5 py-3.5 md:px-5 md:py-5';
 
   const assistantPanelClass = isCompactDensity
-    ? 'flex w-[min(90vw,408px)] max-h-[calc(100vh-5.5rem)] flex-col overflow-hidden rounded-2xl border border-slate-800/70 bg-slate-900/70 font-sans text-[13px] leading-5 text-slate-200 shadow-[0_20px_60px_-30px_rgba(0,0,0,0.75)] backdrop-blur'
-    : 'flex w-[min(92vw,440px)] max-h-[calc(100vh-6rem)] flex-col overflow-hidden rounded-2xl border border-slate-800/70 bg-slate-900/70 font-sans text-sm leading-5 text-slate-200 shadow-[0_20px_60px_-30px_rgba(0,0,0,0.75)] backdrop-blur';
+    ? 'flex w-[min(90vw,408px)] max-h-[calc(100dvh-5.5rem)] flex-col overflow-hidden rounded-2xl border border-slate-800/70 bg-slate-900/70 font-sans text-[13px] leading-5 text-slate-200 shadow-[0_20px_60px_-30px_rgba(0,0,0,0.75)] backdrop-blur'
+    : 'flex w-[min(92vw,440px)] max-h-[calc(100dvh-6rem)] flex-col overflow-hidden rounded-2xl border border-slate-800/70 bg-slate-900/70 font-sans text-sm leading-5 text-slate-200 shadow-[0_20px_60px_-30px_rgba(0,0,0,0.75)] backdrop-blur';
 
   const assistantMessageListClass = isCompactDensity
     ? 'min-h-0 flex-1 space-y-2.5 overflow-y-auto px-3.5 py-3.5'
@@ -3879,9 +3879,9 @@ export default function MonitoreoLayout() {
           </aside>
         </div>
       ) : null}
-      <div className="flex h-screen overflow-hidden bg-transparent">
+      <div className="app-shell safe-inset-x flex overflow-hidden bg-transparent">
         <aside
-          className={`monitoreo-sidebar hidden flex-col border-r border-slate-700/45 bg-gradient-to-b from-slate-950/95 via-slate-950/90 to-slate-900/82 shadow-[20px_0_50px_rgba(2,6,23,0.45)] backdrop-blur-xl transition-[width,padding,box-shadow,background-color] duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] lg:sticky lg:top-0 lg:flex lg:h-screen lg:overflow-visible lg:overscroll-contain ${sidebarDesktopRailClass}`}
+          className={`monitoreo-sidebar hidden flex-col border-r border-slate-700/45 bg-gradient-to-b from-slate-950/95 via-slate-950/90 to-slate-900/82 shadow-[20px_0_50px_rgba(2,6,23,0.45)] backdrop-blur-xl transition-[width,padding,box-shadow,background-color] duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] lg:sticky lg:top-0 lg:flex lg:h-[100dvh] lg:overflow-visible lg:overscroll-contain ${sidebarDesktopRailClass}`}
         >
           <div
             className={`monitoreo-sidebar-profile mb-4 rounded-2xl border border-slate-700/45 bg-slate-900/42 shadow-[inset_0_0_0_1px_rgba(15,23,42,0.35)] transition-all duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] ${sidebarProfileCardClass}`}
@@ -3996,7 +3996,7 @@ export default function MonitoreoLayout() {
         </aside>
         <div className="login-glow flex flex-1 flex-col overflow-hidden">
           <div className="lg:hidden">
-            <div className="monitoreo-topbar glass-panel sticky top-0 z-40 flex items-center justify-between px-3 py-2">
+            <div className="monitoreo-topbar glass-panel safe-top sticky top-0 z-40 flex items-center justify-between px-3 py-2">
               <button
                 ref={mobileSidebarButtonRef}
                 type="button"
@@ -4057,7 +4057,9 @@ export default function MonitoreoLayout() {
       ) : null}
       <div
         className={`fixed right-3 z-40 flex flex-col items-end sm:right-6 ${
-          isCompactDensity ? 'bottom-4 gap-2 sm:bottom-5 sm:gap-2.5' : 'bottom-4 gap-2 sm:bottom-6 sm:gap-3'
+          isCompactDensity
+            ? 'bottom-[calc(0.75rem+env(safe-area-inset-bottom,0px))] gap-2 sm:bottom-[calc(1.25rem+env(safe-area-inset-bottom,0px))] sm:gap-2.5'
+            : 'bottom-[calc(0.75rem+env(safe-area-inset-bottom,0px))] gap-2 sm:bottom-[calc(1.5rem+env(safe-area-inset-bottom,0px))] sm:gap-3'
         }`}
       >
         {isNotificationsOpen ? (
@@ -4068,8 +4070,8 @@ export default function MonitoreoLayout() {
             aria-modal="false"
             className={
               isCompactDensity
-                ? 'mb-1 w-[calc(100vw-1.5rem)] max-h-[62vh] overflow-hidden rounded-2xl border border-slate-700/90 bg-slate-950/96 text-[13px] text-slate-200 shadow-[0_22px_70px_-26px_rgba(0,0,0,0.9)] sm:mb-0 sm:w-[min(90vw,392px)] sm:max-h-[calc(100vh-5.5rem)]'
-                : 'mb-1 w-[calc(100vw-1.5rem)] max-h-[64vh] overflow-hidden rounded-2xl border border-slate-700/90 bg-slate-950/96 text-sm text-slate-200 shadow-[0_22px_70px_-26px_rgba(0,0,0,0.9)] sm:mb-0 sm:w-[min(92vw,420px)] sm:max-h-[calc(100vh-6rem)]'
+                ? 'mb-1 w-[calc(100vw-1.5rem)] max-h-[62dvh] overflow-hidden rounded-2xl border border-slate-700/90 bg-slate-950/96 text-[13px] text-slate-200 shadow-[0_22px_70px_-26px_rgba(0,0,0,0.9)] sm:mb-0 sm:w-[min(90vw,392px)] sm:max-h-[calc(100dvh-5.5rem)]'
+                : 'mb-1 w-[calc(100vw-1.5rem)] max-h-[64dvh] overflow-hidden rounded-2xl border border-slate-700/90 bg-slate-950/96 text-sm text-slate-200 shadow-[0_22px_70px_-26px_rgba(0,0,0,0.9)] sm:mb-0 sm:w-[min(92vw,420px)] sm:max-h-[calc(100dvh-6rem)]'
             }
           >
             <div className={`flex items-center justify-between border-b border-slate-800/70 ${isCompactDensity ? 'px-3.5 py-2.5' : 'px-4 py-3'}`}>

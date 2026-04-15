@@ -782,21 +782,21 @@ export default function MonitoreoInicio() {
               ) : !hasData ? (
                 <p className="text-sm text-slate-400">No hay monitoreos con Compromiso de Desempeño para el filtro aplicado.</p>
               ) : (
-                <div className="overflow-x-auto">
-                  <div className="flex min-w-[780px] items-end gap-4 rounded-xl border border-slate-800/70 bg-slate-950/40 p-4 pt-6">
+                <div className="overflow-x-auto pb-1">
+                  <div className="flex min-w-[560px] items-end gap-3 rounded-xl border border-slate-800/70 bg-slate-950/40 p-3 pt-5 sm:min-w-[700px] sm:gap-4 sm:p-4 sm:pt-6">
                     {areaStats.map((row) => {
                       const maxHeight = 176;
                       const goalHeight = Math.max(4, Math.round((clampPercent(row.goalBarPercent) / 100) * maxHeight));
                       const realHeight = Math.max(4, Math.round((clampPercent(row.realBarPercent) / 100) * maxHeight));
                       return (
-                        <div key={row.area} className="flex w-[130px] flex-col items-center gap-2">
-                          <div className="flex h-[204px] items-end gap-2">
-                            <div className="flex w-10 flex-col items-center gap-1">
+                        <div key={row.area} className="flex w-[106px] flex-col items-center gap-2 sm:w-[130px]">
+                          <div className="flex h-[176px] items-end gap-2 sm:h-[204px]">
+                            <div className="flex w-9 flex-col items-center gap-1 sm:w-10">
                               <span className="text-[10px] font-semibold text-slate-400">META {Math.round(row.goal)}</span>
                               <div className="w-full rounded-t-md bg-slate-500/40" style={{ height: `${goalHeight}px` }} />
                               <span className="text-[10px] uppercase tracking-[0.12em] text-slate-400">Meta</span>
                             </div>
-                            <div className="flex w-10 flex-col items-center gap-1">
+                            <div className="flex w-9 flex-col items-center gap-1 sm:w-10">
                               <span className="text-[10px] font-semibold text-cyan-200">REAL {formatPercentPrecise(row.realBarPercent)}</span>
                               <div className="w-full rounded-t-md bg-cyan-400/80" style={{ height: `${realHeight}px` }} />
                               <span className="text-[10px] uppercase tracking-[0.12em] text-cyan-200">Real</span>
