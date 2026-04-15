@@ -429,16 +429,20 @@ export default function MonitoreoSeguimiento() {
         )
         .order('start_at', { ascending: true });
 
-      const { data: usersData, error: usersError } = await supabase
-        .from('profiles')
-        .select('id,first_name,last_name,full_name,email,role,status')
-        .eq('status', 'active')
-        .in('role', SPECIALIST_ROLES)
-        .order('full_name', { ascending: true });
-      if (usersError) {
-        setError(`No se pudo cargar especialistas: ${usersError.message}`);
+      if (isAdmin) {
+        const { data: usersData, error: usersError } = await supabase
+          .from('profiles')
+          .select('id,first_name,last_name,full_name,email,role,status')
+          .eq('status', 'active')
+          .in('role', SPECIALIST_ROLES)
+          .order('full_name', { ascending: true });
+        if (usersError) {
+          setError(`No se pudo cargar especialistas: ${usersError.message}`);
+        } else {
+          setUsers(usersData || []);
+        }
       } else {
-        setUsers(usersData || []);
+        setUsers([]);
       }
 
       const { data: eventsData, error: eventsError } = await eventsQuery;
