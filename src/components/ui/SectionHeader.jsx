@@ -1,10 +1,3 @@
-const truncateWithMeta = (value, maxChars) => {
-  const source = String(value || '').trim();
-  if (!source) return { text: '', isTruncated: false };
-  if (source.length <= maxChars) return { text: source, isTruncated: false };
-  return { text: `${source.slice(0, Math.max(1, maxChars - 1)).trimEnd()}...`, isTruncated: true };
-};
-
 export default function SectionHeader({
   eyebrow,
   title,
@@ -13,8 +6,8 @@ export default function SectionHeader({
   titleMaxChars = 70,
   descriptionMaxChars = 110,
 }) {
-  const titleMeta = truncateWithMeta(title, titleMaxChars);
-  const descriptionMeta = truncateWithMeta(description, descriptionMaxChars);
+  const titleText = String(title || '').trim();
+  const descriptionText = String(description || '').trim();
   const titleClassName = size === 'page' ? 'text-h1' : 'text-h2';
   const TitleTag = size === 'page' ? 'h1' : 'h2';
 
@@ -28,17 +21,17 @@ export default function SectionHeader({
           {eyebrow}
         </span>
       ) : null}
-      {titleMeta.text ? (
-        <TitleTag title={titleMeta.isTruncated ? String(title || '') : undefined} className={`${titleClassName} truncate`}>
-          {titleMeta.text}
+      {titleText ? (
+        <TitleTag title={titleText.length > titleMaxChars ? titleText : undefined} className={`${titleClassName} break-words`}>
+          {titleText}
         </TitleTag>
       ) : null}
-      {descriptionMeta.text ? (
+      {descriptionText ? (
         <p
-          title={descriptionMeta.isTruncated ? String(description || '') : undefined}
-          className="text-body truncate text-slate-400/90"
+          title={descriptionText.length > descriptionMaxChars ? descriptionText : undefined}
+          className="text-body break-words text-slate-400/90"
         >
-          {descriptionMeta.text}
+          {descriptionText}
         </p>
       ) : null}
     </div>

@@ -659,10 +659,10 @@ export default function MonitoreoInicio() {
 
       {hasDashboardAccess ? (
         <>
-          <section className="grid grid-cols-1 gap-4 xl:grid-cols-12">
-            <Card className="xl:col-span-8 rounded-2xl border border-slate-800/80 bg-slate-900/55 p-4">
+          <section className="grid grid-cols-1 gap-4">
+            <Card className="rounded-2xl border border-slate-800/80 bg-slate-900/55 p-4">
               <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">Filtros CdD</p>
-              <div className="mt-3 grid gap-3 md:grid-cols-6">
+              <div className="mt-3 grid grid-cols-2 gap-2 sm:gap-3 md:grid-cols-6">
                 <label className="flex flex-col gap-1 text-xs text-slate-300">
                   <span>Año</span>
                   <select
@@ -726,7 +726,7 @@ export default function MonitoreoInicio() {
                 <button
                   type="button"
                   onClick={() => setAppliedFilters({ ...pendingFilters })}
-                  className="inline-flex h-10 items-center justify-center gap-2 self-end rounded-xl border border-cyan-400/50 bg-cyan-500/15 px-4 text-sm font-semibold text-cyan-100 transition hover:border-cyan-300/70"
+                  className="col-span-2 inline-flex h-10 items-center justify-center gap-2 self-end rounded-xl border border-cyan-400/50 bg-cyan-500/15 px-4 text-sm font-semibold text-cyan-100 transition hover:border-cyan-300/70 md:col-span-1"
                 >
                   <CalendarDays size={14} />
                   Aplicar
@@ -734,35 +734,37 @@ export default function MonitoreoInicio() {
               </div>
             </Card>
 
-            <Card className="xl:col-span-2 rounded-2xl border border-emerald-500/35 bg-emerald-500/10 p-4">
-              <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-emerald-100/80">Total Progress (Mejor area)</p>
-              {bestArea ? (
-                <>
-                  <p className="mt-3 text-3xl font-extrabold text-emerald-100">{formatPercent(bestArea.progress)}</p>
-                  <p className="mt-1 text-xs text-emerald-100/80">{bestArea.area}</p>
-                  <p className="mt-2 text-[11px] text-emerald-100/80">
-                    Real/Meta: {Math.round(bestArea.real)}/{Math.round(bestArea.goal)}
-                  </p>
-                </>
-              ) : (
-                <p className="mt-4 text-sm text-emerald-100/80">Sin datos</p>
-              )}
-            </Card>
+            <div className="grid grid-cols-1 gap-3 min-[480px]:grid-cols-2">
+              <Card className="rounded-2xl border border-emerald-500/35 bg-emerald-500/10 p-4">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-emerald-100/80">Total Progress (Mejor area)</p>
+                {bestArea ? (
+                  <>
+                    <p className="mt-3 text-3xl font-extrabold text-emerald-100">{formatPercent(bestArea.progress)}</p>
+                    <p className="mt-1 text-xs text-emerald-100/80">{bestArea.area}</p>
+                    <p className="mt-2 text-[11px] text-emerald-100/80">
+                      Real/Meta: {Math.round(bestArea.real)}/{Math.round(bestArea.goal)}
+                    </p>
+                  </>
+                ) : (
+                  <p className="mt-4 text-sm text-emerald-100/80">Sin datos</p>
+                )}
+              </Card>
 
-            <Card className="xl:col-span-2 rounded-2xl border border-rose-500/35 bg-rose-500/10 p-4">
-              <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-rose-100/80">Total Progress (Peor area)</p>
-              {worstArea ? (
-                <>
-                  <p className="mt-3 text-3xl font-extrabold text-rose-100">{formatPercent(worstArea.progress)}</p>
-                  <p className="mt-1 text-xs text-rose-100/80">{worstArea.area}</p>
-                  <p className="mt-2 text-[11px] text-rose-100/80">
-                    Real/Meta: {Math.round(worstArea.real)}/{Math.round(worstArea.goal)}
-                  </p>
-                </>
-              ) : (
-                <p className="mt-4 text-sm text-rose-100/80">Sin datos</p>
-              )}
-            </Card>
+              <Card className="rounded-2xl border border-rose-500/35 bg-rose-500/10 p-4">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-rose-100/80">Total Progress (Peor area)</p>
+                {worstArea ? (
+                  <>
+                    <p className="mt-3 text-3xl font-extrabold text-rose-100">{formatPercent(worstArea.progress)}</p>
+                    <p className="mt-1 text-xs text-rose-100/80">{worstArea.area}</p>
+                    <p className="mt-2 text-[11px] text-rose-100/80">
+                      Real/Meta: {Math.round(worstArea.real)}/{Math.round(worstArea.goal)}
+                    </p>
+                  </>
+                ) : (
+                  <p className="mt-4 text-sm text-rose-100/80">Sin datos</p>
+                )}
+              </Card>
+            </div>
           </section>
 
           <section className="grid grid-cols-1 gap-4">
