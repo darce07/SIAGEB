@@ -1529,8 +1529,8 @@ export default function FichaEscritura() {
   }
 
   return (
-    <div className="flex flex-col gap-8 pb-28">
-      <div className="glass-panel sticky top-6 z-30 rounded-2xl px-6 py-4">
+    <div className="flex flex-col gap-6 pb-[calc(9rem+env(safe-area-inset-bottom,0px))] md:gap-8">
+      <div className="glass-panel sticky top-[calc(0.5rem+env(safe-area-inset-top,0px))] z-30 rounded-2xl px-4 py-3 md:px-6 md:py-4">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="flex flex-col gap-1">
             <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Sesion</p>
@@ -2313,14 +2313,14 @@ export default function FichaEscritura() {
       </div>
 
       {!isReadOnly ? (
-        <div className="fixed bottom-4 left-1/2 z-50 w-[min(920px,calc(100vw-2rem))] -translate-x-1/2">
-          <div className="glass-panel flex items-center justify-between gap-2 rounded-2xl border border-slate-700/70 px-3 py-2 shadow-[0_10px_30px_rgba(2,6,23,0.45)]">
-            <div className="flex items-center gap-2 text-xs">
+        <div className="fixed bottom-[calc(0.5rem+env(safe-area-inset-bottom,0px))] left-1/2 z-50 w-[min(920px,calc(100vw-1rem-env(safe-area-inset-left,0px)-env(safe-area-inset-right,0px)))] -translate-x-1/2">
+          <div className="glass-panel flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-slate-700/70 px-3 py-2 shadow-[0_10px_30px_rgba(2,6,23,0.45)]">
+            <div className="flex min-w-0 items-center gap-2 text-xs">
               <span className={state.meta.saved ? 'text-emerald-200' : 'text-amber-200'}>
                 {state.meta.saved ? '✔ Guardado correctamente' : '● Cambios sin guardar'}
               </span>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
             <Badge
               label={state.meta.saved ? 'Guardado' : 'Pendiente'}
               tone={state.meta.saved ? 'success' : 'warning'}
