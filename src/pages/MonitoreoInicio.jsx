@@ -502,41 +502,21 @@ export default function MonitoreoInicio() {
     });
   }, [filteredTemplates, instances, profileById, templateMonitorIdsMap]);
 
-  const areaStats = useMemo(() => {
-    const map = new Map();
+  const indicatorStats = useMemo(
+    () =>
+      [...templateStats]
+        .map((row) => ({
+          ...row,
+          indicator: row.title,
+          goalBarPercent: row.goal > 0 ? 100 : 0,
+          realBarPercent: row.progress,
+        }))
+        .sort((a, b) => b.progress - a.progress),
+    [templateStats],
+  );
 
-    templateStats.forEach((row) => {
-      if (!map.has(row.area)) {
-        map.set(row.area, {
-          area: row.area,
-          completed: 0,
-          goalSum: 0,
-          monitorings: 0,
-        });
-      }
-      const item = map.get(row.area);
-      item.completed += row.completed;
-      item.goalSum += row.goal;
-      item.monitorings += 1;
-    });
-
-    return Array.from(map.values())
-      .map((row) => ({
-        ...row,
-        goal: row.monitorings > 0 ? row.goalSum / row.monitorings : 0,
-        real: row.monitorings > 0 ? row.completed / row.monitorings : 0,
-        goalBarPercent: row.goalSum > 0 ? 100 : 0,
-        realBarPercent: row.goalSum > 0 ? clampPercent((row.completed / row.goalSum) * 100) : 0,
-        progress:
-          row.goalSum > 0
-            ? clampPercent((row.completed / row.goalSum) * 100)
-            : 0,
-      }))
-      .sort((a, b) => b.progress - a.progress);
-  }, [templateStats]);
-
-  const bestArea = areaStats[0] || null;
-  const worstArea = areaStats[areaStats.length - 1] || null;
+  const bestIndicator = indicatorStats[0] || null;
+  const worstIndicator = indicatorStats[indicatorStats.length - 1] || null;
 
   const globalProgress = useMemo(() => {
     if (!templateStats.length) return { completed: 0, goal: 0, progress: 0 };
@@ -715,13 +695,13 @@ export default function MonitoreoInicio() {
 
             <div className="grid grid-cols-1 gap-3 min-[480px]:grid-cols-2">
               <Card className="rounded-2xl border border-emerald-500/35 bg-emerald-500/10 p-4">
-                <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-emerald-100/80">Total Progress (Mejor area)</p>
-                {bestArea ? (
+                <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-emerald-100/80">Total Progress (Mejor indicador)</p>
+                {bestIndicator ? (
                   <>
-                    <p className="mt-3 text-3xl font-extrabold text-emerald-100">{formatPercent(bestArea.progress)}</p>
-                    <p className="mt-1 text-xs text-emerald-100/80">{bestArea.area}</p>
+                    <p className="mt-3 text-3xl font-extrabold text-emerald-100">{formatPercent(bestIndicator.progress)}</p>
+                    <p className="mt-1 truncate text-xs text-emerald-100/80">{bestIndicator.indicator}</p>
                     <p className="mt-2 text-[11px] text-emerald-100/80">
-                      Real/Meta: {Math.round(bestArea.real)}/{Math.round(bestArea.goal)}
+                      Real/Meta: {Math.round(bestIndicator.completed)}/{Math.round(bestIndicator.goal)}
                     </p>
                   </>
                 ) : (
@@ -730,13 +710,13 @@ export default function MonitoreoInicio() {
               </Card>
 
               <Card className="rounded-2xl border border-rose-500/35 bg-rose-500/10 p-4">
-                <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-rose-100/80">Total Progress (Peor area)</p>
-                {worstArea ? (
+                <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-rose-100/80">Total Progress (Peor indicador)</p>
+                {worstIndicator ? (
                   <>
-                    <p className="mt-3 text-3xl font-extrabold text-rose-100">{formatPercent(worstArea.progress)}</p>
-                    <p className="mt-1 text-xs text-rose-100/80">{worstArea.area}</p>
+                    <p className="mt-3 text-3xl font-extrabold text-rose-100">{formatPercent(worstIndicator.progress)}</p>
+                    <p className="mt-1 truncate text-xs text-rose-100/80">{worstIndicator.indicator}</p>
                     <p className="mt-2 text-[11px] text-rose-100/80">
-                      Real/Meta: {Math.round(worstArea.real)}/{Math.round(worstArea.goal)}
+                      Real/Meta: {Math.round(worstIndicator.completed)}/{Math.round(worstIndicator.goal)}
                     </p>
                   </>
                 ) : (
@@ -750,12 +730,22 @@ export default function MonitoreoInicio() {
             <Card className="rounded-2xl border border-slate-800/80 bg-slate-900/55 p-4 md:p-5">
               <div className="mb-4 flex items-center justify-between gap-2">
                 <div>
-                  <h3 className="text-sm font-semibold uppercase tracking-[0.08em] text-slate-100">Progress by Area</h3>
-                  <p className="text-xs text-slate-400">Comparativo por area: meta vs avance real de CdD</p>
+                  <h3 className="text-sm font-semibold uppercase tracking-[0.08em] text-slate-100">Meta vs Avance por Indicador</h3>
+                  <p className="text-xs text-slate-400">Comparativo por indicador: meta vs avance real de CdD</p>
                 </div>
-                <span className="rounded-full border border-slate-700/60 px-2.5 py-1 text-[11px] text-slate-300">
-                  Global: {formatPercent(globalProgress.progress)}
-                </span>
+                <div className="flex flex-wrap items-center justify-end gap-2 text-[11px] text-slate-300">
+                  <span className="inline-flex items-center gap-1.5">
+                    <span className="inline-block h-2.5 w-2.5 rounded-full bg-slate-400/70" />
+                    Meta
+                  </span>
+                  <span className="inline-flex items-center gap-1.5">
+                    <span className="inline-block h-2.5 w-2.5 rounded-full bg-cyan-300" />
+                    Avance
+                  </span>
+                  <span className="rounded-full border border-slate-700/60 px-2.5 py-1 text-[11px] text-slate-300">
+                    Global: {formatPercent(globalProgress.progress)}
+                  </span>
+                </div>
               </div>
 
               {isLoading ? (
@@ -763,30 +753,53 @@ export default function MonitoreoInicio() {
               ) : !hasData ? (
                 <p className="text-sm text-slate-400">No hay monitoreos con Compromiso de Desempeño para el filtro aplicado.</p>
               ) : (
-                <div className="overflow-x-auto pb-1">
-                  <div className="flex min-w-[560px] items-end gap-3 rounded-xl border border-slate-800/70 bg-slate-950/40 p-3 pt-5 sm:min-w-[700px] sm:gap-4 sm:p-4 sm:pt-6">
-                    {areaStats.map((row) => {
-                      const maxHeight = 176;
-                      const goalHeight = Math.max(4, Math.round((clampPercent(row.goalBarPercent) / 100) * maxHeight));
-                      const realHeight = Math.max(4, Math.round((clampPercent(row.realBarPercent) / 100) * maxHeight));
-                      return (
-                        <div key={row.area} className="flex w-[106px] flex-col items-center gap-2 sm:w-[130px]">
-                          <div className="flex h-[176px] items-end gap-2 sm:h-[204px]">
-                            <div className="flex w-9 flex-col items-center gap-1 sm:w-10">
-                              <span className="text-[10px] font-semibold text-slate-400">META {Math.round(row.goal)}</span>
-                              <div className="w-full rounded-t-md bg-slate-500/40" style={{ height: `${goalHeight}px` }} />
-                              <span className="text-[10px] uppercase tracking-[0.12em] text-slate-400">Meta</span>
+                <div className="overflow-hidden rounded-xl border border-slate-800/70 bg-slate-950/40">
+                  <div className="scrollbar-thin overflow-x-auto pb-1">
+                    <div className="flex w-max min-w-full snap-x snap-mandatory items-end gap-3 p-3 pt-6 sm:gap-4 sm:p-4 sm:pt-7">
+                      {indicatorStats.map((row) => {
+                        const maxHeight = 156;
+                        const goalHeight = Math.max(4, Math.round((clampPercent(row.goalBarPercent) / 100) * maxHeight));
+                        const realHeight = Math.max(4, Math.round((clampPercent(row.realBarPercent) / 100) * maxHeight));
+                        return (
+                          <div key={row.id} className="flex w-[106px] shrink-0 snap-start flex-col items-center gap-2 sm:w-[130px]">
+                            <div className="flex h-[176px] items-end gap-2 pt-3 sm:h-[204px] sm:pt-4">
+                              <div className="flex w-9 flex-col items-center gap-1 sm:w-10">
+                                <span className="text-[10px] font-semibold text-slate-300">{Math.round(row.goal)}</span>
+                                <div
+                                  className="w-full rounded-t-md bg-slate-500/40"
+                                  style={{ height: `${goalHeight}px`, maxHeight: 'clamp(120px,22vw,156px)' }}
+                                />
+                                <span className="text-[10px] uppercase tracking-[0.12em] text-slate-400">Meta</span>
+                              </div>
+                              <div className="flex w-9 flex-col items-center gap-1 sm:w-10">
+                                <span className="text-[10px] font-semibold text-cyan-200">{formatPercentPrecise(row.realBarPercent)}</span>
+                                <div
+                                  className="w-full rounded-t-md bg-cyan-400/80"
+                                  style={{ height: `${realHeight}px`, maxHeight: 'clamp(120px,22vw,156px)' }}
+                                />
+                                <span className="text-[10px] uppercase tracking-[0.12em] text-cyan-200">Real</span>
+                              </div>
                             </div>
-                            <div className="flex w-9 flex-col items-center gap-1 sm:w-10">
-                              <span className="text-[10px] font-semibold text-cyan-200">REAL {formatPercentPrecise(row.realBarPercent)}</span>
-                              <div className="w-full rounded-t-md bg-cyan-400/80" style={{ height: `${realHeight}px` }} />
-                              <span className="text-[10px] uppercase tracking-[0.12em] text-cyan-200">Real</span>
+                            <div className="h-4 w-full">
+                              <p
+                                title={row.indicator}
+                                className="truncate text-center text-xs font-semibold text-slate-200"
+                              >
+                                {row.indicator}
+                              </p>
+                            </div>
+                            <div className="h-4 w-full">
+                              <p
+                                title={row.area}
+                                className="truncate text-center text-[10px] uppercase tracking-[0.08em] text-slate-400"
+                              >
+                                {row.area}
+                              </p>
                             </div>
                           </div>
-                          <p className="line-clamp-2 text-center text-xs font-semibold text-slate-200">{row.area}</p>
-                        </div>
-                      );
-                    })}
+                        );
+                      })}
+                    </div>
                   </div>
                 </div>
               )}
