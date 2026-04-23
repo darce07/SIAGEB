@@ -755,13 +755,13 @@ export default function MonitoreoInicio() {
               ) : (
                 <div className="overflow-hidden rounded-xl border border-slate-800/70 bg-slate-950/40">
                   <div className="scrollbar-thin overflow-x-auto pb-1">
-                    <div className="flex w-max min-w-full snap-x snap-mandatory items-end gap-3 p-3 pt-6 sm:gap-4 sm:p-4 sm:pt-7">
+                    <div className="flex w-max min-w-full snap-x snap-mandatory items-end gap-5 px-4 pb-2 pt-6 sm:gap-6 sm:px-5 sm:pb-3 sm:pt-7">
                       {indicatorStats.map((row) => {
                         const maxHeight = 156;
                         const goalHeight = Math.max(4, Math.round((clampPercent(row.goalBarPercent) / 100) * maxHeight));
                         const realHeight = Math.max(4, Math.round((clampPercent(row.realBarPercent) / 100) * maxHeight));
                         return (
-                          <div key={row.id} className="flex w-[106px] shrink-0 snap-start flex-col items-center gap-2 sm:w-[130px]">
+                          <div key={row.id} className="flex w-[136px] shrink-0 snap-start flex-col items-center gap-2 sm:w-[156px]">
                             <div className="flex h-[176px] items-end gap-2 pt-3 sm:h-[204px] sm:pt-4">
                               <div className="flex w-9 flex-col items-center gap-1 sm:w-10">
                                 <span className="text-[10px] font-semibold text-slate-300">{Math.round(row.goal)}</span>
@@ -780,15 +780,15 @@ export default function MonitoreoInicio() {
                                 <span className="text-[10px] uppercase tracking-[0.12em] text-cyan-200">Real</span>
                               </div>
                             </div>
-                            <div className="h-4 w-full">
+                            <div className="h-8 w-full px-1">
                               <p
                                 title={row.indicator}
-                                className="truncate text-center text-xs font-semibold text-slate-200"
+                                className="line-clamp-2 text-center text-[11px] font-semibold leading-tight text-slate-200"
                               >
                                 {row.indicator}
                               </p>
                             </div>
-                            <div className="h-4 w-full">
+                            <div className="h-4 w-full px-1">
                               <p
                                 title={row.area}
                                 className="truncate text-center text-[10px] uppercase tracking-[0.08em] text-slate-400"
