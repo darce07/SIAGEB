@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useState } from 'react';
+﻿import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import {
   ArrowUpDown,
@@ -776,43 +776,52 @@ export default function MonitoreoReportes() {
     });
   };
 
-  useEffect(() => {
-    let active = true;
+  const fetchData = useCallback(async ({ withLoading = false } = {}) => {
+    if (withLoading) setIsLoading(true);
 
-    const fetchData = async () => {
-      setIsLoading(true);
+    const { data: templatesData, error: templatesError } = await supabase
+      .from('monitoring_templates')
+      .select('*');
 
-      const { data: templatesData, error: templatesError } = await supabase
-        .from('monitoring_templates')
-        .select('*');
+    if (!templatesError) {
+      setTemplates(
+        (templatesData || []).map((row) => ({
+          ...row,
+          levelsConfig: row.levels_config,
+          availability: row.availability,
+        })),
+      );
+    }
 
-      if (!templatesError && active) {
-        setTemplates(
-          (templatesData || []).map((row) => ({
-            ...row,
-            levelsConfig: row.levels_config,
-            availability: row.availability,
-          })),
-        );
-      }
+    const query = supabase.from('monitoring_instances').select('*');
+    const { data: instancesData, error: instancesError } = isAdmin
+      ? await query
+      : await query.eq('created_by', userId);
 
-      const query = supabase.from('monitoring_instances').select('*');
-      const { data: instancesData, error: instancesError } = isAdmin
-        ? await query
-        : await query.eq('created_by', userId);
+    if (!instancesError) {
+      setInstances(instancesData || []);
+    }
 
-      if (!instancesError && active) {
-        setInstances(instancesData || []);
-      }
-
-      if (active) setIsLoading(false);
-    };
-
-    fetchData();
-    return () => {
-      active = false;
-    };
+    if (withLoading) setIsLoading(false);
   }, [isAdmin, userId]);
+
+  useEffect(() => {
+    fetchData({ withLoading: true });
+
+    const channel = supabase
+      .channel(`reportes-live-${isAdmin ? 'admin' : userId || 'user'}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'monitoring_instances' }, () => {
+        fetchData();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'monitoring_templates' }, () => {
+        fetchData();
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [fetchData, isAdmin, userId]);
 
   const templatesById = useMemo(() => {
     const map = new Map();
@@ -1054,6 +1063,10 @@ export default function MonitoreoReportes() {
     () => groupedReports.find((group) => String(group.templateId || '') === String(detailTemplateId || '')) || null,
     [groupedReports, detailTemplateId],
   );
+  const detailRows = useMemo(
+    () => (detailGroup ? detailGroup.sheetGroups.flatMap((sheetGroup) => sheetGroup.reports).filter((row) => row.hasReport) : []),
+    [detailGroup],
+  );
 
   const stateFilters = [
     { value: 'all', label: 'Todos' },
@@ -1140,10 +1153,11 @@ export default function MonitoreoReportes() {
     if (!deleteTarget?.instanceId || isDeleting) return;
 
     setIsDeleting(true);
+    const targetInstanceId = deleteTarget.instanceId;
     const { error } = await supabase
       .from('monitoring_instances')
       .delete()
-      .eq('id', deleteTarget.instanceId);
+      .eq('id', targetInstanceId);
 
     if (error) {
       console.error(error);
@@ -1157,9 +1171,21 @@ export default function MonitoreoReportes() {
       return;
     }
 
-    setInstances((prev) => prev.filter((item) => item.id !== deleteTarget.instanceId));
+    const deletedInstance = instances.find((item) => item.id === targetInstanceId);
+    const deletedTemplateId = deletedInstance?.template_id || '';
+    const nextInstances = instances.filter((item) => item.id !== targetInstanceId);
+    setInstances(nextInstances);
+    if (
+      detailTemplateId &&
+      deletedTemplateId &&
+      String(detailTemplateId) === String(deletedTemplateId) &&
+      !nextInstances.some((item) => String(item.template_id) === String(deletedTemplateId))
+    ) {
+      navigate('/monitoreo/reportes', { replace: true });
+    }
     setIsDeleting(false);
     setDeleteTarget(null);
+    fetchData();
   };
 
   const openReport = (row) => {
@@ -1318,7 +1344,7 @@ export default function MonitoreoReportes() {
                 onClick={() => navigate('/monitoreo/reportes')}
                 className="mb-2 inline-flex items-center gap-2 rounded-full border border-slate-700/60 px-3 py-1 text-xs font-semibold text-slate-300 transition hover:border-slate-500"
               >
-                ← Volver a Reportes
+                ? Volver a Reportes
               </button>
               <p className="text-base font-semibold text-slate-100">{detailGroup.templateTitle}</p>
               <p className="mt-1 text-xs text-slate-400">{detailGroup.rangeLabel}</p>
@@ -1330,7 +1356,12 @@ export default function MonitoreoReportes() {
               </div>
             </div>
 
-            {detailGroup.sheetGroups.flatMap((sheetGroup) => sheetGroup.reports).map((row) => {
+            {!detailRows.length ? (
+              <div className="rounded-2xl border border-slate-800/70 bg-slate-900/45 px-4 py-4">
+                <p className="text-sm text-slate-300">No quedan reportes en este monitoreo.</p>
+                <p className="mt-1 text-xs text-slate-400">La vista se actualiza automáticamente después de eliminar.</p>
+              </div>
+            ) : detailRows.map((row) => {
               const stateMeta = REPORT_STATE_META[row.state] || REPORT_STATE_META.active;
               const canDeleteRow = isAdmin || row.state !== 'expired';
               return (
@@ -1433,3 +1464,5 @@ export default function MonitoreoReportes() {
     </div>
   );
 }
+
+
