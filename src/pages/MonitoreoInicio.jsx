@@ -1,15 +1,13 @@
 ﻿import { useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
+  ArrowDownRight,
+  ArrowUpRight,
   CalendarDays,
   CheckCircle2,
-  ClipboardList,
   Loader2,
-  TrendingDown,
   TrendingUp,
 } from 'lucide-react';
-import Card from '../components/ui/Card.jsx';
-import SectionHeader from '../components/ui/SectionHeader.jsx';
 import { supabase } from '../lib/supabase.js';
 import { getRoleLabel, hasCddDashboardAccessRole } from '../lib/roles.js';
 
@@ -233,6 +231,14 @@ const getDaysInMonth = (year, month) => {
 };
 
 export default function MonitoreoInicio() {
+  const readTheme = () => {
+    if (typeof document === 'undefined') return 'dark';
+    const root = document.documentElement;
+    const dataTheme = String(root.dataset.theme || '').toLowerCase();
+    if (dataTheme === 'light' || dataTheme === 'dark') return dataTheme;
+    return root.classList.contains('dark') ? 'dark' : 'light';
+  };
+
   const auth = useMemo(() => {
     try {
       return JSON.parse(localStorage.getItem(AUTH_KEY) || '{}');
@@ -271,6 +277,7 @@ export default function MonitoreoInicio() {
     area: 'all',
     status: 'all',
   });
+  const [activeTheme, setActiveTheme] = useState(() => readTheme());
 
   useEffect(() => {
     if (!hasDashboardAccess) {
@@ -320,6 +327,16 @@ export default function MonitoreoInicio() {
       supabase.removeChannel(channel);
     };
   }, [hasDashboardAccess]);
+
+  useEffect(() => {
+    if (typeof document === 'undefined') return undefined;
+    const root = document.documentElement;
+    const syncTheme = () => setActiveTheme(readTheme());
+    syncTheme();
+    const observer = new MutationObserver(syncTheme);
+    observer.observe(root, { attributes: true, attributeFilter: ['data-theme', 'class'] });
+    return () => observer.disconnect();
+  }, []);
 
   const yearOptions = useMemo(() => {
     const years = new Set([new Date().getFullYear()]);
@@ -560,378 +577,378 @@ export default function MonitoreoInicio() {
     [templateStats],
   );
 
-  const highPriorityRows = useMemo(() => {
-    const nowDate = new Date();
-    const sevenDays = new Date(nowDate);
-    sevenDays.setDate(sevenDays.getDate() + 7);
-
-    return templateStats
-      .filter((row) => {
-        const endAt = toSafeDate(row.endAt);
-        if (!endAt) return false;
-        return row.progress < 70 && endAt >= nowDate && endAt <= sevenDays;
-      })
-      .sort((a, b) => a.progress - b.progress)
-      .slice(0, 3);
-  }, [templateStats]);
-
-  const pendingTasks = useMemo(() => {
-    const rows = templateStats
-      .filter((row) => row.progress < 100)
-      .sort((a, b) => a.progress - b.progress)
-      .slice(0, 4)
-      .map((row) => ({
-        id: row.id,
-        text: `Validar avances de ${row.title}`,
-        detail: `${row.area} · ${formatPercent(row.progress)}`,
-      }));
-
-    if (!rows.length) {
-      return [{ id: 'none', text: 'No hay tareas pendientes de CdD.', detail: 'Todo en orden.' }];
-    }
-
-    return rows;
-  }, [templateStats]);
-
   const hasData = templateStats.length > 0;
+  const isLightTheme = activeTheme === 'light';
+  const chartRows = indicatorStats;
+  const bestDelta = bestIndicator ? clampPercent(bestIndicator.progress - globalProgress.progress) : 0;
+  const worstDelta = worstIndicator ? -clampPercent(globalProgress.progress - worstIndicator.progress) : 0;
 
   return (
-    <div className="flex flex-col gap-4 md:gap-6">
-      <Card className="flex flex-wrap items-start justify-between gap-3 px-3 py-2.5 md:gap-3 md:px-4 md:py-3">
-        <SectionHeader title="Inicio" size="page" description="Resumen operativo de Compromiso de Desempeño" />
-        <div className="rounded-xl border border-slate-700/70 bg-slate-900/55 px-3 py-2 text-right">
-          <p className="text-[10px] uppercase tracking-[0.14em] text-slate-500">Hoy</p>
-          <p className="text-xs font-semibold text-slate-200">{formatDateHeader(new Date())}</p>
-          <p className="text-[11px] text-slate-400">{userLabel}</p>
-        </div>
-      </Card>
-
+    <div className={`space-y-6 ${isLightTheme ? 'text-slate-900' : 'text-[#e6edf5]'}`}>
       {!hasDashboardAccess ? (
-        <Card className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-4 text-sm text-amber-200">
-          Esta vista está habilitada solo para los roles Director, Jefe de Area y Administrador. Tu rol actual: {roleLabel}.
-        </Card>
+        <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-4 text-sm text-amber-700">
+          Esta vista está habilitada solo para Director, Jefe de Area y Administrador. Tu rol actual: {roleLabel}.
+        </div>
       ) : null}
 
       {error ? (
-        <Card className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-4 text-sm text-rose-200">{error}</Card>
+        <div className="rounded-xl border border-rose-300 bg-rose-50 px-4 py-4 text-sm text-rose-700">{error}</div>
       ) : null}
 
       {hasDashboardAccess ? (
         <>
-          <section className="grid grid-cols-1 gap-4">
-            <Card className="rounded-2xl border border-slate-800/80 bg-slate-900/55 p-4">
-              <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">Filtros CdD</p>
-              <div className="mt-3 grid grid-cols-2 gap-2 sm:gap-3 md:grid-cols-6">
-                <label className="flex flex-col gap-1 text-xs text-slate-300">
-                  <span>Año</span>
-                  <select
-                    value={pendingFilters.year}
-                    onChange={(event) => setPendingFilters((prev) => ({ ...prev, year: event.target.value }))}
-                    className="rounded-xl border border-slate-700/60 bg-slate-950/60 px-3 py-2 text-sm text-slate-100"
-                  >
-                    {yearOptions.map((year) => (
-                      <option key={year} value={year}>{year}</option>
-                    ))}
-                  </select>
-                </label>
-                <label className="flex flex-col gap-1 text-xs text-slate-300">
-                  <span>Mes</span>
-                  <select
-                    value={pendingFilters.month}
-                    onChange={(event) => setPendingFilters((prev) => ({ ...prev, month: event.target.value }))}
-                    className="rounded-xl border border-slate-700/60 bg-slate-950/60 px-3 py-2 text-sm text-slate-100"
-                  >
-                    {MONTH_OPTIONS.map((month) => (
-                      <option key={month.value} value={month.value}>{month.label}</option>
-                    ))}
-                  </select>
-                </label>
-                <label className="flex flex-col gap-1 text-xs text-slate-300">
-                  <span>Día</span>
-                  <select
-                    value={pendingFilters.day}
-                    onChange={(event) => setPendingFilters((prev) => ({ ...prev, day: event.target.value }))}
-                    className="rounded-xl border border-slate-700/60 bg-slate-950/60 px-3 py-2 text-sm text-slate-100"
-                  >
-                    {dayOptions.map((day) => (
-                      <option key={day} value={day}>{day === 'all' ? 'Todos' : day}</option>
-                    ))}
-                  </select>
-                </label>
-                <label className="flex flex-col gap-1 text-xs text-slate-300">
-                  <span>Area</span>
-                  <select
-                    value={pendingFilters.area}
-                    onChange={(event) => setPendingFilters((prev) => ({ ...prev, area: event.target.value }))}
-                    className="rounded-xl border border-slate-700/60 bg-slate-950/60 px-3 py-2 text-sm text-slate-100"
-                  >
-                    {areaOptions.map((area) => (
-                      <option key={area} value={area}>{area === 'all' ? 'Todas' : area}</option>
-                    ))}
-                  </select>
-                </label>
-                <label className="flex flex-col gap-1 text-xs text-slate-300">
-                  <span>Estado</span>
-                  <select
-                    value={pendingFilters.status}
-                    onChange={(event) => setPendingFilters((prev) => ({ ...prev, status: event.target.value }))}
-                    className="rounded-xl border border-slate-700/60 bg-slate-950/60 px-3 py-2 text-sm text-slate-100"
-                  >
-                    {STATUS_FILTER_OPTIONS.map((option) => (
-                      <option key={option.value} value={option.value}>{option.label}</option>
-                    ))}
-                  </select>
-                </label>
-                <button
-                  type="button"
-                  onClick={() => setAppliedFilters({ ...pendingFilters })}
-                  className="col-span-2 inline-flex h-10 items-center justify-center gap-2 self-end rounded-xl border border-cyan-400/50 bg-cyan-500/15 px-4 text-sm font-semibold text-cyan-100 transition hover:border-cyan-300/70 md:col-span-1"
-                >
-                  <CalendarDays size={14} />
-                  Aplicar
-                </button>
-              </div>
-            </Card>
-
-            <div className="grid grid-cols-1 gap-3 min-[480px]:grid-cols-2">
-              <Card className="rounded-2xl border border-emerald-500/35 bg-emerald-500/10 p-4">
-                <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-emerald-100/80">Total Progress (Mejor indicador)</p>
-                {bestIndicator ? (
-                  <>
-                    <p className="mt-3 text-3xl font-extrabold text-emerald-100">{formatPercent(bestIndicator.progress)}</p>
-                    <p className="mt-1 truncate text-xs text-emerald-100/80">{bestIndicator.indicator}</p>
-                    <p className="mt-2 text-[11px] text-emerald-100/80">
-                      Real/Meta: {Math.round(bestIndicator.completed)}/{Math.round(bestIndicator.goal)}
-                    </p>
-                  </>
-                ) : (
-                  <p className="mt-4 text-sm text-emerald-100/80">Sin datos</p>
-                )}
-              </Card>
-
-              <Card className="rounded-2xl border border-rose-500/35 bg-rose-500/10 p-4">
-                <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-rose-100/80">Total Progress (Peor indicador)</p>
-                {worstIndicator ? (
-                  <>
-                    <p className="mt-3 text-3xl font-extrabold text-rose-100">{formatPercent(worstIndicator.progress)}</p>
-                    <p className="mt-1 truncate text-xs text-rose-100/80">{worstIndicator.indicator}</p>
-                    <p className="mt-2 text-[11px] text-rose-100/80">
-                      Real/Meta: {Math.round(worstIndicator.completed)}/{Math.round(worstIndicator.goal)}
-                    </p>
-                  </>
-                ) : (
-                  <p className="mt-4 text-sm text-rose-100/80">Sin datos</p>
-                )}
-              </Card>
+          <section className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+            <div>
+              <h2 className={`text-3xl font-extrabold tracking-tight ${isLightTheme ? 'text-slate-900' : 'text-[#eef4fb]'}`}>Dashboard de Monitoreo</h2>
+              <p className={`mt-1 text-sm ${isLightTheme ? 'text-slate-500' : 'text-[#8ea2b8]'}`}>Visualización en tiempo real del desempeño académico y administrativo.</p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                className={`inline-flex items-center gap-2 rounded-lg border px-4 py-2 text-sm font-semibold transition ${
+                  isLightTheme
+                    ? 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+                    : 'border-[#2c4a62] bg-[#111922] text-[#d7e5f3] hover:bg-[#18232f]'
+                }`}
+              >
+                <CalendarDays size={16} />
+                Exportar Datos
+              </button>
+              <button
+                type="button"
+                onClick={() => setAppliedFilters({ ...pendingFilters })}
+                className="inline-flex items-center gap-2 rounded-lg bg-[#0a8fb3] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#0b7f9e]"
+              >
+                Aplicar Filtros
+              </button>
             </div>
           </section>
 
-          <section className="grid grid-cols-1 gap-4">
-            <Card className="rounded-2xl border border-slate-800/80 bg-slate-900/55 p-4 md:p-5">
-              <div className="mb-4 flex items-center justify-between gap-2">
-                <div>
-                  <h3 className="text-sm font-semibold uppercase tracking-[0.08em] text-slate-100">Meta vs Avance por Indicador</h3>
-                  <p className="text-xs text-slate-400">Comparativo por indicador: meta vs avance real de CdD</p>
+          <section className={`rounded-xl border p-4 shadow-[0_12px_24px_-4px_rgba(15,23,42,0.04)] ${
+            isLightTheme ? 'border-slate-200 bg-white' : 'border-[#25435d] bg-[#151c23]'
+          }`}>
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-4">
+              <div className="lg:col-span-3 grid grid-cols-2 gap-3 md:grid-cols-4">
+                <label className={`flex flex-col gap-1 text-xs ${isLightTheme ? 'text-slate-600' : 'text-[#95a8bc]'}`}>
+                  <span className={`text-[10px] font-semibold uppercase tracking-[0.12em] ${isLightTheme ? 'text-slate-500' : 'text-[#8da1b6]'}`}>Año</span>
+                  <select
+                    value={pendingFilters.year}
+                    onChange={(event) => setPendingFilters((prev) => ({ ...prev, year: event.target.value }))}
+                    className={`rounded-lg border px-3 py-2 text-sm ${
+                      isLightTheme
+                        ? 'border-slate-200 bg-slate-50 text-slate-700'
+                        : 'border-[#2b4962] bg-[#121922] text-[#e5edf6]'
+                    }`}
+                  >
+                    {yearOptions.map((year) => (<option key={year} value={year}>{year}</option>))}
+                  </select>
+                </label>
+                <label className={`flex flex-col gap-1 text-xs ${isLightTheme ? 'text-slate-600' : 'text-[#95a8bc]'}`}>
+                  <span className={`text-[10px] font-semibold uppercase tracking-[0.12em] ${isLightTheme ? 'text-slate-500' : 'text-[#8da1b6]'}`}>Mes</span>
+                  <select
+                    value={pendingFilters.month}
+                    onChange={(event) => setPendingFilters((prev) => ({ ...prev, month: event.target.value }))}
+                    className={`rounded-lg border px-3 py-2 text-sm ${
+                      isLightTheme
+                        ? 'border-slate-200 bg-slate-50 text-slate-700'
+                        : 'border-[#2b4962] bg-[#121922] text-[#e5edf6]'
+                    }`}
+                  >
+                    {MONTH_OPTIONS.map((month) => (<option key={month.value} value={month.value}>{month.label}</option>))}
+                  </select>
+                </label>
+                <label className={`flex flex-col gap-1 text-xs ${isLightTheme ? 'text-slate-600' : 'text-[#95a8bc]'}`}>
+                  <span className={`text-[10px] font-semibold uppercase tracking-[0.12em] ${isLightTheme ? 'text-slate-500' : 'text-[#8da1b6]'}`}>Día</span>
+                  <select
+                    value={pendingFilters.day}
+                    onChange={(event) => setPendingFilters((prev) => ({ ...prev, day: event.target.value }))}
+                    className={`rounded-lg border px-3 py-2 text-sm ${
+                      isLightTheme
+                        ? 'border-slate-200 bg-slate-50 text-slate-700'
+                        : 'border-[#2b4962] bg-[#121922] text-[#e5edf6]'
+                    }`}
+                  >
+                    {dayOptions.map((day) => (<option key={day} value={day}>{day === 'all' ? 'Todos' : day}</option>))}
+                  </select>
+                </label>
+                <label className={`flex flex-col gap-1 text-xs ${isLightTheme ? 'text-slate-600' : 'text-[#95a8bc]'}`}>
+                  <span className={`text-[10px] font-semibold uppercase tracking-[0.12em] ${isLightTheme ? 'text-slate-500' : 'text-[#8da1b6]'}`}>Área Académica</span>
+                  <select
+                    value={pendingFilters.area}
+                    onChange={(event) => setPendingFilters((prev) => ({ ...prev, area: event.target.value }))}
+                    className={`rounded-lg border px-3 py-2 text-sm ${
+                      isLightTheme
+                        ? 'border-slate-200 bg-slate-50 text-slate-700'
+                        : 'border-[#2b4962] bg-[#121922] text-[#e5edf6]'
+                    }`}
+                  >
+                    {areaOptions.map((area) => (<option key={area} value={area}>{area === 'all' ? 'Todas las áreas' : area}</option>))}
+                  </select>
+                </label>
+              </div>
+              <div className={`border-t pt-3 lg:border-l lg:border-t-0 lg:pl-4 lg:pt-0 ${isLightTheme ? 'border-slate-100' : 'border-[#25435d]'}`}>
+                <p className={`text-[10px] font-semibold uppercase tracking-[0.12em] ${isLightTheme ? 'text-slate-500' : 'text-[#8da1b6]'}`}>Estado del Monitoreo</p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {STATUS_FILTER_OPTIONS.map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() => setPendingFilters((prev) => ({ ...prev, status: option.value }))}
+                      className={`rounded-full px-3 py-1 text-xs font-semibold transition ${
+                        pendingFilters.status === option.value
+                          ? 'bg-cyan-100 text-cyan-700'
+                          : isLightTheme
+                            ? 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                            : 'bg-[#1d2936] text-[#bed0e0] hover:bg-[#253445]'
+                      }`}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
                 </div>
-                <div className="flex flex-wrap items-center justify-end gap-2 text-[11px] text-slate-300">
-                  <span className="inline-flex items-center gap-1.5">
-                    <span className="inline-block h-2.5 w-2.5 rounded-full bg-slate-400/70" />
-                    Meta
+              </div>
+            </div>
+          </section>
+
+          <section className="grid grid-cols-12 gap-4">
+            <div className="col-span-12 space-y-4 lg:col-span-4">
+              <div className={`relative overflow-hidden rounded-xl border-l-4 border-emerald-500 p-4 shadow-[0_12px_24px_-4px_rgba(15,23,42,0.04)] ${
+                isLightTheme ? 'bg-white' : 'bg-[#171d23]'
+              }`}>
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className={`text-[10px] font-semibold uppercase tracking-[0.14em] ${isLightTheme ? 'text-slate-500' : 'text-[#92a6ba]'}`}>Mejor indicador</p>
+                    <h3
+                      className={`mt-1 text-[0.98rem] font-bold leading-6 ${isLightTheme ? 'text-slate-900' : 'text-[#f0f6fc]'}`}
+                      style={{
+                        display: '-webkit-box',
+                        WebkitLineClamp: 2,
+                        WebkitBoxOrient: 'vertical',
+                        overflow: 'hidden',
+                      }}
+                    >
+                      {bestIndicator?.indicator || 'Sin datos'}
+                    </h3>
+                  </div>
+                  <div className="flex h-10 w-10 items-center justify-center rounded-full bg-emerald-500/12 text-emerald-500">
+                    <TrendingUp size={18} />
+                  </div>
+                </div>
+                <div className="mt-2 flex items-end gap-2">
+                  <p className={`text-[2.2rem] leading-none font-black ${isLightTheme ? 'text-slate-900' : 'text-[#f0f6fc]'}`}>
+                    {bestIndicator ? formatPercentPrecise(bestIndicator.progress) : '0%'}
+                  </p>
+                  <span className="inline-flex items-center gap-0.5 text-sm font-bold text-emerald-500">
+                    <ArrowUpRight size={13} />
+                    {Math.round(bestDelta)}%
                   </span>
-                  <span className="inline-flex items-center gap-1.5">
-                    <span className="inline-block h-2.5 w-2.5 rounded-full bg-cyan-300" />
-                    Avance
+                </div>
+                <p className={`mt-1 text-xs ${isLightTheme ? 'text-slate-500' : 'text-[#8ea2b7]'}`}>Area: {bestIndicator?.area || 'Sin área'}</p>
+                <CheckCircle2
+                  size={108}
+                  strokeWidth={1.5}
+                  aria-hidden="true"
+                  className={`pointer-events-none absolute -bottom-9 -right-9 ${
+                    isLightTheme ? 'text-slate-400' : 'text-slate-100'
+                  }`}
+                  style={{ opacity: isLightTheme ? 0.05 : 0.028 }}
+                />
+              </div>
+
+              <div className={`relative overflow-hidden rounded-xl border-l-4 border-rose-500 p-4 shadow-[0_12px_24px_-4px_rgba(15,23,42,0.04)] ${
+                isLightTheme ? 'bg-white' : 'bg-[#171d23]'
+              }`}>
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className={`text-[10px] font-semibold uppercase tracking-[0.14em] ${isLightTheme ? 'text-slate-500' : 'text-[#92a6ba]'}`}>Peor indicador</p>
+                    <h3
+                      className={`mt-1 text-[0.98rem] font-bold leading-6 ${isLightTheme ? 'text-slate-900' : 'text-[#f0f6fc]'}`}
+                      style={{
+                        display: '-webkit-box',
+                        WebkitLineClamp: 2,
+                        WebkitBoxOrient: 'vertical',
+                        overflow: 'hidden',
+                      }}
+                    >
+                      {worstIndicator?.indicator || 'Sin datos'}
+                    </h3>
+                  </div>
+                  <div className="flex h-10 w-10 items-center justify-center rounded-full bg-rose-500/12 text-rose-500">
+                    <AlertTriangle size={18} />
+                  </div>
+                </div>
+                <div className="mt-2 flex items-end gap-2">
+                  <p className={`text-[2.2rem] leading-none font-black ${isLightTheme ? 'text-slate-900' : 'text-[#f0f6fc]'}`}>
+                    {worstIndicator ? formatPercentPrecise(worstIndicator.progress) : '0%'}
+                  </p>
+                  <span className="inline-flex items-center gap-0.5 text-sm font-bold text-rose-500">
+                    <ArrowDownRight size={13} />
+                    {Math.round(worstDelta)}%
                   </span>
-                  <span className="rounded-full border border-slate-700/60 px-2.5 py-1 text-[11px] text-slate-300">
-                    Global: {formatPercent(globalProgress.progress)}
-                  </span>
+                </div>
+                <p className={`mt-1 text-xs ${isLightTheme ? 'text-slate-500' : 'text-[#8ea2b7]'}`}>Area: {worstIndicator?.area || 'Sin área'}</p>
+                <AlertTriangle
+                  size={108}
+                  strokeWidth={1.5}
+                  aria-hidden="true"
+                  className={`pointer-events-none absolute -bottom-9 -right-9 ${
+                    isLightTheme ? 'text-slate-400' : 'text-slate-100'
+                  }`}
+                  style={{ opacity: isLightTheme ? 0.05 : 0.028 }}
+                />
+              </div>
+
+              <div className={`rounded-xl p-5 shadow-[0_12px_24px_-4px_rgba(15,23,42,0.04)] ${isLightTheme ? 'bg-white' : 'bg-[#171d23]'}`}>
+                <div className="mb-4 flex items-center justify-between">
+                  <h3 className={`text-lg font-semibold ${isLightTheme ? 'text-slate-900' : 'text-[#f0f6fc]'}`}>Top Eficiencia Jefes</h3>
+                  <span className={`text-xs font-bold ${isLightTheme ? 'text-cyan-700' : 'text-[#34d3ff]'}`}>Este periodo</span>
+                </div>
+                {isLoading ? (
+                  <div className="flex items-center gap-2 text-sm text-slate-600"><Loader2 size={14} className="animate-spin" /> Cargando...</div>
+                ) : !topChiefs.length ? (
+                  <p className="text-sm text-slate-500">No hay jefes con datos suficientes.</p>
+                ) : (
+                  <div className="space-y-3">
+                    {topChiefs.map((chief) => (
+                      <div key={chief.name} className={`flex items-center gap-3 rounded-lg p-2 ${isLightTheme ? 'hover:bg-slate-50' : 'hover:bg-[#202a35]'}`}>
+                        <div className={`flex h-10 w-10 items-center justify-center rounded-full text-xs font-bold ${isLightTheme ? 'bg-cyan-100 text-cyan-700' : 'bg-[#083746] text-[#45ddff]'}`}>
+                          {String(chief.name || 'J').split(' ').map((part) => part[0]).join('').slice(0, 2).toUpperCase()}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className={`truncate text-sm font-semibold ${isLightTheme ? 'text-slate-900' : 'text-[#e7f0f8]'}`}>{chief.name}</p>
+                          <p className={`text-xs ${isLightTheme ? 'text-slate-500' : 'text-[#90a3b8]'}`}>{pluralize(chief.monitorings, 'monitoreo', 'monitoreos')}</p>
+                        </div>
+                        <div className="w-16 text-right">
+                          <p className={`text-sm font-black ${isLightTheme ? 'text-cyan-700' : 'text-[#34d3ff]'}`}>{formatPercent(chief.efficiency)}</p>
+                          <div className={`mt-1 h-1.5 overflow-hidden rounded-full ${isLightTheme ? 'bg-slate-100' : 'bg-[#2a3541]'}`}>
+                            <div className="h-full rounded-full bg-cyan-600" style={{ width: `${clampPercent(chief.efficiency)}%` }} />
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className={`col-span-12 rounded-xl p-5 shadow-[0_12px_24px_-4px_rgba(15,23,42,0.04)] lg:col-span-8 ${isLightTheme ? 'bg-white' : 'bg-[#171d23]'}`}>
+              <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h3 className={`text-2xl font-semibold ${isLightTheme ? 'text-slate-900' : 'text-[#f0f6fc]'}`}>Meta vs Real por Desempeño</h3>
+                  <p className={`text-xs ${isLightTheme ? 'text-slate-500' : 'text-[#8ea2b8]'}`}>Comparativa trimestral de objetivos alcanzados.</p>
+                </div>
+                <div className={`flex items-center gap-4 text-xs ${isLightTheme ? 'text-slate-600' : 'text-[#a9bbcc]'}`}>
+                  <span className="inline-flex items-center gap-2"><span className={`h-3 w-3 rounded-sm ${isLightTheme ? 'bg-slate-200' : 'bg-[#667788]'}`} /> Meta</span>
+                  <span className="inline-flex items-center gap-2"><span className="h-3 w-3 rounded-sm bg-cyan-600" /> Real</span>
                 </div>
               </div>
 
               {isLoading ? (
-                <div className="flex items-center gap-2 text-sm text-slate-300"><Loader2 size={14} className="animate-spin" /> Cargando metricas...</div>
+                <div className="flex items-center gap-2 text-sm text-slate-600"><Loader2 size={14} className="animate-spin" /> Cargando métricas...</div>
               ) : !hasData ? (
-                <p className="text-sm text-slate-400">No hay monitoreos con Compromiso de Desempeño para el filtro aplicado.</p>
+                <p className="text-sm text-slate-500">No hay monitoreos con Compromiso de Desempeño para el filtro aplicado.</p>
               ) : (
-                <div className="overflow-hidden rounded-xl border border-slate-800/70 bg-slate-950/40">
-                  <div className="scrollbar-thin overflow-x-auto pb-1">
-                    <div className="flex w-max min-w-full snap-x snap-mandatory items-end gap-5 px-4 pb-2 pt-6 sm:gap-6 sm:px-5 sm:pb-3 sm:pt-7">
-                      {indicatorStats.map((row) => {
-                        const maxHeight = 156;
-                        const goalHeight = Math.max(4, Math.round((clampPercent(row.goalBarPercent) / 100) * maxHeight));
-                        const realHeight = Math.max(4, Math.round((clampPercent(row.realBarPercent) / 100) * maxHeight));
-                        return (
-                          <div key={row.id} className="flex w-[136px] shrink-0 snap-start flex-col items-center gap-2 sm:w-[156px]">
-                            <div className="flex h-[176px] items-end gap-2 pt-3 sm:h-[204px] sm:pt-4">
-                              <div className="flex w-9 flex-col items-center gap-1 sm:w-10">
-                                <span className="text-[10px] font-semibold text-slate-300">{Math.round(row.goal)}</span>
-                                <div
-                                  className="w-full rounded-t-md bg-slate-500/40"
-                                  style={{ height: `${goalHeight}px`, maxHeight: 'clamp(120px,22vw,156px)' }}
-                                />
-                                <span className="text-[10px] uppercase tracking-[0.12em] text-slate-400">Meta</span>
-                              </div>
-                              <div className="flex w-9 flex-col items-center gap-1 sm:w-10">
-                                <span className="text-[10px] font-semibold text-cyan-200">{formatPercentPrecise(row.realBarPercent)}</span>
-                                <div
-                                  className="w-full rounded-t-md bg-cyan-400/80"
-                                  style={{ height: `${realHeight}px`, maxHeight: 'clamp(120px,22vw,156px)' }}
-                                />
-                                <span className="text-[10px] uppercase tracking-[0.12em] text-cyan-200">Real</span>
-                              </div>
+                <div className="overflow-x-auto pb-2">
+                  <div
+                    className="flex items-end gap-5 px-1"
+                    style={{ minWidth: `${Math.max(chartRows.length * 120, 620)}px` }}
+                  >
+                    {chartRows.map((row) => {
+                      const maxHeight = 230;
+                      const goalHeight = Math.max(4, Math.round((clampPercent(row.goalBarPercent) / 100) * maxHeight));
+                      const realHeight = Math.max(8, Math.round((clampPercent(row.realBarPercent) / 100) * maxHeight));
+                      return (
+                        <div key={row.id} className="flex w-[100px] shrink-0 flex-col items-center gap-3">
+                          <div className="flex h-[250px] items-end gap-2">
+                            <div className="flex w-10 flex-col items-center gap-1">
+                              <div className={`w-full rounded-t-lg ${isLightTheme ? 'bg-slate-200' : 'bg-[#667788]'}`} style={{ height: `${goalHeight}px` }} />
                             </div>
-                            <div className="h-8 w-full px-1">
-                              <p
-                                title={row.indicator}
-                                className="line-clamp-2 text-center text-[11px] font-semibold leading-tight text-slate-200"
-                              >
-                                {row.indicator}
-                              </p>
-                            </div>
-                            <div className="h-4 w-full px-1">
-                              <p
-                                title={row.area}
-                                className="truncate text-center text-[10px] uppercase tracking-[0.08em] text-slate-400"
-                              >
-                                {row.area}
-                              </p>
+                            <div className="flex w-10 flex-col items-center gap-1">
+                              <div className="w-full rounded-t-lg bg-cyan-600" style={{ height: `${realHeight}px` }} />
                             </div>
                           </div>
-                        );
-                      })}
-                    </div>
+                          <p className={`line-clamp-2 h-8 text-center text-[11px] font-bold ${isLightTheme ? 'text-slate-500' : 'text-[#9eb0c3]'}`}>{row.indicator}</p>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               )}
-            </Card>
+
+              <div className={`mt-5 grid grid-cols-2 gap-4 border-t pt-4 md:grid-cols-4 ${isLightTheme ? 'border-slate-100' : 'border-[#2a3f53]'}`}>
+                <div>
+                  <p className={`text-[10px] font-semibold uppercase tracking-[0.12em] ${isLightTheme ? 'text-slate-500' : 'text-[#8ea2b8]'}`}>Promedio Real</p>
+                  <p className={`text-xl font-bold ${isLightTheme ? 'text-slate-900' : 'text-[#eef4fb]'}`}>{formatPercentPrecise(globalProgress.progress)}</p>
+                </div>
+                <div>
+                  <p className={`text-[10px] font-semibold uppercase tracking-[0.12em] ${isLightTheme ? 'text-slate-500' : 'text-[#8ea2b8]'}`}>Diferencia Meta</p>
+                  <p className="text-xl font-bold text-rose-600">{formatPercentPrecise(globalProgress.progress - 100)}</p>
+                </div>
+                <div>
+                  <p className={`text-[10px] font-semibold uppercase tracking-[0.12em] ${isLightTheme ? 'text-slate-500' : 'text-[#8ea2b8]'}`}>Eficiencia Global</p>
+                  <div className={`mt-2 h-2 overflow-hidden rounded-full ${isLightTheme ? 'bg-slate-100' : 'bg-[#2a3541]'}`}>
+                    <div className="h-full rounded-full bg-cyan-600" style={{ width: `${clampPercent(globalProgress.progress)}%` }} />
+                  </div>
+                </div>
+                <div className="flex items-end justify-end">
+                  <button type="button" className={`text-sm font-bold hover:underline ${isLightTheme ? 'text-cyan-700' : 'text-[#34d3ff]'}`}>Ver informe</button>
+                </div>
+              </div>
+            </div>
           </section>
 
-          <section className="grid grid-cols-1 gap-4 xl:grid-cols-12">
-            <Card className="xl:col-span-4 rounded-2xl border border-slate-800/80 bg-slate-900/55 p-4 md:p-5">
-              <div className="mb-4 flex items-center justify-between gap-2">
-                <h3 className="text-sm font-semibold uppercase tracking-[0.08em] text-slate-100">Top Eficiencia Jefes</h3>
-                <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-cyan-200">Este periodo</span>
+          <section className={`overflow-hidden rounded-xl shadow-[0_12px_24px_-4px_rgba(15,23,42,0.04)] ${isLightTheme ? 'bg-white' : 'bg-[#171d23]'}`}>
+            <div className={`flex flex-wrap items-center justify-between gap-2 border-b px-5 py-4 ${isLightTheme ? 'border-slate-100' : 'border-[#2a3f53]'}`}>
+              <div>
+                <h3 className={`text-lg font-semibold ${isLightTheme ? 'text-slate-900' : 'text-[#eef4fb]'}`}>Actividad de Monitoreo Detallada</h3>
+                <p className={`text-xs ${isLightTheme ? 'text-slate-500' : 'text-[#8ea2b8]'}`}>Listado de los últimos monitoreos en ejecución y su estado actual.</p>
               </div>
+              <span className={`text-xs ${isLightTheme ? 'text-slate-500' : 'text-[#8ea2b8]'}`}>{pluralize(detailedRows.length, 'registro', 'registros')}</span>
+            </div>
 
-              {isLoading ? (
-                <div className="flex items-center gap-2 text-sm text-slate-300"><Loader2 size={14} className="animate-spin" /> Cargando...</div>
-              ) : !topChiefs.length ? (
-                <p className="text-sm text-slate-400">No hay jefes con datos suficientes.</p>
-              ) : (
-                <div className="space-y-3">
-                  {topChiefs.map((chief) => (
-                    <div key={chief.name} className="space-y-1.5">
-                      <div className="flex items-center justify-between gap-2 text-xs">
-                        <p className="truncate font-semibold text-slate-100">{chief.name}</p>
-                        <span className="text-cyan-200">{formatPercent(chief.efficiency)}</span>
-                      </div>
-                      <div className="h-2 overflow-hidden rounded-full bg-slate-800/70">
-                        <div className="h-full rounded-full bg-cyan-400/80" style={{ width: `${clampPercent(chief.efficiency)}%` }} />
-                      </div>
-                      <p className="text-[11px] text-slate-400">{Math.round(chief.completed)}/{Math.round(chief.goal)} · {pluralize(chief.monitorings, 'monitoreo', 'monitoreos')}</p>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </Card>
-
-            <Card className="xl:col-span-8 rounded-2xl border border-slate-800/80 bg-slate-900/55 p-0">
-              <div className="flex items-center justify-between border-b border-slate-800/80 px-4 py-4 md:px-5">
-                <h3 className="text-sm font-semibold text-slate-100">Actividad de Monitoreo Detallada</h3>
-                <span className="text-[11px] text-slate-400">{pluralize(detailedRows.length, 'registro', 'registros')}</span>
-              </div>
-              {isLoading ? (
-                <div className="px-4 py-4 text-sm text-slate-300"><Loader2 size={14} className="mr-2 inline animate-spin" />Cargando actividad...</div>
-              ) : !detailedRows.length ? (
-                <p className="px-4 py-4 text-sm text-slate-400">Sin actividad para el filtro aplicado.</p>
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="min-w-full text-left text-xs">
-                    <thead>
-                      <tr className="border-b border-slate-800/80 text-[10px] uppercase tracking-[0.12em] text-slate-500">
-                        <th className="px-4 py-3">Nombre del monitoreo</th>
-                        <th className="px-4 py-3">Monitor responsable</th>
-                        <th className="px-4 py-3">Area</th>
-                        <th className="px-4 py-3">Ultima actualización</th>
-                        <th className="px-4 py-3">Progreso/Meta</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {detailedRows.map((row) => (
-                        <tr key={row.id} className="border-b border-slate-800/60 hover:bg-slate-900/60">
-                          <td className="px-4 py-3">
-                            <p className="font-semibold text-slate-100">{row.title}</p>
-                            <p className="text-[11px] text-slate-400">Ref: #{String(row.id).slice(0, 8).toUpperCase()}</p>
-                          </td>
-                          <td className="px-4 py-3 text-slate-200">{row.responsibleName}</td>
-                          <td className="px-4 py-3 text-slate-200">{row.area}</td>
-                          <td className="px-4 py-3 text-slate-300">{formatDateTime(row.lastUpdate)}</td>
-                          <td className="px-4 py-3">
-                            <div className="w-36">
-                              <div className="mb-1 flex justify-between text-[11px] text-slate-300">
-                                <span>{formatPercent(row.progress)}</span>
-                                <span>{row.completed}/{row.goal}</span>
-                              </div>
-                              <div className="h-1.5 overflow-hidden rounded-full bg-slate-800/80">
-                                <div className={`h-full rounded-full ${row.progress >= 80 ? 'bg-emerald-400/80' : row.progress >= 50 ? 'bg-cyan-400/80' : 'bg-amber-400/80'}`} style={{ width: `${clampPercent(row.progress)}%` }} />
-                              </div>
+            {isLoading ? (
+              <div className="px-5 py-5 text-sm text-slate-600"><Loader2 size={14} className="mr-2 inline animate-spin" />Cargando actividad...</div>
+            ) : !detailedRows.length ? (
+              <p className="px-5 py-5 text-sm text-slate-500">Sin actividad para el filtro aplicado.</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="min-w-full text-left text-xs">
+                  <thead>
+                    <tr className={`border-b text-[10px] uppercase tracking-[0.12em] ${isLightTheme ? 'border-slate-100 bg-slate-50 text-slate-500' : 'border-[#2a3f53] bg-[#1a2129] text-[#8ea2b8]'}`}>
+                      <th className="px-5 py-3">Monitoreo</th>
+                      <th className="px-5 py-3">Responsable</th>
+                      <th className="px-5 py-3">Área</th>
+                      <th className="px-5 py-3">Vencimiento</th>
+                      <th className="px-5 py-3">Progreso</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {detailedRows.map((row) => (
+                      <tr key={row.id} className={`${isLightTheme ? 'border-b border-slate-100 hover:bg-slate-50' : 'border-b border-[#23384e] hover:bg-[#1d2731]'}`}>
+                        <td className="px-5 py-3">
+                          <p className={`text-sm font-semibold ${isLightTheme ? 'text-slate-900' : 'text-[#e8f1f9]'}`}>{row.title}</p>
+                          <p className={`text-[11px] ${isLightTheme ? 'text-slate-500' : 'text-[#8ea2b8]'}`}>Ref: #{String(row.id).slice(0, 8).toUpperCase()}</p>
+                        </td>
+                        <td className={`px-5 py-3 ${isLightTheme ? 'text-slate-700' : 'text-[#d3e0ed]'}`}>{row.responsibleName}</td>
+                        <td className={`px-5 py-3 ${isLightTheme ? 'text-slate-700' : 'text-[#d3e0ed]'}`}>{row.area}</td>
+                        <td className={`px-5 py-3 ${isLightTheme ? 'text-slate-700' : 'text-[#b3c4d5]'}`}>{formatDateTime(row.endAt || row.lastUpdate)}</td>
+                        <td className="px-5 py-3">
+                          <div className="w-36">
+                            <div className={`mb-1 flex justify-between text-[11px] ${isLightTheme ? 'text-slate-600' : 'text-[#b3c4d5]'}`}>
+                              <span>{formatPercent(row.progress)}</span>
+                              <span>{row.completed}/{row.goal}</span>
                             </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </Card>
-          </section>
-
-          <section className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-            <Card className="rounded-2xl border border-slate-800/80 bg-slate-900/55 p-4 md:p-5">
-              <h3 className="mb-4 flex items-center gap-2 text-sm font-semibold text-slate-100">
-                <AlertTriangle size={14} className="text-amber-300" /> Alta Prioridad
-              </h3>
-              {!highPriorityRows.length ? (
-                <p className="text-sm text-slate-400">No hay alertas críticas en este momento.</p>
-              ) : (
-                <div className="space-y-3">
-                  {highPriorityRows.map((row) => (
-                    <div key={`priority-${row.id}`} className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-3">
-                      <div className="flex items-center justify-between gap-2">
-                        <p className="text-sm font-semibold text-rose-100">{row.title}</p>
-                        <span className="rounded-full border border-rose-400/40 px-2 py-0.5 text-[10px] text-rose-100">{formatPercent(row.progress)}</span>
-                      </div>
-                      <p className="mt-1 text-xs text-rose-100/80">{row.area} · Vence: {formatDateTime(row.endAt)}</p>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </Card>
-
-            <Card className="rounded-2xl border border-slate-800/80 bg-slate-900/55 p-4 md:p-5">
-              <h3 className="mb-4 flex items-center gap-2 text-sm font-semibold text-slate-100">
-                <ClipboardList size={14} className="text-cyan-300" /> Tareas Pendientes
-              </h3>
-              <div className="space-y-2">
-                {pendingTasks.map((task) => (
-                  <div key={task.id} className="flex items-start gap-2 rounded-xl border border-slate-800/70 bg-slate-950/40 px-3 py-2.5">
-                    {task.id === 'none' ? (
-                      <CheckCircle2 size={14} className="mt-0.5 text-emerald-300" />
-                    ) : (
-                      <TrendingDown size={14} className="mt-0.5 text-amber-300" />
-                    )}
-                    <div>
-                      <p className="text-sm text-slate-100">{task.text}</p>
-                      <p className="text-xs text-slate-400">{task.detail}</p>
-                    </div>
-                  </div>
-                ))}
+                            <div className={`h-1.5 overflow-hidden rounded-full ${isLightTheme ? 'bg-slate-100' : 'bg-[#2a3541]'}`}>
+                              <div className={`h-full rounded-full ${row.progress >= 80 ? 'bg-emerald-500' : row.progress >= 50 ? 'bg-cyan-600' : 'bg-amber-500'}`} style={{ width: `${clampPercent(row.progress)}%` }} />
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
-              <div className="mt-4 flex items-center justify-end gap-2 text-xs text-slate-400">
-                <TrendingUp size={13} className="text-cyan-300" />
-                Seguimiento continuo en tiempo real
-              </div>
-            </Card>
+            )}
           </section>
         </>
       ) : null}

@@ -1,8 +1,18 @@
-import { useEffect, useLayoutEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { CircleCheck, Loader2, Lock } from 'lucide-react';
-import Input from '../components/ui/Input.jsx';
-import Select from '../components/ui/Select.jsx';
+import {
+  BadgeCheck,
+  CheckCircle2,
+  Eye,
+  EyeOff,
+  LayoutDashboard,
+  LogIn,
+  Loader2,
+  Lock,
+  Moon,
+  Sun,
+  Users,
+} from 'lucide-react';
 import { isSupabaseConfigured, supabase } from '../lib/supabase.js';
 
 const AUTH_KEY = 'monitoreoAuth';
@@ -61,21 +71,17 @@ export default function Login() {
     password: '',
     code: '',
   });
+  const [loginTheme, setLoginTheme] = useState(() => {
+    if (typeof window === 'undefined') return 'light';
+    const storedPreference = localStorage.getItem('monitoreoTheme') || 'light';
+    return resolveEffectiveTheme(storedPreference);
+  });
+  const isDarkTheme = loginTheme === 'dark';
 
-  useLayoutEffect(() => {
-    const root = document.documentElement;
-    const previousTheme = root.dataset.theme;
-    root.dataset.theme = 'dark';
-
-    return () => {
-      try {
-        const storedThemePreference = localStorage.getItem('monitoreoTheme') || root.dataset.themePreference || 'dark';
-        root.dataset.theme = resolveEffectiveTheme(storedThemePreference);
-      } catch {
-        root.dataset.theme = previousTheme || 'dark';
-      }
-    };
-  }, []);
+  useEffect(() => {
+    document.documentElement.dataset.theme = loginTheme;
+    document.documentElement.classList.toggle('dark', loginTheme === 'dark');
+  }, [loginTheme]);
 
   const isAdmin = role === 'admin';
 
@@ -475,170 +481,280 @@ export default function Login() {
     }
   };
 
+  const toggleTheme = () => {
+    setLoginTheme((current) => {
+      const next = current === 'dark' ? 'light' : 'dark';
+      localStorage.setItem('monitoreoTheme', next);
+      return next;
+    });
+  };
+
   return (
-    <div className="login-glow box-border min-h-dvh overflow-y-auto overscroll-contain px-4 py-2 md:py-3">
-      <div className="login-viewport mx-auto flex min-h-[calc(100dvh-1rem)] max-w-[920px] justify-center md:min-h-[calc(100dvh-1.5rem)]">
-        <div className="login-shell login-shell-enter w-full">
-          <div className="login-shell-grid grid min-h-[430px] grid-cols-1 md:grid-cols-2 lg:grid-cols-[0.95fr_1.05fr]">
-            <section className="relative flex min-h-[210px] flex-col justify-center overflow-hidden bg-gradient-to-br from-slate-900/90 via-slate-950/80 to-slate-950/95 px-6 py-5 md:min-h-0 md:px-6 md:py-5">
-              <div className="pointer-events-none absolute inset-0 z-0 bg-[radial-gradient(circle_at_45%_16%,rgba(56,189,248,0.22),transparent_54%),radial-gradient(circle_at_78%_82%,rgba(34,197,94,0.16),transparent_48%)]" />
+    <div
+      className={`min-h-dvh px-4 py-6 text-slate-800 transition-colors duration-300 md:py-8 ${
+        isDarkTheme ? 'bg-slate-900 text-slate-100' : 'bg-[#f1f5f9] text-slate-800'
+      }`}
+    >
+      <button
+        type="button"
+        onClick={toggleTheme}
+        className={`fixed right-6 top-6 z-20 inline-flex h-11 w-11 items-center justify-center rounded-full border shadow-lg transition hover:scale-105 ${
+          isDarkTheme
+            ? 'border-slate-600 bg-slate-800 text-amber-300'
+            : 'border-slate-200 bg-white text-slate-600'
+        }`}
+        aria-label="Cambiar tema"
+      >
+        {loginTheme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
+      </button>
 
-              <div className="relative z-20 max-w-[27rem]">
-                <p className="text-[10px] uppercase tracking-[0.24em] text-slate-400">UGEL 06 - Lima</p>
-                <p className="mt-1 text-xs text-slate-500">Sistema AGEBRE Monitoreo</p>
-                <h1 className="mt-2 text-[24px] font-semibold leading-tight text-slate-100 md:text-[28px]">
-                  Sistema de Monitoreo Educativo
-                </h1>
-                <p className="mt-1.5 max-w-md text-sm leading-6 text-slate-300">
-                  Gestion, seguimiento y control de monitoreos institucionales de forma centralizada y segura.
-                </p>
-              </div>
+      <div className="mx-auto flex min-h-[calc(100dvh-4rem)] w-full max-w-[980px] items-center justify-center">
+        <div
+          className={`w-full overflow-hidden rounded-[22px] border shadow-[0_22px_55px_rgba(15,23,42,0.14)] transition-colors duration-300 ${
+            isDarkTheme ? 'border-slate-700 bg-slate-800' : 'border-slate-200 bg-white'
+          }`}
+        >
+          <div className="grid min-h-[520px] grid-cols-1 md:grid-cols-2">
+            <section className="relative hidden overflow-hidden bg-gradient-to-br from-teal-500 via-teal-600 to-teal-800 px-10 py-8 text-white md:flex md:flex-col md:justify-between">
+              <div className="absolute -left-16 -top-16 h-56 w-56 rounded-full bg-white/15 blur-3xl" />
+              <div className="absolute -bottom-20 -right-20 h-72 w-72 rounded-full bg-cyan-300/20 blur-3xl" />
 
-              <div className="relative z-20 mt-3 max-w-[25rem] space-y-1.5 text-[13px] text-slate-200 md:mt-3.5">
-                {[
-                  'Seguimiento de monitoreos en tiempo real',
-                  'Control de reportes y cumplimiento',
-                  'Gestion por especialistas y administradores',
-                ].map((item) => (
-                  <div key={item} className="flex items-start gap-2">
-                    <CircleCheck size={15} className="mt-0.5 text-emerald-300" />
-                    <span>{item}</span>
+              <div className="relative z-10">
+                <div className="mb-8 flex items-center gap-3">
+                  <div className="rounded-xl bg-white/20 p-2.5 backdrop-blur-md">
+                    <LayoutDashboard size={24} />
                   </div>
-                ))}
+                  <div>
+                    <p className="text-xs font-bold uppercase tracking-[0.2em] text-teal-50/90">UGEL 06 - LIMA</p>
+                    <p className="text-sm text-teal-50/90">Sistema AGEBRE</p>
+                  </div>
+                </div>
+
+                <h1 className="text-[46px] font-extrabold leading-[1.08] tracking-[-0.02em]">Sistema de Monitoreo Educativo</h1>
+                <p className="mt-4 text-base leading-relaxed text-teal-50/90">
+                  Gestión, seguimiento y control de monitoreos institucionales de forma centralizada y segura.
+                </p>
+
+                <div className="mt-8 space-y-4">
+                  <div className="flex items-center gap-3">
+                    <div className="rounded-lg bg-white/20 p-2">
+                      <CheckCircle2 size={16} />
+                    </div>
+                    <span className="text-sm font-medium">Seguimiento en tiempo real</span>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <div className="rounded-lg bg-white/20 p-2">
+                      <LayoutDashboard size={16} />
+                    </div>
+                    <span className="text-sm font-medium">Control de reportes y cumplimiento</span>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <div className="rounded-lg bg-white/20 p-2">
+                      <Users size={16} />
+                    </div>
+                    <span className="text-sm font-medium">Gestión por especialistas</span>
+                  </div>
+                </div>
               </div>
 
-              <div className="pointer-events-none absolute inset-0 z-10 bg-gradient-to-b from-slate-950/35 via-transparent to-slate-950/8" />
-              <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 h-14 bg-gradient-to-t from-slate-950/75 via-slate-950/18 to-transparent" />
+              <div className="relative z-10 space-y-1 border-t border-white/20 pt-6 text-[11px] leading-5 text-teal-50/80">
+                <div>
+                  <p>Creadores:</p>
+                  <ul className="mt-1 list-disc space-y-0.5 pl-4">
+                    <li>Ing. Diego Arce Muñoz</li>
+                    <li>Ing. Alex Quispe Pillaca</li>
+                  </ul>
+                </div>
+                <p>© 2026 Plataforma de Monitoreo Educativo - Dirección. Todos los derechos reservados.</p>
+              </div>
             </section>
 
-            <section className="login-shell-section-right h-full px-6 py-5 md:px-6 md:py-5">
-              <div className="space-y-1.5">
-                <p className="text-[24px] font-semibold leading-tight text-slate-100">Inicio de sesion</p>
-                <p className="text-sm text-slate-400">Accede con tus credenciales para ingresar al sistema.</p>
+            <section
+              className={`px-7 py-6 transition-colors duration-300 md:px-8 md:py-6 ${
+                isDarkTheme ? 'bg-slate-800 text-slate-100' : 'bg-[#f8fafc] text-slate-800'
+              }`}
+            >
+              <div className="mb-5">
+                <h2 className={`text-[58px] font-extrabold leading-[0.95] tracking-[-0.025em] ${isDarkTheme ? 'text-slate-100' : 'text-slate-800'}`}>Bienvenido</h2>
+                <p className={`mt-2 max-w-[320px] text-[16px] leading-6 ${isDarkTheme ? 'text-slate-300' : 'text-slate-500'}`}>Ingresa tus credenciales para acceder al panel.</p>
               </div>
 
-              <div className="mt-4 space-y-1.5 rounded-xl border border-slate-800/60 bg-slate-900/50 p-2.5">
-                <p className="text-[10px] font-medium uppercase tracking-[0.13em] text-slate-400">
-                  Selecciona tu tipo de acceso
-                </p>
-                <div className="grid gap-2 sm:grid-cols-2">
-                  <button
-                    type="button"
-                    onClick={() => setRole('especialista')}
-                    disabled={isSubmitting}
-                    className={`flex items-center gap-2 rounded-lg border px-3 py-1.5 text-sm transition ${
-                      role === 'especialista'
-                        ? 'border-cyan-400/45 bg-cyan-500/10 text-cyan-100'
-                        : 'border-slate-700/55 bg-slate-900/60 text-slate-300 hover:border-slate-600/80'
-                    }`}
-                  >
-                    <span
-                      className={`h-2.5 w-2.5 rounded-full ${role === 'especialista' ? 'bg-cyan-300' : 'bg-slate-600'}`}
-                    />
-                    Especialista
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setRole('admin')}
-                    disabled={isSubmitting}
-                    className={`flex items-center gap-2 rounded-lg border px-3 py-1.5 text-sm transition ${
-                      role === 'admin'
-                        ? 'border-emerald-400/45 bg-emerald-500/10 text-emerald-100'
-                        : 'border-slate-700/55 bg-slate-900/60 text-slate-300 hover:border-slate-600/80'
-                    }`}
-                  >
-                    <span className={`h-2.5 w-2.5 rounded-full ${role === 'admin' ? 'bg-emerald-300' : 'bg-slate-600'}`} />
-                    Administrador
-                  </button>
-                </div>
-              </div>
-
-              <form onSubmit={handleSubmit} className="mt-4 flex flex-col gap-3">
-                <div
-                  key={`access-${form.docType}`}
-                  className="login-access-variant space-y-2.5"
-                >
-                  <div className={`grid gap-3 ${form.docType === 'CORREO' ? 'grid-cols-1' : 'sm:grid-cols-2'}`}>
-                  <Select
-                    id="docType"
-                    label="Tipo de acceso"
-                    className="h-10 text-[15px]"
-                    value={form.docType}
-                    disabled={isSubmitting}
-                    onChange={(event) => handleDocTypeChange(event.target.value)}
-                  >
-                    <option value="DNI">DNI</option>
-                    <option value="CE">CE</option>
-                    <option value="CORREO">Correo institucional</option>
-                  </Select>
-                  {form.docType === 'CORREO' ? (
-                    <div className="grid gap-3 sm:grid-cols-[1fr_0.85fr]">
-                      <Input
-                        id="emailUser"
-                        label="Usuario de correo"
-                        type="text"
-                        autoComplete="username"
-                        className="h-10 text-[15px]"
-                        placeholder={accessSummary.identityPlaceholder}
-                        value={form.emailUser}
-                        disabled={isSubmitting}
-                        onChange={(event) => setForm((prev) => ({ ...prev, emailUser: event.target.value }))}
-                      />
-                      <Select
-                        id="emailDomain"
-                        label="Dominio"
-                        className="h-10 text-[15px]"
-                        value={form.emailDomain}
-                        disabled={isSubmitting}
-                        onChange={(event) =>
-                          setForm((prev) => ({
-                            ...prev,
-                            emailDomain: event.target.value,
-                            emailDomainCustom: event.target.value === 'otro' ? prev.emailDomainCustom : '',
-                          }))
-                        }
-                      >
-                        {EMAIL_DOMAIN_OPTIONS.map((domain) => (
-                          <option key={domain} value={domain}>
-                            @{domain}
-                          </option>
-                        ))}
-                        <option value="otro">Otro dominio</option>
-                      </Select>
-                    </div>
-                  ) : (
-                    <Input
-                      id="docNumber"
-                      className="h-10 text-[15px]"
-                      label="Numero de documento"
-                      placeholder={documentPlaceholder}
-                      value={form.docNumber}
-                      inputMode="numeric"
-                      maxLength={documentMaxLength || undefined}
+              <form onSubmit={handleSubmit} className="space-y-4">
+                <div className="space-y-3">
+                  <p className={`text-sm font-semibold ${isDarkTheme ? 'text-slate-200' : 'text-slate-700'}`}>Tipo de Acceso</p>
+                  <div className="grid grid-cols-2 gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setRole('especialista')}
                       disabled={isSubmitting}
-                      onChange={(event) => handleDocNumberChange(event.target.value)}
-                    />
-                  )}
+                      className={`rounded-2xl border-2 px-3 py-4 transition ${
+                        role === 'especialista'
+                          ? 'border-teal-600 bg-teal-50 text-teal-700'
+                          : isDarkTheme
+                            ? 'border-slate-600 bg-slate-800 text-slate-300 hover:bg-slate-700'
+                            : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-50'
+                      }`}
+                    >
+                      <div className="flex flex-col items-center gap-1">
+                        <BadgeCheck size={18} />
+                        <span className="text-sm font-semibold">Especialista</span>
+                      </div>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setRole('admin')}
+                      disabled={isSubmitting}
+                      className={`rounded-2xl border-2 px-3 py-4 transition ${
+                        role === 'admin'
+                          ? 'border-teal-600 bg-teal-50 text-teal-700'
+                          : isDarkTheme
+                            ? 'border-slate-600 bg-slate-800 text-slate-300 hover:bg-slate-700'
+                            : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-50'
+                      }`}
+                    >
+                      <div className="flex flex-col items-center gap-1">
+                        <Lock size={18} />
+                        <span className="text-sm font-semibold">Administrador</span>
+                      </div>
+                    </button>
                   </div>
-                  {form.docType === 'CORREO' && form.emailDomain === 'otro' ? (
-                    <Input
-                      id="emailDomainCustom"
-                      label="Dominio personalizado"
-                      type="text"
-                      className="h-10 text-[15px]"
-                      placeholder="dominio.org"
-                      value={form.emailDomainCustom}
-                      disabled={isSubmitting}
-                      onChange={(event) => setForm((prev) => ({ ...prev, emailDomainCustom: event.target.value }))}
-                    />
-                  ) : null}
-                  <p className={`text-xs leading-5 ${form.docType === 'CORREO' ? 'text-slate-400' : shouldShowRemainingDigits ? 'text-amber-200' : 'text-slate-400'}`}>
-                    {accessTypeGuide}
-                  </p>
                 </div>
 
-                <label className="flex flex-col gap-1.5 text-sm text-slate-200" htmlFor="password">
-                  <span className="text-[10px] uppercase tracking-[0.16em] text-slate-400">Contrasena</span>
+                <div key={`access-${form.docType}`} className="space-y-3">
+                  <div className={`grid gap-3 ${form.docType === 'CORREO' ? 'grid-cols-1' : 'grid-cols-12'}`}>
+                    <div className={form.docType === 'CORREO' ? '' : 'col-span-4'}>
+                      <label htmlFor="docType" className={`mb-1 block text-[11px] font-bold uppercase tracking-[0.14em] ${isDarkTheme ? 'text-slate-300' : 'text-slate-500'}`}>
+                        Documento
+                      </label>
+                      <select
+                        id="docType"
+                        className={`h-12 w-full rounded-xl border px-3 text-sm outline-none transition focus:border-teal-500 focus:ring-2 focus:ring-teal-500/20 ${
+                          isDarkTheme
+                            ? 'border-slate-600 bg-slate-900 text-slate-100'
+                            : 'border-slate-200 bg-slate-50 text-slate-700'
+                        }`}
+                        value={form.docType}
+                        disabled={isSubmitting}
+                        onChange={(event) => handleDocTypeChange(event.target.value)}
+                      >
+                        <option value="DNI">DNI</option>
+                        <option value="CE">C.E.</option>
+                        <option value="CORREO">Correo</option>
+                      </select>
+                    </div>
+
+                    {form.docType === 'CORREO' ? (
+                      <div className="grid gap-3 sm:grid-cols-[1fr_0.85fr]">
+                        <div>
+                          <label htmlFor="emailUser" className={`mb-1 block text-[11px] font-bold uppercase tracking-[0.14em] ${isDarkTheme ? 'text-slate-300' : 'text-slate-500'}`}>
+                            Usuario
+                          </label>
+                          <input
+                            id="emailUser"
+                            type="text"
+                            autoComplete="username"
+                            className={`h-12 w-full rounded-xl border px-3 text-sm outline-none transition placeholder:text-slate-400 focus:border-teal-500 focus:ring-2 focus:ring-teal-500/20 ${
+                              isDarkTheme
+                                ? 'border-slate-600 bg-slate-900 text-slate-100'
+                                : 'border-slate-200 bg-slate-50 text-slate-700'
+                            }`}
+                            placeholder={accessSummary.identityPlaceholder || 'nombre.apellido'}
+                            value={form.emailUser}
+                            disabled={isSubmitting}
+                            onChange={(event) => setForm((prev) => ({ ...prev, emailUser: event.target.value }))}
+                          />
+                        </div>
+                        <div>
+                          <label htmlFor="emailDomain" className={`mb-1 block text-[11px] font-bold uppercase tracking-[0.14em] ${isDarkTheme ? 'text-slate-300' : 'text-slate-500'}`}>
+                            Dominio
+                          </label>
+                          <select
+                            id="emailDomain"
+                            className={`h-12 w-full rounded-xl border px-3 text-sm outline-none transition focus:border-teal-500 focus:ring-2 focus:ring-teal-500/20 ${
+                              isDarkTheme
+                                ? 'border-slate-600 bg-slate-900 text-slate-100'
+                                : 'border-slate-200 bg-slate-50 text-slate-700'
+                            }`}
+                            value={form.emailDomain}
+                            disabled={isSubmitting}
+                            onChange={(event) =>
+                              setForm((prev) => ({
+                                ...prev,
+                                emailDomain: event.target.value,
+                                emailDomainCustom: event.target.value === 'otro' ? prev.emailDomainCustom : '',
+                              }))
+                            }
+                          >
+                            {EMAIL_DOMAIN_OPTIONS.map((domain) => (
+                              <option key={domain} value={domain}>
+                                @{domain}
+                              </option>
+                            ))}
+                            <option value="otro">Otro dominio</option>
+                          </select>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="col-span-8">
+                        <label htmlFor="docNumber" className={`mb-1 block text-[11px] font-bold uppercase tracking-[0.14em] ${isDarkTheme ? 'text-slate-300' : 'text-slate-500'}`}>
+                          Número
+                        </label>
+                        <input
+                          id="docNumber"
+                          type="text"
+                          className={`h-12 w-full rounded-xl border px-3 text-sm outline-none transition placeholder:text-slate-400 focus:border-teal-500 focus:ring-2 focus:ring-teal-500/20 ${
+                            isDarkTheme
+                              ? 'border-slate-600 bg-slate-900 text-slate-100'
+                              : 'border-slate-200 bg-slate-50 text-slate-700'
+                          }`}
+                          placeholder={documentPlaceholder || 'Ej. 12345678'}
+                          value={form.docNumber}
+                          inputMode="numeric"
+                          maxLength={documentMaxLength || undefined}
+                          disabled={isSubmitting}
+                          onChange={(event) => handleDocNumberChange(event.target.value)}
+                        />
+                      </div>
+                    )}
+                  </div>
+
+                  {form.docType === 'CORREO' && form.emailDomain === 'otro' ? (
+                    <div>
+                      <label htmlFor="emailDomainCustom" className={`mb-1 block text-[11px] font-bold uppercase tracking-[0.14em] ${isDarkTheme ? 'text-slate-300' : 'text-slate-500'}`}>
+                        Dominio personalizado
+                      </label>
+                      <input
+                        id="emailDomainCustom"
+                        type="text"
+                        className={`h-12 w-full rounded-xl border px-3 text-sm outline-none transition placeholder:text-slate-400 focus:border-teal-500 focus:ring-2 focus:ring-teal-500/20 ${
+                          isDarkTheme
+                            ? 'border-slate-600 bg-slate-900 text-slate-100'
+                            : 'border-slate-200 bg-slate-50 text-slate-700'
+                        }`}
+                        placeholder="dominio.org"
+                        value={form.emailDomainCustom}
+                        disabled={isSubmitting}
+                        onChange={(event) => setForm((prev) => ({ ...prev, emailDomainCustom: event.target.value }))}
+                      />
+                    </div>
+                  ) : null}
+                  <p className={`text-xs ${isDarkTheme ? 'text-slate-400' : 'text-slate-500'}`}>{accessTypeGuide}</p>
+                </div>
+
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between">
+                    <label htmlFor="password" className={`text-[11px] font-bold uppercase tracking-[0.14em] ${isDarkTheme ? 'text-slate-300' : 'text-slate-500'}`}>
+                      Contraseña
+                    </label>
+                    <button
+                      type="button"
+                      onClick={openRecoveryModal}
+                      disabled={isSubmitting}
+                      className={`text-xs font-semibold hover:underline ${isDarkTheme ? 'text-teal-300' : 'text-teal-700'}`}
+                    >
+                      ¿Olvidaste tu contraseña?
+                    </button>
+                  </div>
                   <div className="relative">
                     <input
                       id="password"
@@ -647,62 +763,69 @@ export default function Login() {
                       value={form.password}
                       disabled={isSubmitting}
                       onChange={(event) => setForm((prev) => ({ ...prev, password: event.target.value }))}
-                      className="h-10 w-full rounded-xl border border-slate-700/60 bg-slate-900/70 px-3 pr-12 text-[15px] text-slate-100 placeholder:text-slate-500 focus:border-cyan-400/65 focus:outline-none focus:ring-1 focus:ring-cyan-500/15"
-                      placeholder="********"
+                      className={`h-12 w-full rounded-xl border px-3 pr-11 text-sm outline-none transition placeholder:text-slate-400 focus:border-teal-500 focus:ring-2 focus:ring-teal-500/20 ${
+                        isDarkTheme
+                          ? 'border-slate-600 bg-slate-900 text-slate-100'
+                          : 'border-slate-200 bg-slate-50 text-slate-700'
+                      }`}
+                      placeholder="••••••••"
                     />
                     <button
                       type="button"
                       onClick={() => setShowPassword((prev) => !prev)}
                       disabled={isSubmitting}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-500 transition hover:text-slate-300"
+                      className={`absolute right-3 top-1/2 -translate-y-1/2 transition ${isDarkTheme ? 'text-slate-500 hover:text-slate-300' : 'text-slate-400 hover:text-slate-600'}`}
                     >
-                      {showPassword ? 'Ocultar' : 'Ver'}
+                      {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
                     </button>
                   </div>
-                </label>
+                  <p className={`inline-flex items-center gap-1 text-[11px] ${isDarkTheme ? 'text-slate-400' : 'text-slate-500'}`}>
+                    <Lock size={11} /> Usa una contraseña segura de al menos 8 caracteres.
+                  </p>
+                </div>
 
                 <button
                   type="submit"
                   disabled={!isSupabaseConfigured || isSubmitting}
-                  className="mt-0.5 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-emerald-400/50 bg-emerald-500/20 py-2 text-sm font-semibold text-emerald-100 shadow-[0_8px_20px_rgba(16,185,129,0.2)] transition-all duration-200 hover:border-emerald-300 hover:bg-emerald-500/30 hover:shadow-[0_10px_24px_rgba(16,185,129,0.24)] disabled:cursor-not-allowed disabled:opacity-70"
+                  className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-teal-600 text-sm font-bold text-white shadow-lg shadow-teal-600/25 transition hover:-translate-y-0.5 hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-70"
                 >
                   {isSubmitting ? (
                     <>
                       <Loader2 size={16} className="animate-spin" />
-                      Iniciando sesion...
+                      Iniciando sesión...
                     </>
                   ) : (
-                    'Iniciar sesion'
+                    <>
+                      Iniciar Sesión
+                      <LogIn size={16} />
+                    </>
                   )}
                 </button>
-                <p className="inline-flex items-center gap-1.5 text-[11px] text-slate-500">
-                  <Lock size={12} className="text-slate-500" />
-                  <span>Acceso seguro. Solo personal autorizado.</span>
-                </p>
-                {isSubmitting ? (
-                  <div className="space-y-1" aria-live="polite">
-                    <div className="h-1.5 overflow-hidden rounded-full border border-cyan-500/35 bg-slate-900/80">
-                      <span className="login-progress-sweep block h-full w-1/3 rounded-full bg-gradient-to-r from-cyan-300/70 via-sky-300/80 to-emerald-300/70" />
-                    </div>
-                    <p className="text-xs text-cyan-200/90">Validando credenciales y cargando tu panel...</p>
-                  </div>
-                ) : null}
-                <button
-                  type="button"
-                  onClick={openRecoveryModal}
-                  disabled={isSubmitting}
-                  className="w-fit self-start text-xs font-medium text-slate-400 underline-offset-4 transition hover:text-cyan-200 hover:underline"
-                >
-                  Eres administrador? Recuperar acceso
-                </button>
-                <p className="text-xs text-slate-500">Problemas para acceder? Contacta al administrador.</p>
+
+                <div className={`space-y-2 border-t pt-6 text-center ${isDarkTheme ? 'border-slate-700' : 'border-slate-200'}`}>
+                  <p className={`mx-auto inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-medium ${isDarkTheme ? 'bg-slate-700 text-slate-200' : 'bg-slate-100 text-slate-600'}`}>
+                    <Lock size={12} className="text-emerald-600" /> Acceso seguro • Solo personal autorizado
+                  </p>
+                  <p className={`text-xs ${isDarkTheme ? 'text-slate-400' : 'text-slate-500'}`}>
+                    ¿Problemas para acceder?{' '}
+                    <button
+                      type="button"
+                      onClick={openRecoveryModal}
+                      disabled={isSubmitting}
+                      className={`font-semibold hover:underline ${isDarkTheme ? 'text-teal-300' : 'text-teal-700'}`}
+                    >
+                      Contactar soporte
+                    </button>
+                  </p>
+                </div>
+
                 {!isSupabaseConfigured ? (
-                  <p className="text-xs text-amber-300">
+                  <p className="text-xs text-amber-700">
                     Configura en Vercel: `VITE_SUPABASE_URL` y `VITE_SUPABASE_ANON_KEY`.
                   </p>
                 ) : null}
-                {sessionNotice ? <p className="text-sm text-amber-200">{sessionNotice}</p> : null}
-                {error ? <p className="text-sm text-rose-300">{error}</p> : null}
+                {sessionNotice ? <p className="text-sm text-amber-700">{sessionNotice}</p> : null}
+                {error ? <p className="text-sm text-rose-600">{error}</p> : null}
               </form>
             </section>
           </div>

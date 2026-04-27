@@ -5,6 +5,7 @@ import {
   BarChart3,
   Building2,
   CalendarRange,
+  CircleHelp,
   ChevronLeft,
   ChevronRight,
   ClipboardList,
@@ -3381,6 +3382,16 @@ export default function MonitoreoLayout() {
       const totalTemplates = templates.length;
       const totalInstances = instances.length;
       const totalEvents = events.length;
+      const activeTemplatesCount = templates.filter((template) => {
+        if (String(template?.status || '').toLowerCase() !== 'published') return false;
+        const availabilityStatus = String(template?.availability?.status || '').toLowerCase();
+        if (availabilityStatus === 'hidden' || availabilityStatus === 'closed') return false;
+        const startAt = toSafeDateValue(template?.availability?.startAt);
+        const endAt = toSafeDateValue(template?.availability?.endAt);
+        if (startAt && startAt > now) return false;
+        if (endAt && endAt < now) return false;
+        return true;
+      }).length;
 
       const overdueTemplatesCount = templates.filter((template) => {
         if (template?.status !== 'published') return false;
@@ -3419,7 +3430,7 @@ export default function MonitoreoLayout() {
       if (userRole === ROLE_ADMIN) {
         setNavBadges({
           reportes: pendingReportsCount,
-          elegir: overdueTemplatesCount,
+          elegir: activeTemplatesCount,
         });
         setAssistantGreetingContext({
           totalTemplates,
@@ -3513,7 +3524,7 @@ export default function MonitoreoLayout() {
 
       setNavBadges({
         seguimiento: specialistCriticalEvents,
-        elegir: specialistDraftCount,
+        elegir: activeTemplatesCount,
       });
       setAssistantGreetingContext({
         totalTemplates,
@@ -3995,6 +4006,82 @@ export default function MonitoreoLayout() {
           </div>
         </aside>
         <div className="login-glow flex flex-1 flex-col overflow-hidden">
+          <div className="hidden lg:block">
+            <div className="monitoreo-topbar glass-panel sticky top-0 z-30 flex items-center justify-between px-4 py-3">
+              <div className="max-w-md flex-1">
+                <div className="relative">
+                  <input
+                    type="text"
+                    placeholder="Buscar monitoreos, jefes ó áreas..."
+                    className="h-10 w-full rounded-lg border border-slate-700/70 bg-slate-900/70 pl-10 pr-3 text-sm text-slate-100 placeholder:text-slate-400 focus:border-cyan-400/70 focus:outline-none focus:ring-2 focus:ring-cyan-500/25"
+                  />
+                  <svg
+                    className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                  >
+                    <circle cx="11" cy="11" r="8" />
+                    <path d="m21 21-4.3-4.3" />
+                  </svg>
+                </div>
+              </div>
+
+              <div className="ml-4 flex items-center gap-2">
+                <button
+                  ref={notificationsToggleButtonRef}
+                  type="button"
+                  onClick={() => {
+                    setIsAssistantOpen(false);
+                    setIsNotificationsOpen((prev) => !prev);
+                  }}
+                  className="relative inline-flex h-10 w-10 items-center justify-center rounded-full border border-slate-700/60 text-slate-300 transition hover:border-slate-500/70 hover:text-slate-100"
+                  aria-label="Notificaciones"
+                  title="Notificaciones"
+                >
+                  <Bell size={16} />
+                  {notificationBadgeText ? (
+                    <span className="pointer-events-none absolute -right-1 -top-1 inline-flex min-w-[17px] items-center justify-center rounded-full border border-cyan-400/45 bg-cyan-500/25 px-1 py-0.5 text-[10px] font-semibold leading-none text-cyan-50">
+                      {notificationBadgeText}
+                    </span>
+                  ) : null}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsSettingsOpen(true)}
+                  className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-slate-700/60 text-slate-300 transition hover:border-slate-500/70 hover:text-slate-100"
+                  aria-label="Consulta"
+                  title="Consulta"
+                >
+                  <CircleHelp size={16} />
+                </button>
+                <div className="mx-1 h-8 w-px bg-slate-700/60" />
+                <button
+                  type="button"
+                  onClick={() => setIsSettingsOpen(true)}
+                  className="inline-flex items-center gap-3 rounded-xl px-2 py-1 text-left transition hover:bg-slate-800/55"
+                  aria-label="Perfil"
+                  title="Perfil"
+                >
+                  <div className="hidden sm:block">
+                    <p className="text-sm font-semibold text-slate-100">{displayName || 'Usuario'}</p>
+                    <p className="text-xs text-slate-400">{roleLabel}</p>
+                  </div>
+                  <div className="flex h-9 w-9 items-center justify-center overflow-hidden rounded-full border border-slate-700/70 bg-slate-800/80 text-xs font-semibold text-slate-200">
+                    {avatarUrl ? (
+                      <img src={avatarUrl} alt="Avatar" className="h-full w-full object-cover" />
+                    ) : (
+                      <span>{initials || 'U'}</span>
+                    )}
+                  </div>
+                </button>
+              </div>
+            </div>
+          </div>
           <div className="lg:hidden">
             <div className="monitoreo-topbar glass-panel safe-top sticky top-0 z-40 flex items-center justify-between px-3 py-2">
               <button
@@ -4010,6 +4097,7 @@ export default function MonitoreoLayout() {
               <span className="text-xs font-semibold tracking-[0.08em] text-slate-100">Monitoreo</span>
               <div className="flex items-center gap-2">
                 <button
+                  ref={notificationsToggleButtonRef}
                   type="button"
                   onClick={() => {
                     setIsAssistantOpen(false);
@@ -4049,20 +4137,20 @@ export default function MonitoreoLayout() {
           </main>
         </div>
       </div>
-      {isAssistantOpen || isNotificationsOpen ? (
+      {isAssistantOpen ? (
         <div
           aria-hidden="true"
           className="fixed inset-0 z-30 bg-slate-950/55 transition-opacity"
         />
       ) : null}
-      <div
-        className={`fixed right-3 z-40 flex flex-col items-end sm:right-6 ${
-          isCompactDensity
-            ? 'bottom-[calc(0.75rem+env(safe-area-inset-bottom,0px))] gap-2 sm:bottom-[calc(1.25rem+env(safe-area-inset-bottom,0px))] sm:gap-2.5'
-            : 'bottom-[calc(0.75rem+env(safe-area-inset-bottom,0px))] gap-2 sm:bottom-[calc(1.5rem+env(safe-area-inset-bottom,0px))] sm:gap-3'
-        }`}
-      >
-        {isNotificationsOpen ? (
+      {isNotificationsOpen ? (
+        <div
+          className={`fixed right-3 z-40 sm:right-6 ${
+            isCompactDensity
+              ? 'top-[calc(4rem+env(safe-area-inset-top,0px))]'
+              : 'top-[calc(4.5rem+env(safe-area-inset-top,0px))]'
+          }`}
+        >
           <div
             ref={notificationsPanelRef}
             role="dialog"
@@ -4070,8 +4158,8 @@ export default function MonitoreoLayout() {
             aria-modal="false"
             className={
               isCompactDensity
-                ? 'mb-1 w-[calc(100vw-1.5rem)] max-h-[62dvh] overflow-hidden rounded-2xl border border-slate-700/90 bg-slate-950/96 text-[13px] text-slate-200 shadow-[0_22px_70px_-26px_rgba(0,0,0,0.9)] sm:mb-0 sm:w-[min(90vw,392px)] sm:max-h-[calc(100dvh-5.5rem)]'
-                : 'mb-1 w-[calc(100vw-1.5rem)] max-h-[64dvh] overflow-hidden rounded-2xl border border-slate-700/90 bg-slate-950/96 text-sm text-slate-200 shadow-[0_22px_70px_-26px_rgba(0,0,0,0.9)] sm:mb-0 sm:w-[min(92vw,420px)] sm:max-h-[calc(100dvh-6rem)]'
+                ? 'w-[calc(100vw-1.5rem)] max-h-[62dvh] overflow-hidden rounded-2xl border border-slate-700/90 bg-slate-950 text-[13px] text-slate-200 shadow-[0_22px_70px_-26px_rgba(0,0,0,0.95)] sm:w-[min(90vw,392px)] sm:max-h-[calc(100dvh-5.5rem)]'
+                : 'w-[calc(100vw-1.5rem)] max-h-[64dvh] overflow-hidden rounded-2xl border border-slate-700/90 bg-slate-950 text-sm text-slate-200 shadow-[0_22px_70px_-26px_rgba(0,0,0,0.95)] sm:w-[min(92vw,420px)] sm:max-h-[calc(100dvh-6rem)]'
             }
           >
             <div className={`flex items-center justify-between border-b border-slate-800/70 ${isCompactDensity ? 'px-3.5 py-2.5' : 'px-4 py-3'}`}>
@@ -4146,7 +4234,15 @@ export default function MonitoreoLayout() {
               )}
             </div>
           </div>
-        ) : null}
+        </div>
+      ) : null}
+      <div
+        className={`fixed right-3 z-40 flex flex-col items-end sm:right-6 ${
+          isCompactDensity
+            ? 'bottom-[calc(0.75rem+env(safe-area-inset-bottom,0px))] gap-2 sm:bottom-[calc(1.25rem+env(safe-area-inset-bottom,0px))] sm:gap-2.5'
+            : 'bottom-[calc(0.75rem+env(safe-area-inset-bottom,0px))] gap-2 sm:bottom-[calc(1.5rem+env(safe-area-inset-bottom,0px))] sm:gap-3'
+        }`}
+      >
         {isAssistantOpen ? (
           <div
             ref={assistantPanelRef}
@@ -4477,28 +4573,6 @@ export default function MonitoreoLayout() {
             </div>
           </div>
         ) : null}
-        <button
-          ref={notificationsToggleButtonRef}
-          type="button"
-          onClick={() => {
-            setIsAssistantOpen(false);
-            setIsNotificationsOpen((current) => !current);
-          }}
-          aria-label="Notificaciones"
-          title="Notificaciones"
-          className={
-            isCompactDensity
-              ? 'relative inline-flex h-10 w-10 items-center justify-center rounded-full border border-amber-400/45 bg-amber-500/18 text-amber-100 shadow-lg transition hover:border-amber-300/75 sm:h-11 sm:w-11'
-              : 'relative inline-flex h-10 w-10 items-center justify-center rounded-full border border-amber-400/45 bg-amber-500/18 text-amber-100 shadow-lg transition hover:border-amber-300/75 sm:h-12 sm:w-12'
-          }
-        >
-          <Bell size={19} />
-          {notificationBadgeText ? (
-            <span className="pointer-events-none absolute -right-1 -top-1 inline-flex min-w-[18px] items-center justify-center rounded-full border border-cyan-400/45 bg-cyan-500/25 px-1 py-0.5 text-[10px] font-semibold leading-none text-cyan-50">
-              {notificationBadgeText}
-            </span>
-          ) : null}
-        </button>
         <button
           ref={assistantToggleButtonRef}
           type="button"
