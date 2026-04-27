@@ -2,9 +2,19 @@ import { ROLE_ADMIN, ROLE_AREA_CHIEF, ROLE_DIRECTOR, ROLE_SPECIALIST } from '../
 
 export const SIDEBAR_ITEM_DEFINITIONS = {
   inicio: { id: 'inicio', label: 'Inicio', path: '/monitoreo/inicio', iconKey: 'dashboard' },
-  seguimiento: { id: 'seguimiento', label: 'Seguimiento', path: '/monitoreo/seguimiento', iconKey: 'calendar' },
+  seguimiento: {
+    id: 'seguimiento',
+    label: 'Seguimientos',
+    path: '/monitoreo/seguimiento',
+    iconKey: 'calendar',
+  },
   elegir: { id: 'elegir', label: 'Monitoreos', path: '/monitoreo', iconKey: 'clipboard' },
-  reportes: { id: 'reportes', label: 'Reportes', path: '/monitoreo/reportes', iconKey: 'chart' },
+  reportes: {
+    id: 'reportes',
+    label: 'Reportes',
+    path: '/monitoreo/reportes',
+    iconKey: 'chart',
+  },
   usuarios: {
     id: 'usuarios',
     label: 'Equipo',
@@ -23,23 +33,23 @@ export const SIDEBAR_ITEM_DEFINITIONS = {
 
 export const SIDEBAR_GROUPS_BY_ROLE = {
   [ROLE_SPECIALIST]: [
-    { id: 'principal', label: 'Principal', itemIds: ['inicio', 'seguimiento'] },
-    { id: 'gestion', label: 'Gestion', itemIds: ['elegir', 'reportes'] },
+    { id: 'principal', label: 'Principal', itemIds: ['inicio'] },
+    { id: 'gestion', label: 'Gestion', itemIds: ['elegir', 'reportes', 'seguimiento'] },
     { id: 'organizacion', label: 'Organizacion', itemIds: ['usuarios', 'instituciones'] },
   ],
   [ROLE_ADMIN]: [
-    { id: 'principal', label: 'Principal', itemIds: ['inicio', 'reportes'] },
-    { id: 'gestion', label: 'Gestion', itemIds: ['elegir', 'seguimiento'] },
+    { id: 'principal', label: 'Principal', itemIds: ['inicio'] },
+    { id: 'gestion', label: 'Gestion', itemIds: ['elegir', 'reportes', 'seguimiento'] },
     { id: 'organizacion', label: 'Organizacion', itemIds: ['usuarios', 'instituciones'] },
   ],
   [ROLE_DIRECTOR]: [
-    { id: 'principal', label: 'Principal', itemIds: ['inicio', 'reportes'] },
-    { id: 'gestion', label: 'Gestion', itemIds: ['elegir', 'seguimiento'] },
+    { id: 'principal', label: 'Principal', itemIds: ['inicio'] },
+    { id: 'gestion', label: 'Gestion', itemIds: ['elegir', 'reportes', 'seguimiento'] },
     { id: 'organizacion', label: 'Organizacion', itemIds: ['usuarios', 'instituciones'] },
   ],
   [ROLE_AREA_CHIEF]: [
-    { id: 'principal', label: 'Principal', itemIds: ['inicio', 'reportes'] },
-    { id: 'gestion', label: 'Gestion', itemIds: ['elegir', 'seguimiento'] },
+    { id: 'principal', label: 'Principal', itemIds: ['inicio'] },
+    { id: 'gestion', label: 'Gestion', itemIds: ['elegir', 'reportes', 'seguimiento'] },
     { id: 'organizacion', label: 'Organizacion', itemIds: ['usuarios', 'instituciones'] },
   ],
 };

@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
 import {
   AlertTriangle,
   Building2,
@@ -6,8 +8,13 @@ import {
   ChevronDown,
   ChevronUp,
   Eye,
+  FileDown,
+  Filter,
   Loader2,
+  MapPin,
+  MoreVertical,
   Pencil,
+  Plus,
   Power,
   Search,
   Trash2,
@@ -18,6 +25,16 @@ import Input from '../components/ui/Input.jsx';
 import SectionHeader from '../components/ui/SectionHeader.jsx';
 import Select from '../components/ui/Select.jsx';
 import { supabase } from '../lib/supabase.js';
+import markerIcon2xUrl from 'leaflet/dist/images/marker-icon-2x.png';
+import markerIconUrl from 'leaflet/dist/images/marker-icon.png';
+import markerShadowUrl from 'leaflet/dist/images/marker-shadow.png';
+
+delete L.Icon.Default.prototype._getIconUrl;
+L.Icon.Default.mergeOptions({
+  iconRetinaUrl: markerIcon2xUrl,
+  iconUrl: markerIconUrl,
+  shadowUrl: markerShadowUrl,
+});
 
 const EMPTY_FORM = {
   id: null,
@@ -34,6 +51,15 @@ const EMPTY_FORM = {
 
 const PAGE_SIZE = 10;
 const DB_FETCH_BATCH_SIZE = 1000;
+const STATIC_MAP_POINT_FALLBACK = { lat: -12.0464, lon: -77.0428, label: 'LIMA', zoom: 15 };
+const DISTRICT_STATIC_POINTS = {
+  ATE: { lat: -12.0406, lon: -76.9237, label: 'ATE', zoom: 16 },
+  CHACLACAYO: { lat: -11.9836, lon: -76.7672, label: 'CHACLACAYO', zoom: 16 },
+  CIENEGUILLA: { lat: -12.1065, lon: -76.8114, label: 'CIENEGUILLA', zoom: 16 },
+  'LA MOLINA': { lat: -12.0767, lon: -76.9492, label: 'LA MOLINA', zoom: 16 },
+  LURIGANCHO: { lat: -11.9364, lon: -76.7094, label: 'LURIGANCHO', zoom: 16 },
+  'SANTA ANITA': { lat: -12.0461, lon: -76.9668, label: 'SANTA ANITA', zoom: 16 },
+};
 
 const formatLevelLabel = (value) => {
   if (value === 'inicial_cuna_jardin') return 'INICIAL CUNA JARDIN';
@@ -51,6 +77,13 @@ const normalizeText = (value) => String(value || '').trim();
 const normalizeCode = (value) => normalizeText(value).replace(/\s+/g, '');
 const isNumericCode = (value) => /^\d+$/.test(normalizeCode(value));
 const onlyDigits = (value) => String(value || '').replace(/\D/g, '');
+const normalizeDistrictKey = (value) =>
+  String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toUpperCase();
 
 const normalizeInstitutionCodes = (codLocalRaw, codModularRaw) => {
   const codLocalDigits = onlyDigits(codLocalRaw);
@@ -141,8 +174,8 @@ export default function MonitoreoInstituciones() {
   const [success, setSuccess] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [isFormExpanded, setIsFormExpanded] = useState(false);
-  const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
   const [isSearchFocused, setIsSearchFocused] = useState(false);
+  const [isDistrictComboOpen, setIsDistrictComboOpen] = useState(false);
   const [highlightedInstitutionId, setHighlightedInstitutionId] = useState('');
   const [toast, setToast] = useState({
     show: false,
@@ -153,7 +186,12 @@ export default function MonitoreoInstituciones() {
 
   const toastTimersRef = useRef({ hide: null, remove: null });
   const searchBoxRef = useRef(null);
+  const districtComboRef = useRef(null);
   const rowRefs = useRef(new Map());
+  const registerPanelRef = useRef(null);
+  const mapContainerRef = useRef(null);
+  const mapRef = useRef(null);
+  const markerRef = useRef(null);
 
   const showToast = (message, tone = 'success') => {
     if (toastTimersRef.current.hide) clearTimeout(toastTimersRef.current.hide);
@@ -278,6 +316,22 @@ export default function MonitoreoInstituciones() {
     return base;
   }, [institutions]);
 
+  const primaryCount = useMemo(
+    () =>
+      institutions.filter((item) => String(item.nivel || '').toLowerCase().includes('primaria')).length,
+    [institutions],
+  );
+
+  const staleWithoutSupervision30d = useMemo(() => {
+    const now = Date.now();
+    const THIRTY_DAYS = 30 * 24 * 60 * 60 * 1000;
+    return institutions.filter((item) => {
+      if (!item.updated_at) return true;
+      const updated = new Date(item.updated_at).getTime();
+      return Number.isFinite(updated) ? now - updated > THIRTY_DAYS : true;
+    }).length;
+  }, [institutions]);
+
   const filteredInstitutions = useMemo(() => {
     const term = search.toLowerCase().trim();
     return institutions.filter((item) => {
@@ -343,13 +397,6 @@ export default function MonitoreoInstituciones() {
     return scored.slice(0, 8).map((entry) => entry.item);
   }, [institutions, search]);
 
-  const hasAdvancedFilters =
-    levelFilter !== 'all' ||
-    modalityFilter !== 'all' ||
-    districtFilter !== 'all' ||
-    reiFilter !== 'all' ||
-    statusFilter !== 'all';
-
   const totalPages = Math.max(1, Math.ceil(filteredInstitutions.length / PAGE_SIZE));
 
   useEffect(() => {
@@ -361,31 +408,162 @@ export default function MonitoreoInstituciones() {
     return filteredInstitutions.slice(from, from + PAGE_SIZE);
   }, [filteredInstitutions, currentPage]);
 
+  const previewInstitution = useMemo(() => {
+    if (isFormExpanded) {
+      return {
+        nombre_ie: form.nombreIe || '',
+        distrito: form.distrito || '',
+        rei: form.rei || '',
+      };
+    }
+    return detailTarget || paginatedInstitutions[0] || institutions[0] || null;
+  }, [isFormExpanded, form.nombreIe, form.distrito, form.rei, detailTarget, paginatedInstitutions, institutions]);
+
+  const districtComboOptions = useMemo(() => {
+    const term = String(form.distrito || '').trim().toLowerCase();
+    if (!term) return districtOptions.slice(0, 12);
+
+    return [...districtOptions]
+      .sort((a, b) => {
+        const aStarts = a.toLowerCase().startsWith(term) ? 0 : 1;
+        const bStarts = b.toLowerCase().startsWith(term) ? 0 : 1;
+        if (aStarts !== bStarts) return aStarts - bStarts;
+        return a.localeCompare(b, 'es', { sensitivity: 'base' });
+      })
+      .filter((item) => item.toLowerCase().includes(term))
+      .slice(0, 12);
+  }, [districtOptions, form.distrito]);
+
+  const staticGeoPoint = useMemo(() => {
+    const districtKey = normalizeDistrictKey(previewInstitution?.distrito);
+    return DISTRICT_STATIC_POINTS[districtKey] || {
+      ...STATIC_MAP_POINT_FALLBACK,
+      label: districtKey || STATIC_MAP_POINT_FALLBACK.label,
+    };
+  }, [previewInstitution?.distrito]);
+
+  const handleExportCsv = () => {
+    const headers = [
+      'codigo_modular',
+      'nombre_institucion',
+      'nivel',
+      'modalidad',
+      'distrito',
+      'rei',
+      'estado',
+      'director',
+    ];
+
+    const escapeCsv = (value) => `"${String(value ?? '').replace(/"/g, '""')}"`;
+    const rows = filteredInstitutions.map((item) =>
+      [
+        item.cod_modular || '',
+        item.nombre_ie || '',
+        formatLevelLabel(item.nivel),
+        item.modalidad || '',
+        item.distrito || '',
+        item.rei || '',
+        formatStatusLabel(item.estado),
+        item.nombre_director || '',
+      ]
+        .map(escapeCsv)
+        .join(','),
+    );
+
+    const csv = [headers.join(','), ...rows].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `instituciones_${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+    URL.revokeObjectURL(url);
+  };
+
   const isEditing = Boolean(form.id);
+
+  useEffect(() => {
+    if (!isFormExpanded) return;
+    if (!mapContainerRef.current) return;
+    if (mapRef.current) return;
+
+    const map = L.map(mapContainerRef.current, {
+      center: [staticGeoPoint.lat, staticGeoPoint.lon],
+      zoom: staticGeoPoint.zoom || 14,
+      zoomControl: false,
+      attributionControl: false,
+      dragging: true,
+      scrollWheelZoom: false,
+      doubleClickZoom: false,
+      boxZoom: false,
+      keyboard: false,
+      touchZoom: true,
+    });
+
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: '',
+    }).addTo(map);
+
+    mapRef.current = map;
+  }, [isFormExpanded, staticGeoPoint.lat, staticGeoPoint.lon, staticGeoPoint.zoom]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!isFormExpanded || !map) return;
+
+    const frame = window.requestAnimationFrame(() => {
+      map.invalidateSize();
+    });
+
+    return () => window.cancelAnimationFrame(frame);
+  }, [isFormExpanded]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    map.setView([staticGeoPoint.lat, staticGeoPoint.lon], staticGeoPoint.zoom || 14, {
+      animate: true,
+      duration: 0.35,
+    });
+
+    if (markerRef.current) {
+      map.removeLayer(markerRef.current);
+      markerRef.current = null;
+    }
+
+    markerRef.current = L.marker([staticGeoPoint.lat, staticGeoPoint.lon]).addTo(map);
+  }, [staticGeoPoint.lat, staticGeoPoint.lon, staticGeoPoint.zoom]);
 
   useEffect(() => {
     if (isEditing) setIsFormExpanded(true);
   }, [isEditing]);
 
   useEffect(() => {
-    if (hasAdvancedFilters) setShowAdvancedFilters(true);
-  }, [hasAdvancedFilters]);
-
-  useEffect(() => {
-    if (!isSearchFocused) return undefined;
+    if (!isSearchFocused && !isDistrictComboOpen) return undefined;
 
     const handleOutsidePointer = (event) => {
       const target = event.target;
       if (!(target instanceof Node)) return;
       if (searchBoxRef.current?.contains(target)) return;
+      if (districtComboRef.current?.contains(target)) return;
       setIsSearchFocused(false);
+      setIsDistrictComboOpen(false);
     };
 
     window.addEventListener('pointerdown', handleOutsidePointer);
     return () => {
       window.removeEventListener('pointerdown', handleOutsidePointer);
     };
-  }, [isSearchFocused]);
+  }, [isSearchFocused, isDistrictComboOpen]);
+
+  useEffect(() => {
+    if (!isFormExpanded) return;
+    registerPanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, [isFormExpanded]);
 
   useEffect(() => {
     if (!highlightedInstitutionId) return;
@@ -420,7 +598,6 @@ export default function MonitoreoInstituciones() {
     setDistrictFilter('all');
     setReiFilter('all');
     setStatusFilter('all');
-    setShowAdvancedFilters(false);
     setIsSearchFocused(false);
     setHighlightedInstitutionId('');
     setCurrentPage(1);
@@ -666,579 +843,478 @@ export default function MonitoreoInstituciones() {
         </div>
       ) : null}
 
-      <SectionHeader title="Instituciones Educativas" size="page" />
+      <div className="rounded-[28px] border border-slate-200 bg-slate-50 p-5 shadow-[0_8px_26px_rgba(15,23,42,0.08)] dark:border-slate-800 dark:bg-slate-950/70 md:p-8">
+        <div className="flex flex-col gap-8">
+          <div className="flex flex-wrap items-end justify-between gap-4">
+            <div className="space-y-1">
+              <h1 className="text-4xl font-extrabold tracking-tight text-slate-900 dark:text-slate-100">Catálogo de Instituciones</h1>
+              <p className="text-sm text-slate-600 dark:text-slate-400">
+                Gestión y monitoreo del padrón nacional de centros educativos.
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                onClick={handleExportCsv}
+                className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+              >
+                <FileDown size={16} />
+                Exportar CSV
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsFormExpanded((current) => !current)}
+                className="inline-flex items-center gap-2 rounded-lg bg-cyan-700 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-cyan-800"
+              >
+                <Plus size={16} />
+                {isFormExpanded ? 'Ocultar Registro' : 'Registrar Institución'}
+                {isFormExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+              </button>
+            </div>
+          </div>
 
-      <Card className="flex flex-wrap items-center gap-2.5 py-3">
-        <span className="rounded-full border border-slate-700/70 bg-slate-900/55 px-3 py-1 text-xs text-slate-200">
-          IE: <span className="font-semibold text-slate-100">{summary.total}</span>
-        </span>
-        <span className="rounded-full border border-emerald-500/35 bg-emerald-500/10 px-3 py-1 text-xs text-emerald-100">
-          Activas: <span className="font-semibold">{summary.active}</span>
-        </span>
-        <span className="rounded-full border border-amber-500/35 bg-amber-500/10 px-3 py-1 text-xs text-amber-100">
-          Inactivas: <span className="font-semibold">{summary.inactive}</span>
-        </span>
-      </Card>
-
-      <datalist id="districts-catalog">
-        {districtOptions.map((item) => (
-          <option key={item} value={item} />
-        ))}
-      </datalist>
-
-      <Card className="flex flex-col gap-6">
-        <button
-          type="button"
-          onClick={() => setIsFormExpanded((current) => !current)}
-          className="inline-flex items-center justify-between rounded-xl border border-slate-700/60 bg-slate-900/40 px-3 py-2 text-left text-sm font-semibold text-slate-100 transition hover:border-slate-500"
-        >
-          <span>{isFormExpanded ? 'Registro de IE' : '+ Registrar institucion educativa'}</span>
-          {isFormExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-        </button>
-
-        {isFormExpanded ? (
-          <>
-            <SectionHeader
-              eyebrow="Registro"
-              title={isEditing ? 'Editando institucion educativa' : 'Registrar institucion educativa'}
-            />
-
-            {isEditing ? (
-              <div className="rounded-xl border border-amber-500/35 bg-amber-500/10 px-3 py-2 text-sm text-amber-100">
-                Editando institucion educativa.
+          <div className="order-3 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <div className="rounded-xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900/70">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Total Instituciones</p>
+              <div className="mt-2 flex items-end justify-between">
+                <p className="text-3xl font-bold text-cyan-700 dark:text-cyan-300">{summary.total}</p>
+                <span className="rounded-full bg-emerald-100 px-2 py-1 text-[11px] font-semibold text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-200">
+                  +2.4%
+                </span>
               </div>
-            ) : null}
+            </div>
+            <div className="rounded-xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900/70">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Activas</p>
+              <div className="mt-2 flex items-end justify-between">
+                <p className="text-3xl font-bold text-emerald-700 dark:text-emerald-300">{summary.active}</p>
+                <span className="text-xs text-slate-400">
+                  {summary.total ? `${((summary.active / summary.total) * 100).toFixed(1)}% del total` : '0.0% del total'}
+                </span>
+              </div>
+            </div>
+            <div className="rounded-xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900/70">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Nivel Primaria</p>
+              <div className="mt-2 flex items-end justify-between gap-2">
+                <p className="text-3xl font-bold text-slate-800 dark:text-slate-100">{primaryCount}</p>
+                <div className="h-1.5 w-20 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700">
+                  <div
+                    className="h-full rounded-full bg-cyan-600"
+                    style={{ width: `${summary.total ? Math.min(100, (primaryCount / summary.total) * 100) : 0}%` }}
+                  />
+                </div>
+              </div>
+            </div>
+            <div className="rounded-xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900/70">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Sin Supervisión (30D)</p>
+              <div className="mt-2 flex items-end justify-between">
+                <p className="text-3xl font-bold text-rose-700 dark:text-rose-300">{staleWithoutSupervision30d}</p>
+                <AlertTriangle size={17} className="text-rose-600 dark:text-rose-300" />
+              </div>
+            </div>
+          </div>
 
-            <form onSubmit={handleSubmit}>
-              <fieldset disabled={isSubmitting} className="grid gap-4 disabled:opacity-80 md:grid-cols-3">
-                <Input
-                  id="nombreIe"
-                  label="Nombre de la IE"
-                  value={form.nombreIe}
-                  onChange={(event) => setForm((prev) => ({ ...prev, nombreIe: event.target.value }))}
-                  placeholder="Nombre de la institucion"
-                  className="md:col-span-2"
-                  error={fieldErrors.nombreIe}
-                />
-                <Input
-                  id="distritoIe"
-                  label="Distrito"
-                  value={form.distrito}
-                  onChange={(event) => setForm((prev) => ({ ...prev, distrito: event.target.value }))}
-                  placeholder="Distrito / Provincia"
-                  list="districts-catalog"
-                  error={fieldErrors.distrito}
-                />
-
-                <Input
-                  id="codLocalIe"
-                  label="Codigo local"
-                  value={form.codLocal}
-                  onChange={(event) => setForm((prev) => ({ ...prev, codLocal: event.target.value }))}
-                  placeholder="Solo numeros"
-                  error={fieldErrors.codLocal}
-                />
-                <Input
-                  id="codModularIe"
-                  label="Codigo modular"
-                  value={form.codModular}
-                  onChange={(event) => setForm((prev) => ({ ...prev, codModular: event.target.value }))}
-                  placeholder="Solo numeros"
-                  error={fieldErrors.codModular}
-                />
-                <Select
-                  id="reiIe"
-                  label="REI"
-                  value={form.rei}
-                  onChange={(event) => setForm((prev) => ({ ...prev, rei: event.target.value }))}
-                  error={fieldErrors.rei}
-                >
-                  <option value="" disabled>
-                    Selecciona REI
+          <div className="order-4 rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900/70">
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+              <Select id="filterNivel" label="Nivel Educativo" value={levelFilter} onChange={(event) => setLevelFilter(event.target.value)}>
+                <option value="all">Todos los niveles</option>
+                <option value="inicial_cuna_jardin">INICIAL CUNA JARDIN</option>
+                <option value="inicial_jardin">INICIAL JARDIN</option>
+                <option value="primaria">PRIMARIA</option>
+                <option value="secundaria">SECUNDARIA</option>
+                <option value="tecnico_productiva">TECNICO PRODUCTIVA</option>
+              </Select>
+              <Select id="filterModalidad" label="Modalidad" value={modalityFilter} onChange={(event) => setModalityFilter(event.target.value)}>
+                <option value="all">Todas las modalidades</option>
+                <option value="EBR">EBR</option>
+                <option value="EBE">EBE</option>
+                <option value="EBA">EBA</option>
+              </Select>
+              <Select id="filterEstado" label="Estado Operativo" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
+                <option value="all">Cualquier estado</option>
+                <option value="active">Activa</option>
+                <option value="inactive">Inactiva</option>
+              </Select>
+              <Select id="filterDistrito" label="Región / DRE" value={districtFilter} onChange={(event) => setDistrictFilter(event.target.value)}>
+                <option value="all">Todas las regiones</option>
+                {districtOptions.map((item) => (
+                  <option key={item} value={item}>
+                    {item}
                   </option>
-                  {reiOptions.map((item) => (
-                    <option key={item} value={item}>
-                      {item}
-                    </option>
-                  ))}
-                </Select>
+                ))}
+              </Select>
+              <button
+                type="button"
+                onClick={() => setCurrentPage(1)}
+                className="mt-6 inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-slate-800 px-4 text-sm font-semibold text-white transition hover:bg-slate-900 dark:bg-slate-700 dark:hover:bg-slate-600"
+              >
+                <Filter size={15} />
+                Aplicar filtros
+              </button>
+            </div>
 
-                <Select
-                  id="nivelIe"
-                  label="Nivel"
-                  value={form.nivel}
-                  onChange={(event) => setForm((prev) => ({ ...prev, nivel: event.target.value }))}
-                  error={fieldErrors.nivel}
-                >
-                  <option value="inicial_cuna_jardin">INICIAL CUNA JARDIN</option>
-                  <option value="inicial_jardin">INICIAL JARDIN</option>
-                  <option value="primaria">PRIMARIA</option>
-                  <option value="secundaria">SECUNDARIA</option>
-                  <option value="tecnico_productiva">TECNICO PRODUCTIVA</option>
-                </Select>
-                <Select
-                  id="modalidadIe"
-                  label="Modalidad"
-                  value={form.modalidad}
-                  onChange={(event) => setForm((prev) => ({ ...prev, modalidad: event.target.value }))}
-                  error={fieldErrors.modalidad}
-                >
-                  <option value="EBR">EBR</option>
-                  <option value="EBE">EBE</option>
-                  <option value="EBA">EBA</option>
-                </Select>
-                <Select
-                  id="estadoIe"
-                  label="Estado"
-                  value={form.estado}
-                  onChange={(event) => setForm((prev) => ({ ...prev, estado: event.target.value }))}
-                >
-                  <option value="active">Activa</option>
-                  <option value="inactive">Inactiva</option>
-                </Select>
-
-                <Input
-                  id="directorIe"
-                  label="Nombre del director(a)"
-                  value={form.nombreDirector}
-                  onChange={(event) =>
-                    setForm((prev) => ({
-                      ...prev,
-                      nombreDirector: event.target.value,
-                    }))
-                  }
-                  placeholder="Nombres y apellidos"
-                  className="md:col-span-3"
-                  error={fieldErrors.nombreDirector}
-                />
-
-                <div className="md:col-span-3 flex flex-wrap items-end gap-3">
-                  <button
-                    type="submit"
-                    disabled={isSubmitting}
-                    className="inline-flex items-center justify-center gap-2 rounded-xl bg-slate-100 px-5 py-2.5 text-sm font-semibold text-slate-900 transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-70"
-                  >
-                    {isSubmitting ? <Loader2 size={16} className="animate-spin" /> : null}
-                    {isSubmitting
-                      ? isEditing
-                        ? 'Guardando cambios...'
-                        : 'Guardando...'
-                      : isEditing
-                        ? 'Guardar cambios'
-                        : 'Guardar IE'}
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setError('');
-                      setSuccess('');
-                      setFieldErrors({});
-                      setForm((prev) => ({ ...prev, ...EMPTY_FORM, id: prev.id }));
+            <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto]">
+              <div ref={searchBoxRef} className="relative">
+                <label className="sr-only" htmlFor="searchIe">Buscar IE</label>
+                <div className="flex h-10 items-center gap-2 rounded-lg border border-slate-300 bg-slate-50 px-3 dark:border-slate-700 dark:bg-slate-900">
+                  <Search size={14} className="text-slate-400" />
+                  <input
+                    id="searchIe"
+                    value={search}
+                    onChange={(event) => {
+                      setSearch(event.target.value);
+                      setHighlightedInstitutionId('');
                     }}
-                    className="inline-flex items-center justify-center rounded-xl border border-slate-700/60 px-5 py-2.5 text-sm font-semibold text-slate-200 transition hover:border-slate-500"
-                  >
-                    Limpiar
-                  </button>
-
-                  {isEditing ? (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setError('');
-                        setSuccess('');
-                        resetForm();
-                      }}
-                      className="inline-flex items-center justify-center rounded-xl border border-slate-700/60 px-5 py-2.5 text-sm font-semibold text-slate-200 transition hover:border-slate-500"
-                    >
-                      Cancelar edicion
-                    </button>
-                  ) : null}
+                    onFocus={() => setIsSearchFocused(true)}
+                    onKeyDown={handleSearchKeyDown}
+                    placeholder="Buscar instituciones por nombre o código modular..."
+                    className="w-full bg-transparent text-sm text-slate-700 placeholder:text-slate-400 focus:outline-none dark:text-slate-100"
+                  />
                 </div>
-              </fieldset>
-            </form>
-
-            {error ? <p className="text-sm text-rose-400">{error}</p> : null}
-            {success ? <p className="text-sm text-emerald-300">{success}</p> : null}
-          </>
-        ) : null}
-      </Card>
-
-      <Card className="flex flex-col gap-5">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <SectionHeader eyebrow="Listado" title="Listado de IE" />
-          <div className="rounded-xl border border-slate-700/60 bg-slate-900/45 px-3 py-2 text-xs text-slate-300">
-            Mostrando {rangeStart}-{rangeEnd} de {filteredInstitutions.length} IE
-          </div>
-        </div>
-
-        <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto_auto] lg:items-start">
-          <div ref={searchBoxRef} className="relative">
-            <label className="flex flex-col gap-1.5">
-              <span className="text-[10px] uppercase tracking-[0.16em] text-slate-400">Buscar IE</span>
-              <div className="flex h-10 items-center gap-2 rounded-xl border border-slate-700/60 bg-slate-900/70 px-3">
-                <Search size={14} className="text-slate-500" />
-                <input
-                  value={search}
-                  onChange={(event) => {
-                    setSearch(event.target.value);
-                    setHighlightedInstitutionId('');
-                  }}
-                  onFocus={() => setIsSearchFocused(true)}
-                  onKeyDown={handleSearchKeyDown}
-                  placeholder="Nombre, codigo local, codigo modular o director"
-                  className="w-full bg-transparent text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none"
-                />
-              </div>
-            </label>
-
-            {isSearchFocused && search.trim() ? (
-              <div className="absolute z-20 mt-1.5 w-full overflow-hidden rounded-xl border border-slate-700/80 bg-slate-950/95 shadow-[0_12px_34px_rgba(2,6,23,0.45)]">
-                {predictiveSuggestions.length ? (
-                  <div className="max-h-72 overflow-y-auto">
-                    {predictiveSuggestions.map((item) => (
-                      <button
-                        key={`suggestion-${item.id}`}
-                        type="button"
-                        onClick={() => applySuggestionSearch(item)}
-                        className="flex w-full flex-col gap-1 border-b border-slate-800/80 px-3 py-2 text-left last:border-b-0 hover:bg-slate-900/70"
-                      >
-                        <span className="truncate text-sm font-semibold text-slate-100">{item.nombre_ie}</span>
-                        <span className="truncate text-xs text-slate-400">
-                          Cod. modular: {item.cod_modular || '-'} | Cod. local: {item.cod_local || '-'} |{' '}
-                          {item.distrito || '-'} | {formatLevelLabel(item.nivel)} | {item.modalidad || '-'}
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="px-3 py-2 text-sm text-slate-400">No se encontraron IE.</p>
-                )}
-              </div>
-            ) : null}
-          </div>
-
-          <button
-            type="button"
-            onClick={clearFilters}
-            className="inline-flex h-10 items-center justify-center rounded-xl border border-slate-700/60 px-4 text-sm font-semibold text-slate-200 transition hover:border-slate-500"
-          >
-            Limpiar filtros
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setShowAdvancedFilters((current) => !current)}
-            className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-slate-700/60 px-4 text-sm font-semibold text-slate-200 transition hover:border-slate-500"
-          >
-            {showAdvancedFilters ? 'Ocultar filtros' : 'Filtros avanzados'}
-            {showAdvancedFilters ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-          </button>
-        </div>
-
-        {showAdvancedFilters ? (
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
-            <Select id="filterNivel" label="Nivel" value={levelFilter} onChange={(event) => setLevelFilter(event.target.value)}>
-              <option value="all">Todos</option>
-              <option value="inicial_cuna_jardin">INICIAL CUNA JARDIN</option>
-              <option value="inicial_jardin">INICIAL JARDIN</option>
-              <option value="primaria">PRIMARIA</option>
-              <option value="secundaria">SECUNDARIA</option>
-              <option value="tecnico_productiva">TECNICO PRODUCTIVA</option>
-            </Select>
-            <Select
-              id="filterModalidad"
-              label="Modalidad"
-              value={modalityFilter}
-              onChange={(event) => setModalityFilter(event.target.value)}
-            >
-              <option value="all">Todas</option>
-              <option value="EBR">EBR</option>
-              <option value="EBE">EBE</option>
-              <option value="EBA">EBA</option>
-            </Select>
-            <Select
-              id="filterDistrito"
-              label="Distrito"
-              value={districtFilter}
-              onChange={(event) => setDistrictFilter(event.target.value)}
-            >
-              <option value="all">Todos</option>
-              {districtOptions.map((item) => (
-                <option key={item} value={item}>
-                  {item}
-                </option>
-              ))}
-            </Select>
-            <Select id="filterRei" label="REI" value={reiFilter} onChange={(event) => setReiFilter(event.target.value)}>
-              <option value="all">Todas</option>
-              {reiOptions.map((item) => (
-                <option key={item} value={item}>
-                  {item}
-                </option>
-              ))}
-            </Select>
-            <Select
-              id="filterEstado"
-              label="Estado"
-              value={statusFilter}
-              onChange={(event) => setStatusFilter(event.target.value)}
-            >
-              <option value="all">Todos</option>
-              <option value="active">Activa</option>
-              <option value="inactive">Inactiva</option>
-            </Select>
-          </div>
-        ) : null}
-
-        {loading ? (
-          <div className="rounded-xl border border-slate-800/70 bg-slate-900/40 px-4 py-4">
-            <div className="flex items-center gap-2 text-sm text-cyan-200">
-              <Loader2 size={16} className="animate-spin" />
-              <p>Cargando instituciones educativas...</p>
-            </div>
-            <div className="mt-3 h-1.5 overflow-hidden rounded-full border border-slate-700/60 bg-slate-900/70">
-              <span className="block h-full w-1/3 animate-pulse rounded-full bg-cyan-400/70" />
-            </div>
-            <div className="mt-3 space-y-2" aria-hidden="true">
-              <div className="h-3 w-2/3 animate-pulse rounded-lg bg-slate-800/80" />
-              <div className="h-3 w-1/2 animate-pulse rounded-lg bg-slate-800/65" />
-            </div>
-          </div>
-        ) : filteredInstitutions.length === 0 ? (
-          <p className="text-sm text-slate-400">No se encontraron IE con los filtros actuales.</p>
-        ) : (
-          <>
-            <div className="space-y-3 lg:hidden">
-              {paginatedInstitutions.map((item) => (
-                <div
-                  key={item.id}
-                  ref={(node) => {
-                    if (node) rowRefs.current.set(item.id, node);
-                    else rowRefs.current.delete(item.id);
-                  }}
-                  className={`rounded-2xl border border-slate-800/70 bg-slate-950/35 p-3.5 shadow-[0_10px_30px_rgba(2,6,23,0.35)] ${
-                    item.id === highlightedInstitutionId ? 'ring-1 ring-cyan-400/60' : ''
-                  }`}
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="flex min-w-0 items-start gap-2">
-                      <Building2 size={14} className="mt-0.5 shrink-0 text-slate-400" />
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-semibold text-slate-100">{item.nombre_ie || '-'}</p>
-                        <p className="mt-0.5 text-[11px] text-slate-400">
-                          {item.modalidad || '-'} | {formatLevelLabel(item.nivel)}
-                        </p>
+                {isSearchFocused && search.trim() ? (
+                  <div className="absolute z-20 mt-1.5 w-full overflow-hidden rounded-xl border border-slate-200 bg-white shadow-[0_12px_34px_rgba(2,6,23,0.18)] dark:border-slate-700 dark:bg-slate-900">
+                    {predictiveSuggestions.length ? (
+                      <div className="max-h-72 overflow-y-auto">
+                        {predictiveSuggestions.map((item) => (
+                          <button
+                            key={`suggestion-${item.id}`}
+                            type="button"
+                            onClick={() => applySuggestionSearch(item)}
+                            className="flex w-full flex-col gap-1 border-b border-slate-100 px-3 py-2 text-left last:border-b-0 hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-slate-800/80"
+                          >
+                            <span className="truncate text-sm font-semibold text-slate-800 dark:text-slate-100">{item.nombre_ie}</span>
+                            <span className="truncate text-xs text-slate-500 dark:text-slate-400">
+                              Cod. modular: {item.cod_modular || '-'} | Cod. local: {item.cod_local || '-'} | {item.distrito || '-'}
+                            </span>
+                          </button>
+                        ))}
                       </div>
-                    </div>
-                    <span
-                      className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-semibold ${
-                        item.estado === 'inactive'
-                          ? 'border-amber-500/40 bg-amber-500/10 text-amber-200'
-                          : 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200'
-                      }`}
-                    >
-                      {formatStatusLabel(item.estado)}
-                    </span>
+                    ) : (
+                      <p className="px-3 py-2 text-sm text-slate-500 dark:text-slate-400">No se encontraron IE.</p>
+                    )}
                   </div>
+                ) : null}
+              </div>
+              <button
+                type="button"
+                onClick={clearFilters}
+                className="inline-flex h-10 items-center justify-center rounded-lg border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+              >
+                Limpiar filtros
+              </button>
+            </div>
+          </div>
 
-                  <div className="mt-3 overflow-hidden rounded-xl border border-slate-800/70 bg-slate-900/55">
-                    <div className="grid grid-cols-[110px_1fr] border-b border-slate-800/70 px-3 py-2 text-xs">
-                      <p className="text-[10px] uppercase tracking-[0.12em] text-slate-500">Cod. modular</p>
-                      <p className="truncate text-slate-200">{item.cod_modular || '-'}</p>
-                    </div>
-                    <div className="grid grid-cols-[110px_1fr] border-b border-slate-800/70 px-3 py-2 text-xs">
-                      <p className="text-[10px] uppercase tracking-[0.12em] text-slate-500">Cod. local</p>
-                      <p className="truncate text-slate-200">{item.cod_local || '-'}</p>
-                    </div>
-                    <div className="grid grid-cols-[110px_1fr] border-b border-slate-800/70 px-3 py-2 text-xs">
-                      <p className="text-[10px] uppercase tracking-[0.12em] text-slate-500">Distrito</p>
-                      <p className="truncate text-slate-200">{item.distrito || '-'}</p>
-                    </div>
-                    <div className="grid grid-cols-[110px_1fr] px-3 py-2 text-xs">
-                      <p className="text-[10px] uppercase tracking-[0.12em] text-slate-500">REI</p>
-                      <p className="truncate text-slate-200">{item.rei || '-'}</p>
-                    </div>
-                  </div>
-
-                  <div className="mt-3 grid grid-cols-2 gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setDetailTarget(item)}
-                      className="inline-flex items-center justify-center gap-1 rounded-xl border border-slate-700/60 px-3 py-2 text-xs font-semibold text-slate-200 transition hover:border-slate-500"
-                    >
-                      <Eye size={13} />
-                      Ver
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleEdit(item)}
-                      className="inline-flex items-center justify-center gap-1 rounded-xl border border-slate-700/60 px-3 py-2 text-xs font-semibold text-slate-200 transition hover:border-slate-500"
-                    >
-                      <Pencil size={13} />
-                      Editar
-                    </button>
-                  </div>
-                  <div className="mt-2 grid grid-cols-2 gap-2">
-                    <button
-                      type="button"
-                      onClick={() => handleToggleStatus(item)}
-                      disabled={isTogglingStatusId === item.id}
-                      className={`inline-flex items-center justify-center gap-1 rounded-xl border px-3 py-2 text-xs font-semibold transition ${
-                        item.estado === 'inactive'
-                          ? 'border-emerald-500/35 text-emerald-200 hover:border-emerald-400/60'
-                          : 'border-amber-500/35 text-amber-200 hover:border-amber-400/60'
-                      } disabled:cursor-not-allowed disabled:opacity-70`}
-                    >
-                      {isTogglingStatusId === item.id ? (
-                        <Loader2 size={13} className="animate-spin" />
-                      ) : (
-                        <Power size={13} />
-                      )}
-                      {item.estado === 'inactive' ? 'Activar' : 'Desactivar'}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setDeleteTarget(item)}
-                      className="inline-flex items-center justify-center gap-1 rounded-xl border border-rose-500/35 px-3 py-2 text-xs font-semibold text-rose-200 transition hover:border-rose-400/60"
-                    >
-                      <Trash2 size={13} />
-                      Inactivar
-                    </button>
-                  </div>
+          <div className="order-5 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xl dark:border-slate-800 dark:bg-slate-900/70">
+            {loading ? (
+              <div className="px-6 py-5">
+                <div className="flex items-center gap-2 text-sm text-cyan-700 dark:text-cyan-200">
+                  <Loader2 size={16} className="animate-spin" />
+                  <p>Cargando instituciones educativas...</p>
                 </div>
-              ))}
-            </div>
-
-            <div className="hidden overflow-x-auto rounded-xl border border-slate-800/70 bg-slate-950/35 lg:block">
-              <table className="min-w-[1180px] w-full text-left text-sm">
-                <thead className="border-b border-slate-800/70 text-[11px] uppercase tracking-[0.14em] text-slate-400">
-                  <tr>
-                    <th className="px-3 py-3">Nombre IE</th>
-                    <th className="px-3 py-3">Codigo modular</th>
-                    <th className="px-3 py-3">Codigo local</th>
-                    <th className="px-3 py-3">Nivel</th>
-                    <th className="px-3 py-3">Modalidad</th>
-                    <th className="px-3 py-3">Distrito</th>
-                    <th className="px-3 py-3">REI</th>
-                    <th className="px-3 py-3">Estado</th>
-                    <th className="px-3 py-3 text-right">Acciones</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {paginatedInstitutions.map((item) => (
-                    <tr
-                      key={item.id}
-                      ref={(node) => {
-                        if (node) rowRefs.current.set(item.id, node);
-                        else rowRefs.current.delete(item.id);
-                      }}
-                      className={`border-b border-slate-800/60 last:border-b-0 ${
-                        item.id === highlightedInstitutionId ? 'bg-cyan-500/10' : ''
-                      }`}
-                    >
-                      <td className="px-3 py-3 text-slate-100">
-                        <div className="flex items-center gap-2">
-                          <Building2 size={14} className="text-slate-400" />
-                          <span title={item.nombre_ie} className="max-w-[32ch] truncate">
-                            {item.nombre_ie}
-                          </span>
-                        </div>
-                      </td>
-                      <td className="px-3 py-3 text-slate-200">{item.cod_modular}</td>
-                      <td className="px-3 py-3 text-slate-200">{item.cod_local}</td>
-                      <td className="px-3 py-3 text-slate-200">{formatLevelLabel(item.nivel)}</td>
-                      <td className="px-3 py-3 text-slate-200">{item.modalidad || '-'}</td>
-                      <td className="px-3 py-3 text-slate-200">{item.distrito || '-'}</td>
-                      <td className="px-3 py-3 text-slate-200">{item.rei || '-'}</td>
-                      <td className="px-3 py-3">
-                        <span
-                          className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${
-                            item.estado === 'inactive'
-                              ? 'border-amber-500/40 bg-amber-500/10 text-amber-200'
-                              : 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200'
-                          }`}
-                        >
-                          {formatStatusLabel(item.estado)}
-                        </span>
-                      </td>
-                      <td className="px-3 py-3">
-                        <div className="flex justify-end gap-2">
-                          <button
-                            type="button"
-                            onClick={() => setDetailTarget(item)}
-                            className="inline-flex items-center gap-1 rounded-full border border-slate-700/60 px-3 py-1.5 text-xs font-semibold text-slate-200 transition hover:border-slate-500"
-                          >
-                            <Eye size={13} />
-                            Ver
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleEdit(item)}
-                            className="inline-flex items-center gap-1 rounded-full border border-slate-700/60 px-3 py-1.5 text-xs font-semibold text-slate-200 transition hover:border-slate-500"
-                          >
-                            <Pencil size={13} />
-                            Editar
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleToggleStatus(item)}
-                            disabled={isTogglingStatusId === item.id}
-                            className={`inline-flex items-center gap-1 rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
-                              item.estado === 'inactive'
-                                ? 'border-emerald-500/35 text-emerald-200 hover:border-emerald-400/60'
-                                : 'border-amber-500/35 text-amber-200 hover:border-amber-400/60'
-                            } disabled:cursor-not-allowed disabled:opacity-70`}
-                          >
-                            {isTogglingStatusId === item.id ? (
-                              <Loader2 size={13} className="animate-spin" />
-                            ) : (
-                              <Power size={13} />
-                            )}
-                            {item.estado === 'inactive' ? 'Activar' : 'Desactivar'}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setDeleteTarget(item)}
-                            className="inline-flex items-center gap-1 rounded-full border border-rose-500/35 px-3 py-1.5 text-xs font-semibold text-rose-200 transition hover:border-rose-400/60"
-                          >
-                            <Trash2 size={13} />
-                            Eliminar
-                          </button>
-                        </div>
-                      </td>
+              </div>
+            ) : filteredInstitutions.length === 0 ? (
+              <p className="px-6 py-5 text-sm text-slate-500 dark:text-slate-400">No se encontraron IE con los filtros actuales.</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="min-w-[1160px] w-full border-collapse text-sm">
+                  <thead>
+                    <tr className="border-b border-slate-200 bg-slate-50/70 dark:border-slate-800 dark:bg-slate-950/60">
+                      <th className="px-6 py-4 text-left text-[11px] font-bold uppercase tracking-wider text-slate-500">Código Modular</th>
+                      <th className="px-6 py-4 text-left text-[11px] font-bold uppercase tracking-wider text-slate-500">Nombre Institución</th>
+                      <th className="px-6 py-4 text-left text-[11px] font-bold uppercase tracking-wider text-slate-500">Nivel / Modalidad</th>
+                      <th className="px-6 py-4 text-left text-[11px] font-bold uppercase tracking-wider text-slate-500">Ubicación</th>
+                      <th className="px-6 py-4 text-left text-[11px] font-bold uppercase tracking-wider text-slate-500">Estado</th>
+                      <th className="px-6 py-4 text-right text-[11px] font-bold uppercase tracking-wider text-slate-500">Acciones</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                    {paginatedInstitutions.map((item) => (
+                      <tr
+                        key={item.id}
+                        ref={(node) => {
+                          if (node) rowRefs.current.set(item.id, node);
+                          else rowRefs.current.delete(item.id);
+                        }}
+                        className={`transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/40 ${
+                          item.id === highlightedInstitutionId ? 'bg-cyan-50 dark:bg-cyan-900/20' : ''
+                        }`}
+                      >
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <span className="rounded bg-slate-100 px-2 py-1 font-mono text-sm font-semibold text-slate-700 dark:bg-slate-800 dark:text-slate-200">
+                            {item.cod_modular || '-'}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4">
+                          <div className="flex items-center gap-3">
+                            <div className="flex h-8 w-8 items-center justify-center rounded bg-cyan-100 text-cyan-700 dark:bg-cyan-500/20 dark:text-cyan-200">
+                              <Building2 size={14} />
+                            </div>
+                            <div>
+                              <p className="font-bold text-slate-900 dark:text-slate-100">{item.nombre_ie || '-'}</p>
+                              <p className="text-xs text-slate-500 dark:text-slate-400">{item.rei || 'Sin REI'}</p>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <div className="flex flex-col">
+                            <span className="text-sm text-slate-700 dark:text-slate-200">{formatLevelLabel(item.nivel)}</span>
+                            <span className="text-[10px] font-bold uppercase tracking-tight text-slate-400">{item.modalidad || '-'}</span>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <div className="flex items-center gap-1.5 text-sm text-slate-600 dark:text-slate-300">
+                            <MapPin size={13} />
+                            {item.distrito || '-'}
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <span
+                            className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-bold ${
+                              item.estado === 'inactive'
+                                ? 'bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-200'
+                                : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-200'
+                            }`}
+                          >
+                            <span className={`h-1.5 w-1.5 rounded-full ${item.estado === 'inactive' ? 'bg-slate-500' : 'bg-emerald-500'}`} />
+                            {formatStatusLabel(item.estado)}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-right">
+                          <div className="flex justify-end gap-1">
+                            <button type="button" onClick={() => setDetailTarget(item)} className="p-2 text-slate-400 hover:text-cyan-700 dark:hover:text-cyan-200" title="Ver">
+                              <Eye size={15} />
+                            </button>
+                            <button type="button" onClick={() => handleEdit(item)} className="p-2 text-slate-400 hover:text-cyan-700 dark:hover:text-cyan-200" title="Editar">
+                              <Pencil size={15} />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleToggleStatus(item)}
+                              disabled={isTogglingStatusId === item.id}
+                              className="p-2 text-slate-400 hover:text-amber-600 disabled:opacity-50 dark:hover:text-amber-300"
+                              title={item.estado === 'inactive' ? 'Activar' : 'Desactivar'}
+                            >
+                              {isTogglingStatusId === item.id ? <Loader2 size={15} className="animate-spin" /> : <Power size={15} />}
+                            </button>
+                            <button type="button" onClick={() => setDeleteTarget(item)} className="p-2 text-slate-400 hover:text-rose-600 dark:hover:text-rose-300" title="Inactivar">
+                              <Trash2 size={15} />
+                            </button>
+                            <button type="button" className="p-2 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200" title="Más opciones">
+                              <MoreVertical size={15} />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
 
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <p className="text-xs text-slate-400">
-                Pagina {currentPage} de {totalPages}
+            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 bg-slate-50 px-6 py-4 dark:border-slate-800 dark:bg-slate-950/80">
+              <p className="text-sm text-slate-500 dark:text-slate-400">
+                Mostrando <span className="font-bold text-slate-900 dark:text-slate-100">{rangeStart}-{rangeEnd}</span> de{' '}
+                <span className="font-bold text-slate-900 dark:text-slate-100">{filteredInstitutions.length}</span> registros
               </p>
               <div className="flex items-center gap-2">
                 <button
                   type="button"
                   onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
                   disabled={currentPage === 1}
-                  className="rounded-xl border border-slate-700/60 px-3 py-2 text-xs font-semibold text-slate-200 transition hover:border-slate-500 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-100 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
                 >
                   Anterior
                 </button>
+                <span className="rounded-lg border border-cyan-700 bg-cyan-700 px-3 py-1.5 text-xs font-bold text-white">
+                  {currentPage}
+                </span>
                 <button
                   type="button"
                   onClick={() => setCurrentPage((prev) => Math.min(totalPages, prev + 1))}
                   disabled={currentPage >= totalPages}
-                  className="rounded-xl border border-slate-700/60 px-3 py-2 text-xs font-semibold text-slate-200 transition hover:border-slate-500 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-100 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
                 >
                   Siguiente
                 </button>
               </div>
             </div>
-          </>
-        )}
-      </Card>
+          </div>
+
+          {isFormExpanded ? (
+            <div ref={registerPanelRef} className="order-2 grid grid-cols-1 gap-6 lg:grid-cols-3">
+              <div className="lg:col-span-2 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900/70">
+                <div className="mb-4 flex items-center justify-between border-b border-slate-100 pb-3 dark:border-slate-800">
+                  <h3 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Editor de Registro Maestro</h3>
+                  <span className="rounded bg-cyan-100 px-2 py-1 text-[10px] font-bold uppercase tracking-widest text-cyan-700 dark:bg-cyan-500/20 dark:text-cyan-200">
+                    Validación Activa
+                  </span>
+                </div>
+
+                {isEditing ? (
+                  <div className="mb-4 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-700 dark:border-amber-500/35 dark:bg-amber-500/10 dark:text-amber-200">
+                    Editando institución educativa.
+                  </div>
+                ) : null}
+
+                <form onSubmit={handleSubmit}>
+                  <fieldset disabled={isSubmitting} className="grid gap-4 md:grid-cols-2 disabled:opacity-80">
+                    <Input id="codModularIe" label="Código Modular" value={form.codModular} onChange={(event) => setForm((prev) => ({ ...prev, codModular: event.target.value }))} placeholder="Solo números" error={fieldErrors.codModular} />
+                    <Input id="codLocalIe" label="Código Local" value={form.codLocal} onChange={(event) => setForm((prev) => ({ ...prev, codLocal: event.target.value }))} placeholder="Solo números" error={fieldErrors.codLocal} />
+                    <Input id="nombreIe" label="Nombre de la Institución" value={form.nombreIe} onChange={(event) => setForm((prev) => ({ ...prev, nombreIe: event.target.value }))} className="md:col-span-2" error={fieldErrors.nombreIe} />
+                    <div ref={districtComboRef} className="relative flex flex-col gap-1.5">
+                      <label htmlFor="distritoIe" className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">
+                        Distrito
+                      </label>
+                      <div className="flex items-center rounded-lg border border-slate-300 bg-slate-50 focus-within:border-cyan-500/70 focus-within:ring-2 focus-within:ring-cyan-500/20 dark:border-slate-700 dark:bg-slate-900">
+                        <input
+                          id="distritoIe"
+                          value={form.distrito}
+                          onFocus={() => setIsDistrictComboOpen(true)}
+                          onChange={(event) => {
+                            const value = event.target.value;
+                            setForm((prev) => ({ ...prev, distrito: value }));
+                            setIsDistrictComboOpen(true);
+                          }}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Escape') {
+                              setIsDistrictComboOpen(false);
+                            }
+                            if (event.key === 'Enter' && districtComboOptions.length) {
+                              event.preventDefault();
+                              const first = districtComboOptions[0];
+                              setForm((prev) => ({ ...prev, distrito: first }));
+                              setIsDistrictComboOpen(false);
+                            }
+                          }}
+                          placeholder="Selecciona o escribe distrito"
+                          autoComplete="off"
+                          className="h-10 w-full rounded-lg bg-transparent px-3 text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none dark:text-slate-100"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setIsDistrictComboOpen((current) => !current)}
+                          className="mr-1 inline-flex h-8 w-8 items-center justify-center rounded-md text-slate-500 transition hover:bg-slate-200 dark:hover:bg-slate-800"
+                          aria-label="Mostrar distritos"
+                        >
+                          <ChevronDown size={15} />
+                        </button>
+                      </div>
+                      {fieldErrors.distrito ? (
+                        <p className="text-xs text-rose-600 dark:text-rose-300">{fieldErrors.distrito}</p>
+                      ) : null}
+                      {isDistrictComboOpen ? (
+                        <div className="absolute z-30 mt-[62px] max-h-56 w-full overflow-y-auto rounded-xl border border-slate-200 bg-white p-1 shadow-[0_16px_38px_rgba(2,6,23,0.22)] dark:border-slate-700 dark:bg-slate-900">
+                          {districtComboOptions.length ? (
+                            districtComboOptions.map((item) => (
+                              <button
+                                key={`district-${item}`}
+                                type="button"
+                                onClick={() => {
+                                  setForm((prev) => ({ ...prev, distrito: item }));
+                                  setIsDistrictComboOpen(false);
+                                }}
+                                className={`flex w-full items-center rounded-lg px-3 py-2 text-left text-sm transition ${
+                                  item === form.distrito
+                                    ? 'bg-cyan-50 text-cyan-700 dark:bg-cyan-500/20 dark:text-cyan-200'
+                                    : 'text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800'
+                                }`}
+                              >
+                                {item}
+                              </button>
+                            ))
+                          ) : (
+                            <p className="px-3 py-2 text-sm text-slate-500 dark:text-slate-400">
+                              Sin coincidencias para el distrito.
+                            </p>
+                          )}
+                        </div>
+                      ) : null}
+                    </div>
+                    <Input id="directorIe" label="Director(a) a cargo" value={form.nombreDirector} onChange={(event) => setForm((prev) => ({ ...prev, nombreDirector: event.target.value }))} error={fieldErrors.nombreDirector} />
+                    <Select id="nivelIe" label="Nivel" value={form.nivel} onChange={(event) => setForm((prev) => ({ ...prev, nivel: event.target.value }))} error={fieldErrors.nivel}>
+                      <option value="inicial_cuna_jardin">INICIAL CUNA JARDIN</option>
+                      <option value="inicial_jardin">INICIAL JARDIN</option>
+                      <option value="primaria">PRIMARIA</option>
+                      <option value="secundaria">SECUNDARIA</option>
+                      <option value="tecnico_productiva">TECNICO PRODUCTIVA</option>
+                    </Select>
+                    <Select id="modalidadIe" label="Modalidad" value={form.modalidad} onChange={(event) => setForm((prev) => ({ ...prev, modalidad: event.target.value }))} error={fieldErrors.modalidad}>
+                      <option value="EBR">EBR</option>
+                      <option value="EBE">EBE</option>
+                      <option value="EBA">EBA</option>
+                    </Select>
+                    <Select id="reiIe" label="REI" value={form.rei} onChange={(event) => setForm((prev) => ({ ...prev, rei: event.target.value }))} error={fieldErrors.rei}>
+                      <option value="" disabled>Selecciona REI</option>
+                      {reiOptions.map((item) => (<option key={item} value={item}>{item}</option>))}
+                    </Select>
+                    <Select id="estadoIe" label="Estado" value={form.estado} onChange={(event) => setForm((prev) => ({ ...prev, estado: event.target.value }))}>
+                      <option value="active">Activa</option>
+                      <option value="inactive">Inactiva</option>
+                    </Select>
+                    <div className="md:col-span-2 flex flex-wrap justify-end gap-3 pt-2">
+                      <button type="button" onClick={() => { setError(''); setSuccess(''); setFieldErrors({}); setForm((prev) => ({ ...prev, ...EMPTY_FORM, id: prev.id })); }} className="rounded-lg border border-slate-300 px-5 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">
+                        Limpiar
+                      </button>
+                      {isEditing ? (
+                        <button type="button" onClick={() => { setError(''); setSuccess(''); resetForm(); }} className="rounded-lg border border-slate-300 px-5 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">
+                          Cancelar edición
+                        </button>
+                      ) : null}
+                      <button type="submit" disabled={isSubmitting} className="inline-flex items-center gap-2 rounded-lg bg-slate-800 px-6 py-2 text-sm font-semibold text-white hover:bg-slate-900 disabled:opacity-70 dark:bg-cyan-700 dark:hover:bg-cyan-800">
+                        {isSubmitting ? <Loader2 size={15} className="animate-spin" /> : null}
+                        {isSubmitting ? (isEditing ? 'Guardando cambios...' : 'Guardando...') : isEditing ? 'Guardar cambios' : 'Guardar IE'}
+                      </button>
+                    </div>
+                  </fieldset>
+                </form>
+                {error ? <p className="mt-3 text-sm text-rose-600 dark:text-rose-300">{error}</p> : null}
+                {success ? <p className="mt-2 text-sm text-emerald-700 dark:text-emerald-300">{success}</p> : null}
+              </div>
+
+              <div className="space-y-6">
+                <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900/70">
+                  <div className="flex items-center justify-between border-b border-slate-100 p-4 dark:border-slate-800">
+                    <h4 className="text-sm font-bold uppercase tracking-tight text-slate-900 dark:text-slate-100">Geo-referencia</h4>
+                    <MapPin size={15} className="text-slate-400" />
+                  </div>
+                  <div className="relative aspect-video overflow-hidden bg-slate-200 dark:bg-slate-800/70">
+                    <div
+                      ref={mapContainerRef}
+                      className="h-full w-full"
+                      role="img"
+                      aria-label={`Mapa de referencia de ${staticGeoPoint.label}`}
+                    />
+                    <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-slate-950/20 via-transparent to-slate-950/10" />
+                  </div>
+                  <div className="space-y-1 p-4 text-xs text-slate-500 dark:text-slate-400">
+                    <p><strong>Distrito:</strong> {previewInstitution?.distrito || 'Pendiente de validación'}</p>
+                    <p><strong>REI:</strong> {previewInstitution?.rei || 'Pendiente de validación'}</p>
+                    <p><strong>Referencia:</strong> {staticGeoPoint.lat.toFixed(5)}, {staticGeoPoint.lon.toFixed(5)}</p>
+                  </div>
+                </div>
+
+                <div className="rounded-2xl bg-slate-900 p-6 text-white shadow-xl">
+                  <h4 className="mb-4 text-xs font-bold uppercase tracking-widest text-slate-400">Actividad Reciente</h4>
+                  <div className="space-y-3 text-xs">
+                    <div className="rounded-lg bg-white/5 p-3">
+                      <p className="font-semibold">Actualización de institución</p>
+                      <p className="mt-1 text-slate-400">{previewInstitution?.nombre_ie || 'Sin institución seleccionada'}</p>
+                    </div>
+                    <div className="rounded-lg bg-white/5 p-3">
+                      <p className="font-semibold">Registros activos</p>
+                      <p className="mt-1 text-slate-400">{summary.active} instituciones activas</p>
+                    </div>
+                    <div className="rounded-lg bg-white/5 p-3">
+                      <p className="font-semibold">Sin supervisión 30 días</p>
+                      <p className="mt-1 text-slate-400">{staleWithoutSupervision30d} instituciones</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : null}
+        </div>
+      </div>
 
       {detailTarget ? (
         <div
