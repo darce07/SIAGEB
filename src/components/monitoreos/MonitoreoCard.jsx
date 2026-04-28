@@ -150,6 +150,8 @@ export default function MonitoreoCard({
   onUploadCover,
   onRemoveCover,
   coverImageUrl = '',
+  imageLoading = 'lazy',
+  imageFetchPriority = 'auto',
 }) {
   const statusConfig = isLightTheme ? STATUS_CONFIG_LIGHT : STATUS_CONFIG_DARK;
   const primaryConfig = isLightTheme ? PRIMARY_ACTION_CONFIG_LIGHT : PRIMARY_ACTION_CONFIG_DARK;
@@ -187,9 +189,9 @@ export default function MonitoreoCard({
             : 'border border-slate-700/70 bg-slate-900/55'
       }`}
     >
-      <article className="flex h-full min-h-[288px] flex-col overflow-hidden rounded-xl">
+      <article className="flex h-full min-h-[270px] flex-col overflow-hidden rounded-xl">
         <header
-          className={`relative h-36 ${isDraft ? 'grayscale-[0.85]' : ''}`}
+          className={`relative h-32 ${isDraft ? 'grayscale-[0.85]' : ''}`}
           style={{
             backgroundImage: hasCustomCover
               ? undefined
@@ -210,7 +212,9 @@ export default function MonitoreoCard({
                 transform: isLightTheme ? 'scale(1.01)' : 'scale(1.015)',
                 objectPosition: hasCustomCover ? 'center center' : fallbackCover.objectPosition,
               }}
-              loading="lazy"
+              loading={imageLoading}
+              fetchPriority={imageFetchPriority}
+              decoding="async"
             />
           ) : null}
 
@@ -272,12 +276,12 @@ export default function MonitoreoCard({
           ) : null}
         </header>
 
-        <section className="flex flex-1 flex-col p-4">
+        <section className="flex flex-1 flex-col p-3.5">
           <div className="flex items-start justify-between gap-3">
             <div className="space-y-1">
               <h3
                 title={title}
-                className={`text-base font-semibold leading-6 ${
+                className={`text-[0.98rem] font-semibold leading-5 ${
                   isDraft
                     ? isLightTheme
                       ? 'text-slate-500'
@@ -320,7 +324,7 @@ export default function MonitoreoCard({
             </div>
 
             {hasActionBar ? (
-              <section className="flex items-center gap-1.5">
+              <section className="flex items-center gap-1">
                 {onEdit ? (
                   <ActionIconButton
                     label="Editar monitoreo"
@@ -350,7 +354,7 @@ export default function MonitoreoCard({
             ) : null}
           </div>
 
-          <section className="mt-3 flex flex-wrap gap-2">
+          <section className="mt-2.5 flex flex-wrap gap-1.5">
             <span
               className={`text-small inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 ${
                 isLightTheme
@@ -374,7 +378,7 @@ export default function MonitoreoCard({
 
           {isDraft ? (
             <p
-              className={`mt-3 inline-flex items-center gap-2 text-xs italic ${
+              className={`mt-2.5 inline-flex items-center gap-2 text-xs italic ${
                 isLightTheme ? 'text-slate-500' : 'text-slate-400'
               }`}
             >
@@ -383,7 +387,7 @@ export default function MonitoreoCard({
             </p>
           ) : null}
 
-          <footer className="mt-auto pt-4">
+          <footer className="mt-auto pt-3.5">
             <button
               type="button"
               onClick={onPrimaryAction}

@@ -712,6 +712,54 @@ export default function MonitoreoSelect() {
       reader.readAsDataURL(file);
     });
 
+  const optimizeCoverImage = (file) =>
+    new Promise((resolve, reject) => {
+      const objectUrl = URL.createObjectURL(file);
+      const image = new Image();
+      image.onload = () => {
+        const MAX_WIDTH = 1600;
+        const MAX_HEIGHT = 900;
+        const ratio = Math.min(MAX_WIDTH / image.width, MAX_HEIGHT / image.height, 1);
+        const targetWidth = Math.max(1, Math.round(image.width * ratio));
+        const targetHeight = Math.max(1, Math.round(image.height * ratio));
+
+        const canvas = document.createElement('canvas');
+        canvas.width = targetWidth;
+        canvas.height = targetHeight;
+        const context = canvas.getContext('2d');
+        if (!context) {
+          URL.revokeObjectURL(objectUrl);
+          reject(new Error('No se pudo procesar la imagen.'));
+          return;
+        }
+
+        context.imageSmoothingEnabled = true;
+        context.imageSmoothingQuality = 'high';
+        context.drawImage(image, 0, 0, targetWidth, targetHeight);
+
+        canvas.toBlob(
+          (blob) => {
+            URL.revokeObjectURL(objectUrl);
+            if (!blob) {
+              reject(new Error('No se pudo optimizar la portada.'));
+              return;
+            }
+            const reader = new FileReader();
+            reader.onload = () => resolve(String(reader.result || ''));
+            reader.onerror = () => reject(new Error('No se pudo convertir la portada optimizada.'));
+            reader.readAsDataURL(blob);
+          },
+          'image/webp',
+          0.82,
+        );
+      };
+      image.onerror = () => {
+        URL.revokeObjectURL(objectUrl);
+        reject(new Error('No se pudo cargar la imagen seleccionada.'));
+      };
+      image.src = objectUrl;
+    });
+
   const validateCoverImage = (file) => {
     const allowed = ['image/jpeg', 'image/png', 'image/webp'];
     if (!allowed.includes(file.type)) {
@@ -732,7 +780,7 @@ export default function MonitoreoSelect() {
     }
 
     try {
-      const coverImageUrl = await readFileAsDataUrl(file);
+      const coverImageUrl = await optimizeCoverImage(file).catch(() => readFileAsDataUrl(file));
       const nextLevelsConfig = {
         ...(template.levelsConfig || {}),
         coverImageUrl,
@@ -1063,8 +1111,8 @@ export default function MonitoreoSelect() {
           </p>
         </Card>
       ) : (
-        <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
-          {filteredTemplates.map((template) => {
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
+          {filteredTemplates.map((template, index) => {
             const { status, statusType, statusText } = resolveTemplateDisplayStatus(template);
             const isActive = status === 'active';
             const templateTitle = String(template.title || 'Monitoreo').trim();
@@ -1126,6 +1174,8 @@ export default function MonitoreoSelect() {
                   onDuplicate={onDuplicate}
                   onDelete={onDelete}
                   coverImageUrl={coverImageUrl}
+                  imageLoading={index < 6 ? 'eager' : 'lazy'}
+                  imageFetchPriority={index < 3 ? 'high' : 'auto'}
                   onUploadCover={
                     isAdmin ? () => coverInputRefs.current[template.id]?.click() : undefined
                   }

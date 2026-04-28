@@ -287,8 +287,11 @@ export default function MonitoreoInicio() {
 
     let active = true;
 
-    const loadDashboard = async () => {
-      setIsLoading(true);
+    const loadDashboard = async (options = {}) => {
+      const { silent = false } = options;
+      if (!silent) {
+        setIsLoading(true);
+      }
       setError('');
 
       const sourceRes = await supabase.rpc('get_cdd_dashboard_source');
@@ -310,20 +313,33 @@ export default function MonitoreoInicio() {
       setInstances(Array.isArray(payload.instances) ? payload.instances : []);
       setTemplateMonitors(Array.isArray(payload.template_monitors) ? payload.template_monitors : []);
       setProfiles(Array.isArray(payload.profiles) ? payload.profiles : []);
-      setIsLoading(false);
+      if (!silent) {
+        setIsLoading(false);
+      }
     };
 
     loadDashboard();
 
     const channel = supabase
       .channel('home-cdd-realtime')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'monitoring_templates' }, loadDashboard)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'monitoring_instances' }, loadDashboard)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'monitoring_template_monitors' }, loadDashboard)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'monitoring_templates' }, () =>
+        loadDashboard({ silent: true }),
+      )
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'monitoring_instances' }, () =>
+        loadDashboard({ silent: true }),
+      )
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'monitoring_template_monitors' }, () =>
+        loadDashboard({ silent: true }),
+      )
       .subscribe();
+
+    const refreshTimer = window.setInterval(() => {
+      loadDashboard({ silent: true });
+    }, 12000);
 
     return () => {
       active = false;
+      window.clearInterval(refreshTimer);
       supabase.removeChannel(channel);
     };
   }, [hasDashboardAccess]);
@@ -851,14 +867,14 @@ export default function MonitoreoInicio() {
                 <div className="overflow-x-auto pb-2">
                   <div
                     className="flex items-end gap-5 px-1"
-                    style={{ minWidth: `${Math.max(chartRows.length * 120, 620)}px` }}
+                    style={{ minWidth: `${Math.max(chartRows.length * 150, 760)}px` }}
                   >
                     {chartRows.map((row) => {
                       const maxHeight = 230;
                       const goalHeight = Math.max(4, Math.round((clampPercent(row.goalBarPercent) / 100) * maxHeight));
                       const realHeight = Math.max(8, Math.round((clampPercent(row.realBarPercent) / 100) * maxHeight));
                       return (
-                        <div key={row.id} className="flex w-[100px] shrink-0 flex-col items-center gap-3">
+                        <div key={row.id} className="flex w-[130px] shrink-0 flex-col items-center gap-3">
                           <div className="flex h-[250px] items-end gap-2">
                             <div className="flex w-10 flex-col items-center gap-1">
                               <div className={`w-full rounded-t-lg ${isLightTheme ? 'bg-slate-200' : 'bg-[#667788]'}`} style={{ height: `${goalHeight}px` }} />
@@ -867,7 +883,12 @@ export default function MonitoreoInicio() {
                               <div className="w-full rounded-t-lg bg-cyan-600" style={{ height: `${realHeight}px` }} />
                             </div>
                           </div>
-                          <p className={`line-clamp-2 h-8 text-center text-[11px] font-bold ${isLightTheme ? 'text-slate-500' : 'text-[#9eb0c3]'}`}>{row.indicator}</p>
+                          <p
+                            title={row.indicator}
+                            className={`line-clamp-3 h-12 text-center text-[11px] font-bold leading-4 ${isLightTheme ? 'text-slate-500' : 'text-[#9eb0c3]'}`}
+                          >
+                            {row.indicator}
+                          </p>
                         </div>
                       );
                     })}
