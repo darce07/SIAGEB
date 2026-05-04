@@ -14,6 +14,7 @@ import {
   Sun,
   LogOut,
   Loader2,
+  Menu,
   PanelLeftOpen,
   Send,
   Settings,
@@ -1182,6 +1183,7 @@ export default function MonitoreoLayout() {
   const notificationsToggleButtonRef = useRef(null);
   const mobileSidebarRef = useRef(null);
   const mobileSidebarButtonRef = useRef(null);
+  const mobileSidebarTouchStartRef = useRef(null);
   const sessionTimeoutRef = useRef(null);
   const sessionLastWriteRef = useRef(0);
   const sessionLogoutInProgressRef = useRef(false);
@@ -2629,6 +2631,18 @@ export default function MonitoreoLayout() {
   }, [isMobileSidebarOpen]);
 
   useEffect(() => {
+    if (!isMobileSidebarOpen) return undefined;
+    const previousOverflow = document.body.style.overflow;
+    const previousTouchAction = document.body.style.touchAction;
+    document.body.style.overflow = 'hidden';
+    document.body.style.touchAction = 'none';
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.body.style.touchAction = previousTouchAction;
+    };
+  }, [isMobileSidebarOpen]);
+
+  useEffect(() => {
     if (!isAssistantOpen) return;
 
     const focusInput = () => {
@@ -3750,16 +3764,16 @@ export default function MonitoreoLayout() {
   const isCompactDensity = density === DENSITY_COMPACT || isViewportCompact || isViewportDense;
   const sidebarDesktopRailClass = isSidebarCollapsed
     ? isCompactDensity
-      ? 'w-[84px] px-2 py-2.5'
-      : 'w-[92px] px-2.5 py-3'
+      ? 'w-[72px] px-2 py-2.5'
+      : 'w-[78px] px-2.5 py-3'
     : isCompactDensity
       ? 'w-[214px] p-2.5'
       : 'w-[228px] p-3';
 
   const sidebarDesktopButtonSizeClass = isSidebarCollapsed
     ? isCompactDensity
-      ? 'mx-auto h-9 w-9 justify-center px-0'
-      : 'mx-auto h-10 w-10 justify-center px-0'
+      ? 'h-9 w-9 justify-center px-0'
+      : 'h-10 w-10 justify-center px-0'
     : isCompactDensity
       ? 'h-9 w-full justify-start px-2.5'
       : 'h-10 w-full justify-start px-3';
@@ -3771,12 +3785,12 @@ export default function MonitoreoLayout() {
   }`;
 
   const sidebarRailToggleButtonClass =
-    `inline-flex ${isCompactDensity ? 'h-9 w-9' : 'h-10 w-10'} shrink-0 items-center justify-center rounded-xl border border-slate-700/70 bg-slate-900/55 text-slate-300 transition-all duration-200 ease-out hover:-translate-y-[1px] hover:border-cyan-400/40 hover:bg-slate-800/80 hover:text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/80 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950`;
+    `inline-flex ${isCompactDensity ? 'h-8 w-8' : 'h-9 w-9'} shrink-0 items-center justify-center rounded-xl border border-slate-700/70 bg-slate-950/45 text-slate-300 transition-all duration-200 ease-out hover:-translate-y-[1px] hover:border-cyan-400/40 hover:bg-slate-800/80 hover:text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/80 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950`;
 
-  const sidebarDesktopNavClass = `mt-0 flex min-h-0 flex-1 flex-col scrollbar-thin ${
+  const sidebarDesktopNavClass = `monitoreo-sidebar-nav flex min-h-0 flex-1 flex-col scrollbar-thin ${
     isSidebarCollapsed
-      ? `${isCompactDensity ? 'items-center gap-1.5' : 'items-center gap-2'} overflow-y-auto overflow-x-hidden pr-0.5`
-      : `${isCompactDensity ? 'gap-1.5' : 'gap-2'} overflow-y-auto pr-1`
+      ? `${isCompactDensity ? 'items-center gap-2' : 'items-center gap-2.5'} overflow-y-auto overflow-x-hidden px-0`
+      : `${isCompactDensity ? 'gap-2.5' : 'gap-3'} overflow-y-auto pr-1`
   }`;
 
   const sidebarDesktopFooterClass = `mt-4 border-t border-slate-800/65 pt-3 ${
@@ -3863,13 +3877,38 @@ export default function MonitoreoLayout() {
     return 'shrink-0 text-slate-400 group-hover:text-slate-100';
   };
 
+  const handleMobileDrawerTouchStart = (event) => {
+    const touch = event.touches?.[0];
+    if (!touch) return;
+    mobileSidebarTouchStartRef.current = {
+      x: touch.clientX,
+      y: touch.clientY,
+    };
+  };
+
+  const handleMobileDrawerTouchMove = (event) => {
+    const start = mobileSidebarTouchStartRef.current;
+    const touch = event.touches?.[0];
+    if (!start || !touch) return;
+
+    const deltaX = touch.clientX - start.x;
+    const deltaY = touch.clientY - start.y;
+    const isHorizontalSwipe = Math.abs(deltaX) > Math.abs(deltaY) * 1.4;
+
+    if (isHorizontalSwipe && deltaX < -72) {
+      mobileSidebarTouchStartRef.current = null;
+      setIsMobileSidebarOpen(false);
+      mobileSidebarButtonRef.current?.focus?.();
+    }
+  };
+
   return (
     <SidebarContext.Provider value={{ activeSection, setActiveSection }}>
       {isMobileSidebarOpen ? (
         <div className="fixed inset-0 z-50 lg:hidden">
           <div
             aria-hidden="true"
-            className="absolute inset-0 bg-slate-950/60 backdrop-blur-sm"
+            className="monitoreo-mobile-drawer-overlay absolute inset-0 bg-slate-950/45 backdrop-blur-[2px]"
             onClick={() => {
               setIsMobileSidebarOpen(false);
               mobileSidebarButtonRef.current?.focus?.();
@@ -3877,9 +3916,15 @@ export default function MonitoreoLayout() {
           />
           <aside
             ref={mobileSidebarRef}
-            className="monitoreo-sidebar absolute inset-y-0 left-0 flex w-[272px] flex-col border-r border-slate-700/50 bg-gradient-to-b from-slate-950/95 via-slate-950/90 to-slate-900/80 p-4 shadow-[22px_0_55px_rgba(2,6,23,0.55)] backdrop-blur-xl"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Navegacion principal"
+            className="monitoreo-sidebar monitoreo-mobile-drawer absolute inset-y-0 left-0 flex w-[82vw] min-w-[264px] max-w-[340px] flex-col border-r border-slate-700/50 bg-gradient-to-b from-slate-950/95 via-slate-950/90 to-slate-900/80 p-4 shadow-[22px_0_55px_rgba(2,6,23,0.55)] backdrop-blur-xl"
             onClick={(event) => event.stopPropagation()}
+            onTouchStart={handleMobileDrawerTouchStart}
+            onTouchMove={handleMobileDrawerTouchMove}
           >
+            <div className="monitoreo-sidebar-profile rounded-2xl border border-slate-700/65 bg-slate-900/55 p-2.5">
             <div className="flex items-center justify-between gap-3">
               <div className="flex min-w-0 items-center gap-3">
                 <div className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-2xl bg-slate-800 text-sm font-semibold text-slate-200">
@@ -3906,8 +3951,9 @@ export default function MonitoreoLayout() {
                 <X size={16} />
               </button>
             </div>
+            </div>
 
-            <nav className="mt-5 flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto pr-1 scrollbar-thin">
+            <nav className="mt-6 flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto pr-1 scrollbar-thin">
               {sidebarGroups.map((group) => (
                 <div key={`mobile-group-${group.id}`} className="space-y-1.5">
                   <p className="px-3 text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-500/90">
@@ -3996,9 +4042,38 @@ export default function MonitoreoLayout() {
       ) : null}
       <div className="app-shell safe-inset-x flex overflow-hidden bg-transparent">
         <aside
-          className={`monitoreo-sidebar hidden flex-col border-r border-slate-700/45 bg-gradient-to-b from-slate-950/95 via-slate-950/90 to-slate-900/82 shadow-[20px_0_50px_rgba(2,6,23,0.45)] backdrop-blur-xl transition-[width,padding,box-shadow,background-color] duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] lg:sticky lg:top-0 lg:flex lg:h-[100dvh] lg:overflow-visible lg:overscroll-contain ${sidebarDesktopRailClass}`}
+          className={`monitoreo-sidebar ${isSidebarCollapsed ? 'monitoreo-sidebar-collapsed' : ''} hidden flex-col border-r border-slate-700/45 bg-gradient-to-b from-slate-950/95 via-slate-950/90 to-slate-900/82 shadow-[20px_0_50px_rgba(2,6,23,0.45)] backdrop-blur-xl transition-[width,padding,box-shadow,background-color] duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] lg:sticky lg:top-0 lg:flex lg:h-[100dvh] lg:overflow-visible lg:overscroll-contain ${sidebarDesktopRailClass}`}
         >
-          <div className="mb-2 flex justify-end">
+          <div
+            className={`monitoreo-sidebar-profile shrink-0 rounded-2xl border border-slate-700/65 bg-slate-900/55 shadow-sm ${
+              isSidebarCollapsed ? 'flex flex-col items-center gap-2 px-1.5 py-2' : 'flex items-center gap-2.5 p-2'
+            }`}
+          >
+            <button
+              type="button"
+              onClick={() => navigate('/monitoreo/perfil')}
+              className={`group min-w-0 rounded-xl transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/80 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950 ${
+                isSidebarCollapsed ? 'flex justify-center' : 'flex flex-1 items-center gap-2.5 text-left'
+              }`}
+              aria-label="Abrir perfil de usuario"
+              title={isSidebarCollapsed ? `${displayName || 'Usuario'} - ${roleLabel}` : undefined}
+            >
+              <span className={`flex shrink-0 items-center justify-center overflow-hidden rounded-xl bg-slate-800 text-xs font-semibold text-slate-200 ring-1 ring-slate-700/70 transition group-hover:ring-cyan-400/45 ${isCompactDensity ? 'h-9 w-9' : 'h-10 w-10'}`}>
+                {avatarUrl ? (
+                  <img src={avatarUrl} alt="Avatar" className="h-full w-full object-cover" />
+                ) : (
+                  <span>{initials || 'U'}</span>
+                )}
+              </span>
+              {!isSidebarCollapsed ? (
+                <span className="min-w-0">
+                  <span className="block truncate text-[13px] font-semibold leading-5 text-slate-100">
+                    {displayName || 'AGEBRE'}
+                  </span>
+                  <span className="block truncate text-[11px] leading-4 text-slate-500">{roleLabel}</span>
+                </span>
+              ) : null}
+            </button>
             <button
               type="button"
               onClick={() => setIsSidebarCollapsed((current) => !current)}
@@ -4006,20 +4081,27 @@ export default function MonitoreoLayout() {
               aria-label={isSidebarCollapsed ? 'Expandir barra lateral' : 'Colapsar barra lateral'}
               title={isSidebarCollapsed ? 'Expandir barra lateral' : 'Colapsar barra lateral'}
             >
-              {isSidebarCollapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
+              {isSidebarCollapsed ? <PanelLeftOpen size={16} /> : <ChevronLeft size={16} />}
             </button>
           </div>
 
-          <div className="mt-1 flex min-h-0 flex-1 flex-col">
+          <div className={`${isSidebarCollapsed ? 'mt-4' : 'mt-5'} flex min-h-0 flex-1 flex-col`}>
             <nav className={sidebarDesktopNavClass}>
               {sidebarGroups.map((group) => (
-                <div key={`desktop-group-${group.id}`} className={isSidebarCollapsed ? 'w-full space-y-1' : 'space-y-1.5'}>
+                <div
+                  key={`desktop-group-${group.id}`}
+                  className={`monitoreo-sidebar-group ${isSidebarCollapsed ? 'flex w-full flex-col items-center gap-1.5' : 'space-y-1.5'}`}
+                >
                   {!isSidebarCollapsed ? (
-                    <p className="px-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-500/90">
+                    <p className="px-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500/90">
                       {group.label}
                     </p>
                   ) : null}
-                  <div className={isSidebarCollapsed ? 'space-y-1' : 'space-y-0.5'}>
+                  <div
+                    className={`monitoreo-sidebar-items ${
+                      isSidebarCollapsed ? 'flex w-full flex-col items-center gap-1.5' : 'space-y-0.5'
+                    }`}
+                  >
                     {group.items.map((item) => {
                       const isActive = isFicha
                         ? activeSection === item.id
@@ -4164,11 +4246,11 @@ export default function MonitoreoLayout() {
                 ref={mobileSidebarButtonRef}
                 type="button"
                 onClick={() => setIsMobileSidebarOpen(true)}
-                className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-800/70 text-slate-200 transition hover:border-slate-600/70"
+                className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-slate-700/70 bg-slate-900/55 text-slate-200 transition hover:border-cyan-400/45 hover:bg-slate-800/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/80"
                 aria-label="Abrir menú"
                 title="Menú"
               >
-                <PanelLeftOpen size={16} />
+                <Menu size={17} />
               </button>
               <span className="text-xs font-semibold tracking-[0.08em] text-slate-100">Monitoreo</span>
               <div className="flex items-center gap-2">
