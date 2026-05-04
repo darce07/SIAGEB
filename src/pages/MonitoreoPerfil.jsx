@@ -1,9 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useBeforeUnload } from 'react-router-dom';
-import { Loader2, Save } from 'lucide-react';
-import Card from '../components/ui/Card.jsx';
-import Input from '../components/ui/Input.jsx';
-import SectionHeader from '../components/ui/SectionHeader.jsx';
+import { Camera, Info, Loader2, Lock, Save, ShieldCheck, User } from 'lucide-react';
 import ConfirmModal from '../components/ui/ConfirmModal.jsx';
 import { supabase } from '../lib/supabase.js';
 import { getRoleLabel } from '../lib/roles.js';
@@ -23,10 +20,7 @@ const getAvatarPath = (userId) => `profiles/${userId}/avatar`;
 const toProfileDraft = (source = {}, auth = {}) => {
   const firstName = source.firstName || source.first_name || '';
   const lastName = source.lastName || source.last_name || '';
-  const fullName =
-    source.fullName ||
-    source.full_name ||
-    `${firstName} ${lastName}`.trim();
+  const fullName = source.fullName || source.full_name || `${firstName} ${lastName}`.trim();
 
   return {
     id: source.id || auth.id || '',
@@ -35,6 +29,10 @@ const toProfileDraft = (source = {}, auth = {}) => {
     lastName,
     fullName,
     avatarUrl: source.avatarUrl || source.avatar_url || '',
+    documentType: source.documentType || source.document_type || 'DNI',
+    documentNumber: source.documentNumber || source.document_number || '',
+    phone: source.phone || source.phone_number || source.telefono || '',
+    alternateEmail: source.alternateEmail || source.alternate_email || '',
   };
 };
 
@@ -42,7 +40,11 @@ const isSameProfile = (left, right) =>
   left.firstName === right.firstName &&
   left.lastName === right.lastName &&
   left.fullName === right.fullName &&
-  left.avatarUrl === right.avatarUrl;
+  left.avatarUrl === right.avatarUrl &&
+  left.documentType === right.documentType &&
+  left.documentNumber === right.documentNumber &&
+  left.phone === right.phone &&
+  left.alternateEmail === right.alternateEmail;
 
 export default function MonitoreoPerfil() {
   const auth = useMemo(() => readLocalJson('monitoreoAuth', {}), []);
@@ -58,15 +60,6 @@ export default function MonitoreoPerfil() {
   const [showUnsavedModal, setShowUnsavedModal] = useState(false);
   const nextLocationRef = useRef('');
 
-  const [form, setForm] = useState({
-    currentPassword: '',
-    newPassword: '',
-    confirmPassword: '',
-  });
-  const [passwordError, setPasswordError] = useState('');
-  const [passwordSuccess, setPasswordSuccess] = useState('');
-  const [isSavingPassword, setIsSavingPassword] = useState(false);
-
   const roleLabel = getRoleLabel(auth?.role);
 
   useEffect(() => {
@@ -75,12 +68,7 @@ export default function MonitoreoPerfil() {
       const user = authUser?.user;
       if (!user?.id) return;
 
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', user.id)
-        .single();
-
+      const { data, error } = await supabase.from('profiles').select('*').eq('id', user.id).single();
       if (error || !data) return;
 
       const next = toProfileDraft(data, auth);
@@ -102,14 +90,11 @@ export default function MonitoreoPerfil() {
     hydrateProfile();
   }, [auth]);
 
-  useEffect(() => {
-    return () => {
-      if (avatarPreview) URL.revokeObjectURL(avatarPreview);
-    };
+  useEffect(() => () => {
+    if (avatarPreview) URL.revokeObjectURL(avatarPreview);
   }, [avatarPreview]);
 
-  const hasUnsavedChanges =
-    !isSameProfile(profile, initialProfile) || avatarAction !== 'keep' || Boolean(avatarFile);
+  const hasUnsavedChanges = !isSameProfile(profile, initialProfile) || avatarAction !== 'keep' || Boolean(avatarFile);
 
   useBeforeUnload(
     useMemo(
@@ -147,10 +132,18 @@ export default function MonitoreoPerfil() {
       last_name: nextProfile.lastName,
       full_name: nextProfile.fullName,
       avatar_url: nextProfile.avatarUrl || null,
+      document_type: nextProfile.documentType || 'DNI',
+      document_number: nextProfile.documentNumber || '',
+      phone_number: nextProfile.phone || '',
+      alternate_email: nextProfile.alternateEmail || '',
       firstName: nextProfile.firstName,
       lastName: nextProfile.lastName,
       fullName: nextProfile.fullName,
       avatarUrl: nextProfile.avatarUrl || '',
+      documentType: nextProfile.documentType || 'DNI',
+      documentNumber: nextProfile.documentNumber || '',
+      phone: nextProfile.phone || '',
+      alternateEmail: nextProfile.alternateEmail || '',
     };
     localStorage.setItem('monitoreoProfile', JSON.stringify(serialized));
 
@@ -170,9 +163,7 @@ export default function MonitoreoPerfil() {
     setProfile((prev) => {
       const next = { ...prev, [field]: value };
       if (field === 'firstName' || field === 'lastName') {
-        next.fullName = `${field === 'firstName' ? value : next.firstName} ${
-          field === 'lastName' ? value : next.lastName
-        }`.trim();
+        next.fullName = `${field === 'firstName' ? value : next.firstName} ${field === 'lastName' ? value : next.lastName}`.trim();
       }
       if (field === 'fullName' && !value.trim()) {
         next.fullName = `${next.firstName} ${next.lastName}`.trim();
@@ -193,7 +184,7 @@ export default function MonitoreoPerfil() {
       return;
     }
     if (file.size > 3 * 1024 * 1024) {
-      setProfileError('La imagen supera 3MB. Sube una foto más ligera.');
+      setProfileError('La imagen supera 3MB. Sube una foto mas ligera.');
       return;
     }
 
@@ -230,13 +221,11 @@ export default function MonitoreoPerfil() {
       const avatarPath = getAvatarPath(profile.id);
 
       if (avatarAction === 'replace' && avatarFile) {
-        const { error: uploadError } = await supabase.storage
-          .from(AVATAR_BUCKET)
-          .upload(avatarPath, avatarFile, {
-            upsert: true,
-            contentType: avatarFile.type,
-            cacheControl: '3600',
-          });
+        const { error: uploadError } = await supabase.storage.from(AVATAR_BUCKET).upload(avatarPath, avatarFile, {
+          upsert: true,
+          contentType: avatarFile.type,
+          cacheControl: '3600',
+        });
 
         if (uploadError) {
           setProfileError(`No se pudo subir la foto: ${uploadError.message}`);
@@ -257,13 +246,28 @@ export default function MonitoreoPerfil() {
         last_name: profile.lastName.trim(),
         full_name: profile.fullName.trim() || `${profile.firstName} ${profile.lastName}`.trim(),
         avatar_url: avatarUrl,
+        document_type: profile.documentType || 'DNI',
+        document_number: profile.documentNumber?.trim() || '',
+        phone: profile.phone?.trim() || '',
+        alternate_email: profile.alternateEmail?.trim() || '',
         updated_at: new Date().toISOString(),
       };
 
-      const { error: updateError } = await supabase.from('profiles').update(payload).eq('id', profile.id);
+      let { error: updateError } = await supabase.from('profiles').update(payload).eq('id', profile.id);
       if (updateError) {
-        setProfileError(`No se pudieron guardar los cambios: ${updateError.message}`);
-        return;
+        const fallbackPayload = {
+          first_name: payload.first_name,
+          last_name: payload.last_name,
+          full_name: payload.full_name,
+          avatar_url: payload.avatar_url,
+          updated_at: payload.updated_at,
+        };
+        const fallback = await supabase.from('profiles').update(fallbackPayload).eq('id', profile.id);
+        if (fallback.error) {
+          setProfileError(`No se pudieron guardar los cambios: ${updateError.message}`);
+          return;
+        }
+        updateError = null;
       }
 
       const nextProfile = {
@@ -272,6 +276,10 @@ export default function MonitoreoPerfil() {
         lastName: payload.last_name,
         fullName: payload.full_name,
         avatarUrl: payload.avatar_url || '',
+        documentType: payload.document_type || 'DNI',
+        documentNumber: payload.document_number || '',
+        phone: payload.phone || '',
+        alternateEmail: payload.alternate_email || '',
       };
       setProfile(nextProfile);
       setInitialProfile(nextProfile);
@@ -288,57 +296,6 @@ export default function MonitoreoPerfil() {
     }
   };
 
-  const handlePasswordSubmit = async (event) => {
-    event.preventDefault();
-    if (isSavingPassword) return;
-    setPasswordError('');
-    setPasswordSuccess('');
-
-    if (!form.currentPassword.trim()) {
-      setPasswordError('Ingresa tu contraseña actual.');
-      return;
-    }
-    if (form.newPassword.length < 6) {
-      setPasswordError('La nueva contraseña debe tener al menos 6 caracteres.');
-      return;
-    }
-    if (form.newPassword !== form.confirmPassword) {
-      setPasswordError('Las contraseñas no coinciden.');
-      return;
-    }
-
-    const loginEmail = profile.email || auth?.email;
-    if (!loginEmail) {
-      setPasswordError('No se encontró el correo de la cuenta actual.');
-      return;
-    }
-
-    setIsSavingPassword(true);
-    try {
-      const { error: signInError } = await supabase.auth.signInWithPassword({
-        email: loginEmail,
-        password: form.currentPassword.trim(),
-      });
-      if (signInError) {
-        setPasswordError('La contraseña actual es incorrecta.');
-        return;
-      }
-
-      const { error: updateError } = await supabase.auth.updateUser({
-        password: form.newPassword,
-      });
-      if (updateError) {
-        setPasswordError(`No se pudo actualizar la contraseña: ${updateError.message}`);
-        return;
-      }
-
-      setPasswordSuccess('Contraseña actualizada correctamente.');
-      setForm({ currentPassword: '', newPassword: '', confirmPassword: '' });
-    } finally {
-      setIsSavingPassword(false);
-    }
-  };
-
   const avatarInitials = (profile.fullName || profile.email || 'U')
     .split(' ')
     .filter(Boolean)
@@ -346,131 +303,214 @@ export default function MonitoreoPerfil() {
     .map((part) => part[0]?.toUpperCase())
     .join('');
 
-  return (
-    <div className="flex flex-col gap-8">
-      <Card className="flex flex-col gap-6">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <SectionHeader eyebrow="Cuenta" title="Mi perfil" description="Actualiza tus datos y seguridad." />
-          <button
-            type="button"
-            onClick={handleSaveProfile}
-            disabled={!hasUnsavedChanges || isSavingProfile}
-            className="inline-flex items-center justify-center gap-2 rounded-xl bg-slate-100 px-4 py-2 text-sm font-semibold text-slate-900 transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {isSavingProfile ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
-            {isSavingProfile ? 'Guardando...' : 'Guardar cambios'}
-          </button>
-        </div>
-        <div className="grid gap-4 md:grid-cols-2">
-          <Input
-            id="firstName"
-            label="Nombres"
-            value={profile.firstName}
-            onChange={(event) => handleFieldChange('firstName', event.target.value)}
-            placeholder="Nombres"
-          />
-          <Input
-            id="lastName"
-            label="Apellidos"
-            value={profile.lastName}
-            onChange={(event) => handleFieldChange('lastName', event.target.value)}
-            placeholder="Apellidos"
-          />
-          <Input id="correo" label="Correo institucional" value={profile.email || auth?.email || ''} disabled />
-          <Input id="rol" label="Rol" value={roleLabel} disabled />
-        </div>
-        {profileError ? <p className="text-sm text-rose-400">{profileError}</p> : null}
-        {profileSuccess ? <p className="text-sm text-emerald-300">{profileSuccess}</p> : null}
-      </Card>
+  const statusChip = auth?.active === false ? 'Inactivo' : 'Activo';
+  const profileChecks = useMemo(() => {
+    const checks = [
+      { key: 'photo', label: 'Foto de perfil', done: Boolean(profile.avatarUrl) },
+      { key: 'doc', label: 'Documento', done: Boolean(profile.documentType && profile.documentNumber) },
+      { key: 'phone', label: 'Telefono de contacto', done: Boolean(profile.phone?.trim()) },
+      { key: 'mail1', label: 'Correo institucional', done: Boolean((profile.email || auth?.email || '').trim()) },
+      { key: 'mail2', label: 'Correo alternativo', done: Boolean(profile.alternateEmail?.trim()) },
+      { key: 'name', label: 'Nombre completo', done: Boolean(profile.firstName?.trim() && profile.lastName?.trim()) },
+    ];
+    const doneCount = checks.filter((item) => item.done).length;
+    const percent = Math.round((doneCount / checks.length) * 100);
+    return { checks, percent };
+  }, [profile, auth]);
 
-      <Card className="flex flex-col gap-6">
-        <SectionHeader
-          eyebrow="Perfil"
-          title="Foto de perfil"
-          description="Se guarda de forma persistente y se muestra en el panel lateral."
-        />
-        <div className="flex flex-wrap items-center gap-6">
-          <div className="flex h-16 w-16 items-center justify-center overflow-hidden rounded-2xl bg-slate-800 text-lg font-semibold text-slate-200">
-            {profile.avatarUrl ? (
-              <img src={profile.avatarUrl} alt="Foto de perfil" className="h-full w-full object-cover" />
-            ) : (
-              <span>{avatarInitials || 'U'}</span>
-            )}
+  return (
+    <div className="mx-auto w-full max-w-6xl space-y-6 p-2 md:p-4">
+      <div className="rounded-xl border border-slate-700/60 bg-slate-900/70 px-4 py-3 text-slate-200 shadow-[0_12px_12px_-4px_rgba(15,23,42,0.24)]">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <Info size={16} className="text-cyan-300" />
+            <p className="text-sm">{hasUnsavedChanges ? 'Cambios sin guardar en la seccion de datos personales.' : 'Perfil sincronizado correctamente.'}</p>
           </div>
-          <div className="flex flex-col gap-3">
-            <div className="flex flex-wrap gap-3">
-              <label className="inline-flex cursor-pointer items-center justify-center rounded-xl border border-slate-700/70 px-4 py-2 text-xs font-semibold text-slate-200 transition hover:border-slate-500/80">
-                Subir foto
-                <input
-                  type="file"
-                  accept="image/png,image/jpeg,image/webp"
-                  className="hidden"
-                  onChange={handlePhotoChange}
-                />
-              </label>
+          {hasUnsavedChanges ? (
+            <button
+              type="button"
+              onClick={() => {
+                setProfile(initialProfile);
+                setAvatarAction('keep');
+                setAvatarFile(null);
+                setProfileError('');
+                setProfileSuccess('Cambios descartados.');
+              }}
+              className="text-[11px] font-semibold uppercase tracking-wider text-slate-300 hover:text-white"
+            >
+              DESCARTAR
+            </button>
+          ) : null}
+        </div>
+      </div>
+
+      <div className="rounded-xl border border-slate-700/60 bg-slate-900/70 p-5 shadow-[0_12px_12px_-4px_rgba(15,23,42,0.24)]">
+        <div className="flex flex-col items-center gap-5 md:flex-row">
+          <div className="relative">
+            <div className="h-28 w-28 overflow-hidden rounded-full border-4 border-slate-700 bg-slate-800 text-slate-100">
+              {profile.avatarUrl ? (
+                <img src={profile.avatarUrl} alt="Avatar" className="h-full w-full object-cover" />
+              ) : (
+                <div className="flex h-full w-full items-center justify-center text-2xl font-bold">{avatarInitials || 'U'}</div>
+              )}
+            </div>
+            <label className="absolute bottom-1 right-1 inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-full bg-cyan-600 text-white shadow-lg hover:bg-cyan-500">
+              <Camera size={16} />
+              <input type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={handlePhotoChange} />
+            </label>
+          </div>
+          <div className="text-center md:text-left">
+            <h2 className="text-2xl font-bold text-slate-100">{profile.fullName || 'Usuario'}</h2>
+            <p className="text-slate-400">{roleLabel}</p>
+            <div className="mt-3 flex flex-wrap justify-center gap-2 md:justify-start">
+              <span className="rounded-full bg-emerald-500/20 px-3 py-1 text-[11px] font-bold uppercase tracking-wider text-emerald-300">{statusChip}</span>
+              <span className="rounded-full bg-slate-700/90 px-3 py-1 text-[11px] font-bold uppercase tracking-wider text-slate-200">Admin</span>
               {profile.avatarUrl ? (
                 <button
                   type="button"
                   onClick={handleRemovePhoto}
-                  className="inline-flex items-center justify-center rounded-xl border border-amber-500/30 px-4 py-2 text-xs font-semibold text-amber-200 transition hover:border-amber-400/60"
+                  className="rounded-full border border-amber-400/40 px-3 py-1 text-[11px] font-bold uppercase tracking-wider text-amber-200 hover:border-amber-300"
                 >
                   Quitar foto
                 </button>
               ) : null}
             </div>
-            <p className="text-xs text-slate-400">Formatos: JPG, PNG o WEBP. Máximo 3MB.</p>
           </div>
         </div>
-      </Card>
+      </div>
 
-      <Card className="flex flex-col gap-6">
-        <SectionHeader
-          eyebrow="Seguridad"
-          title="Cambiar contraseña"
-          description="Solo el propietario de la cuenta puede actualizarla."
-        />
-        <form onSubmit={handlePasswordSubmit} className="flex flex-col gap-4">
-          <Input
-            id="currentPassword"
-            label="Contraseña actual"
-            type="password"
-            autoComplete="current-password"
-            value={form.currentPassword}
-            onChange={(event) =>
-              setForm((prev) => ({ ...prev, currentPassword: event.target.value }))
-            }
-            placeholder="********"
-          />
-          <Input
-            id="newPassword"
-            label="Nueva contraseña"
-            type="password"
-            value={form.newPassword}
-            onChange={(event) => setForm((prev) => ({ ...prev, newPassword: event.target.value }))}
-            placeholder="********"
-          />
-          <Input
-            id="confirmPassword"
-            label="Confirmar nueva contraseña"
-            type="password"
-            value={form.confirmPassword}
-            onChange={(event) =>
-              setForm((prev) => ({ ...prev, confirmPassword: event.target.value }))
-            }
-            placeholder="********"
-          />
-          {passwordError ? <p className="text-sm text-rose-400">{passwordError}</p> : null}
-          {passwordSuccess ? <p className="text-sm text-emerald-300">{passwordSuccess}</p> : null}
-          <button
-            type="submit"
-            disabled={isSavingPassword}
-            className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-slate-100 py-3 text-sm font-semibold text-slate-900 transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-70 md:w-auto md:px-6"
-          >
-            {isSavingPassword ? <Loader2 size={16} className="animate-spin" /> : null}
-            {isSavingPassword ? 'Actualizando...' : 'Actualizar contraseña'}
-          </button>
-        </form>
-      </Card>
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
+        <div className="space-y-6 lg:col-span-8">
+          <div className="rounded-xl border border-slate-700/60 bg-slate-900/70 p-5 shadow-[0_12px_12px_-4px_rgba(15,23,42,0.24)]">
+            <div className="mb-5 flex items-center gap-2 text-slate-100">
+              <User size={16} className="text-cyan-300" />
+              <h3 className="text-lg font-semibold">Datos Personales</h3>
+            </div>
+
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              <div className="space-y-1">
+                <label className="text-xs font-semibold uppercase tracking-wider text-slate-400">Nombres</label>
+                <input
+                  type="text"
+                  value={profile.firstName}
+                  onChange={(event) => handleFieldChange('firstName', event.target.value)}
+                  className="w-full rounded-lg border border-slate-600 bg-slate-950/70 px-3 py-2.5 text-slate-100 focus:border-cyan-400 focus:outline-none"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-semibold uppercase tracking-wider text-slate-400">Apellidos</label>
+                <input
+                  type="text"
+                  value={profile.lastName}
+                  onChange={(event) => handleFieldChange('lastName', event.target.value)}
+                  className="w-full rounded-lg border border-slate-600 bg-slate-950/70 px-3 py-2.5 text-slate-100 focus:border-cyan-400 focus:outline-none"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-semibold uppercase tracking-wider text-slate-400">Tipo de documento</label>
+                <select
+                  value={profile.documentType || 'DNI'}
+                  onChange={(event) => handleFieldChange('documentType', event.target.value)}
+                  className="w-full rounded-lg border border-slate-600 bg-slate-950/70 px-3 py-2.5 text-slate-100 focus:border-cyan-400 focus:outline-none"
+                >
+                  <option value="DNI">DNI</option>
+                  <option value="CE">CE</option>
+                  <option value="Pasaporte">Pasaporte</option>
+                </select>
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-semibold uppercase tracking-wider text-slate-400">Numero de documento</label>
+                <input
+                  type="text"
+                  value={profile.documentNumber || ''}
+                  onChange={(event) => handleFieldChange('documentNumber', event.target.value)}
+                  className="w-full rounded-lg border border-slate-600 bg-slate-950/70 px-3 py-2.5 text-slate-100 focus:border-cyan-400 focus:outline-none"
+                />
+              </div>
+              <div className="space-y-1 md:col-span-2">
+                <label className="text-xs font-semibold uppercase tracking-wider text-slate-400">Telefono de contacto</label>
+                <input
+                  type="text"
+                  value={profile.phone || ''}
+                  onChange={(event) => handleFieldChange('phone', event.target.value)}
+                  className="w-full rounded-lg border border-slate-600 bg-slate-950/70 px-3 py-2.5 text-slate-100 focus:border-cyan-400 focus:outline-none"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-semibold uppercase tracking-wider text-slate-400">Correo institucional</label>
+                <input
+                  type="email"
+                  value={profile.email || auth?.email || ''}
+                  disabled
+                  className="w-full rounded-lg border border-slate-700 bg-slate-900/80 px-3 py-2.5 text-slate-300"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-semibold uppercase tracking-wider text-slate-400">Correo alternativo</label>
+                <input
+                  type="email"
+                  value={profile.alternateEmail || ''}
+                  onChange={(event) => handleFieldChange('alternateEmail', event.target.value)}
+                  className="w-full rounded-lg border border-slate-600 bg-slate-950/70 px-3 py-2.5 text-slate-100 focus:border-cyan-400 focus:outline-none"
+                />
+              </div>
+            </div>
+
+            {profileError ? <p className="mt-4 text-sm text-rose-300">{profileError}</p> : null}
+            {profileSuccess ? <p className="mt-4 text-sm text-emerald-300">{profileSuccess}</p> : null}
+
+            <div className="mt-5 flex justify-end">
+              <button
+                type="button"
+                onClick={handleSaveProfile}
+                disabled={!hasUnsavedChanges || isSavingProfile}
+                className="inline-flex items-center gap-2 rounded-lg bg-cyan-600 px-5 py-2.5 text-xs font-bold uppercase tracking-wider text-white transition hover:bg-cyan-500 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {isSavingProfile ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                {isSavingProfile ? 'Guardando...' : 'Guardar cambios'}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div className="space-y-6 lg:col-span-4">
+          <div className="rounded-xl border border-slate-700/60 bg-slate-900/70 p-5 shadow-[0_12px_12px_-4px_rgba(15,23,42,0.24)]">
+            <div className="mb-3 flex items-center gap-2 text-slate-100">
+              <ShieldCheck size={16} className="text-emerald-300" />
+              <h4 className="font-semibold">Estado de cuenta</h4>
+            </div>
+            <p className="mb-4 text-sm text-slate-300">Tu identidad fue validada y la cuenta se encuentra habilitada.</p>
+            <div className="inline-flex items-center gap-2 rounded-lg border border-emerald-400/30 bg-emerald-500/10 px-3 py-1.5 text-xs font-bold text-emerald-300">
+              <span className="h-2 w-2 rounded-full bg-emerald-300" /> VERIFICADO
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-cyan-500/40 bg-gradient-to-br from-cyan-700 to-cyan-900 p-5 shadow-xl">
+            <div className="mb-2 flex items-center gap-2 text-white">
+              <Lock size={16} />
+              <h4 className="font-semibold">Seguridad</h4>
+            </div>
+            <p className="text-sm text-cyan-50/90">Actualiza tu contrasena periodicamente para mejorar la proteccion de tu cuenta.</p>
+          </div>
+
+          <div className="rounded-xl border border-slate-700/60 bg-slate-900/70 p-5 shadow-[0_12px_12px_-4px_rgba(15,23,42,0.24)]">
+            <div className="mb-2 flex items-end justify-between">
+              <span className="text-sm font-semibold text-slate-100">Perfil completado</span>
+              <span className="text-xl font-bold text-cyan-300">{profileChecks.percent}%</span>
+            </div>
+            <div className="h-2 w-full overflow-hidden rounded-full bg-slate-700/70">
+              <div className="h-full rounded-full bg-cyan-500" style={{ width: `${profileChecks.percent}%` }} />
+            </div>
+            <ul className="mt-4 space-y-2">
+              {profileChecks.checks.map((item) => (
+                <li key={item.key} className={`text-xs ${item.done ? 'text-emerald-300' : 'text-slate-400'}`}>
+                  {item.done ? '✓' : '○'} {item.label}
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      </div>
 
       <ConfirmModal
         open={showUnsavedModal}

@@ -58,20 +58,20 @@ const STATUS_CONFIG_DARK = {
 
 const PRIMARY_ACTION_CONFIG_LIGHT = {
   primary:
-    'inline-flex h-10 w-full items-center justify-center gap-2 rounded-lg border border-cyan-700 bg-cyan-700 px-3 text-sm font-semibold text-white transition hover:bg-cyan-800',
+    'inline-flex h-9 w-full items-center justify-center gap-2 rounded-lg border border-cyan-700 bg-cyan-700 px-3 text-sm font-semibold text-white transition hover:bg-cyan-800',
   neutral:
-    'inline-flex h-10 w-full items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50',
+    'inline-flex h-9 w-full items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50',
   muted:
-    'inline-flex h-10 w-full items-center justify-center gap-2 rounded-lg border border-slate-200 bg-slate-100 px-3 text-sm font-semibold text-slate-500 transition hover:bg-slate-200',
+    'inline-flex h-9 w-full items-center justify-center gap-2 rounded-lg border border-slate-200 bg-slate-100 px-3 text-sm font-semibold text-slate-500 transition hover:bg-slate-200',
 };
 
 const PRIMARY_ACTION_CONFIG_DARK = {
   primary:
-    'inline-flex h-10 w-full items-center justify-center gap-2 rounded-lg border border-cyan-400/45 bg-cyan-500/20 px-3 text-sm font-semibold text-cyan-100 transition hover:bg-cyan-500/30',
+    'inline-flex h-9 w-full items-center justify-center gap-2 rounded-lg border border-cyan-400/45 bg-cyan-500/20 px-3 text-sm font-semibold text-cyan-100 transition hover:bg-cyan-500/30',
   neutral:
-    'inline-flex h-10 w-full items-center justify-center gap-2 rounded-lg border border-slate-600/80 bg-slate-900/70 px-3 text-sm font-semibold text-slate-200 transition hover:bg-slate-800/80',
+    'inline-flex h-9 w-full items-center justify-center gap-2 rounded-lg border border-slate-600/80 bg-slate-900/70 px-3 text-sm font-semibold text-slate-200 transition hover:bg-slate-800/80',
   muted:
-    'inline-flex h-10 w-full items-center justify-center gap-2 rounded-lg border border-slate-700/80 bg-slate-900/50 px-3 text-sm font-semibold text-slate-400 transition hover:bg-slate-800/70',
+    'inline-flex h-9 w-full items-center justify-center gap-2 rounded-lg border border-slate-700/80 bg-slate-900/50 px-3 text-sm font-semibold text-slate-400 transition hover:bg-slate-800/70',
 };
 
 const FALLBACK_COVERS = [
@@ -189,9 +189,9 @@ export default function MonitoreoCard({
             : 'border border-slate-700/70 bg-slate-900/55'
       }`}
     >
-      <article className="flex h-full min-h-[270px] flex-col overflow-hidden rounded-xl">
+      <article className="flex h-full min-h-[218px] flex-col overflow-hidden rounded-xl">
         <header
-          className={`relative h-32 ${isDraft ? 'grayscale-[0.85]' : ''}`}
+          className={`relative h-24 ${isDraft ? 'grayscale-[0.85]' : ''}`}
           style={{
             backgroundImage: hasCustomCover
               ? undefined
@@ -276,12 +276,12 @@ export default function MonitoreoCard({
           ) : null}
         </header>
 
-        <section className="flex flex-1 flex-col p-3.5">
+        <section className="flex flex-1 flex-col p-3">
           <div className="flex items-start justify-between gap-3">
             <div className="space-y-1">
               <h3
                 title={title}
-                className={`text-[0.98rem] font-semibold leading-5 ${
+                className={`text-[0.92rem] font-semibold leading-[1.15rem] ${
                   isDraft
                     ? isLightTheme
                       ? 'text-slate-500'
@@ -292,7 +292,7 @@ export default function MonitoreoCard({
                 }`}
                 style={{
                   display: '-webkit-box',
-                  WebkitLineClamp: 2,
+                    WebkitLineClamp: 3,
                   WebkitBoxOrient: 'vertical',
                   overflow: 'hidden',
                 }}
@@ -302,7 +302,7 @@ export default function MonitoreoCard({
 
               {description ? (
                 <p
-                  className={`text-xs ${
+                  className={`text-[11px] ${
                     isDraft
                       ? isLightTheme
                         ? 'text-slate-400'
@@ -313,7 +313,7 @@ export default function MonitoreoCard({
                   }`}
                   style={{
                     display: '-webkit-box',
-                    WebkitLineClamp: 1,
+                    WebkitLineClamp: 2,
                     WebkitBoxOrient: 'vertical',
                     overflow: 'hidden',
                   }}
@@ -354,9 +354,9 @@ export default function MonitoreoCard({
             ) : null}
           </div>
 
-          <section className="mt-2.5 flex flex-wrap gap-1.5">
+          <section className="mt-1.5 flex flex-wrap gap-1">
             <span
-              className={`text-small inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 ${
+              className={`text-small inline-flex items-center gap-1 rounded-full border px-2 py-0.5 ${
                 isLightTheme
                   ? 'border-slate-200 bg-slate-50 text-slate-600'
                   : 'border-slate-700/70 bg-slate-800/70 text-slate-300'
@@ -368,7 +368,7 @@ export default function MonitoreoCard({
 
             {deadlineLabel ? (
               <span
-                className={`text-small inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 ${deadlineToneClass}`}
+                className={`text-small inline-flex items-center gap-1 rounded-full border px-2 py-0.5 ${deadlineToneClass}`}
               >
                 <CalendarClock size={12} />
                 {deadlineLabel}
@@ -387,7 +387,7 @@ export default function MonitoreoCard({
             </p>
           ) : null}
 
-          <footer className="mt-auto pt-3.5">
+          <footer className="mt-auto pt-2">
             <button
               type="button"
               onClick={onPrimaryAction}
