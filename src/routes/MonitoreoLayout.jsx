@@ -3804,8 +3804,8 @@ export default function MonitoreoLayout() {
   }`;
 
   const contentContainerClass = isCompactDensity
-    ? 'mx-auto w-full max-w-[1240px] px-3 py-2.5 md:px-4 md:py-4'
-    : 'mx-auto w-full max-w-[1280px] px-3 py-3 md:px-5 md:py-5 lg:px-6 lg:py-6';
+    ? 'monitoreo-content-container mx-auto w-full max-w-[1240px] px-3 py-2.5 md:px-4 md:py-4'
+    : 'monitoreo-content-container mx-auto w-full max-w-[1280px] px-3 py-3 md:px-5 md:py-5 lg:px-6 lg:py-6';
 
   const contentSurfaceClass = isCompactDensity
     ? 'content-surface w-full min-w-0 max-w-full overflow-x-hidden rounded-[22px] px-3 py-3 md:px-4 md:py-4'
@@ -4217,26 +4217,26 @@ export default function MonitoreoLayout() {
                 >
                   <Sun size={16} />
                 </button>
-                <div className="mx-1 h-8 w-px bg-slate-700/60" />
-                <button
-                  type="button"
-                  onClick={() => navigate('/monitoreo/perfil')}
-                  className="inline-flex items-center gap-3 rounded-xl px-2 py-1 text-left transition hover:bg-slate-800/55"
-                  aria-label="Perfil"
-                  title="Perfil"
-                >
-                  <div className="hidden sm:block">
-                    <p className="text-sm font-semibold text-slate-100">{displayName || 'Usuario'}</p>
-                    <p className="text-xs text-slate-400">{roleLabel}</p>
-                  </div>
-                  <div className="flex h-9 w-9 items-center justify-center overflow-hidden rounded-full border border-slate-700/70 bg-slate-800/80 text-xs font-semibold text-slate-200">
-                    {avatarUrl ? (
-                      <img src={avatarUrl} alt="Avatar" className="h-full w-full object-cover" />
-                    ) : (
-                      <span>{initials || 'U'}</span>
-                    )}
-                  </div>
-                </button>
+                {isSidebarCollapsed ? (
+                  <>
+                    <div className="mx-1 h-8 w-px bg-slate-700/60" />
+                    <button
+                      type="button"
+                      onClick={() => navigate('/monitoreo/perfil')}
+                      className="inline-flex h-10 w-10 items-center justify-center rounded-full transition hover:bg-slate-800/55 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/80"
+                      aria-label="Perfil"
+                      title="Perfil"
+                    >
+                    <div className="flex h-9 w-9 items-center justify-center overflow-hidden rounded-full border border-slate-700/70 bg-slate-800/80 text-xs font-semibold text-slate-200">
+                      {avatarUrl ? (
+                        <img src={avatarUrl} alt="Avatar" className="h-full w-full object-cover" />
+                      ) : (
+                        <span>{initials || 'U'}</span>
+                      )}
+                    </div>
+                    </button>
+                  </>
+                ) : null}
               </div>
             </div>
           </div>
@@ -4282,6 +4282,19 @@ export default function MonitoreoLayout() {
                   title="Cambiar tema"
                 >
                   <Sun size={15} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => navigate('/monitoreo/perfil')}
+                  className="inline-flex h-8 w-8 items-center justify-center overflow-hidden rounded-full border border-slate-700/70 bg-slate-800/80 text-[10px] font-semibold text-slate-200 transition hover:border-cyan-400/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/80"
+                  aria-label="Perfil"
+                  title="Perfil"
+                >
+                  {avatarUrl ? (
+                    <img src={avatarUrl} alt="Avatar" className="h-full w-full object-cover" />
+                  ) : (
+                    <span>{initials || 'U'}</span>
+                  )}
                 </button>
               </div>
             </div>

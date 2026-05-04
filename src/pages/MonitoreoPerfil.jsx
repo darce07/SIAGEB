@@ -296,13 +296,6 @@ export default function MonitoreoPerfil() {
     }
   };
 
-  const avatarInitials = (profile.fullName || profile.email || 'U')
-    .split(' ')
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((part) => part[0]?.toUpperCase())
-    .join('');
-
   const statusChip = auth?.active === false ? 'Inactivo' : 'Activo';
   const profileChecks = useMemo(() => {
     const checks = [
@@ -347,14 +340,16 @@ export default function MonitoreoPerfil() {
       <div className="rounded-xl border border-slate-700/60 bg-slate-900/70 p-5 shadow-[0_12px_12px_-4px_rgba(15,23,42,0.24)]">
         <div className="flex flex-col items-center gap-5 md:flex-row">
           <div className="relative">
-            <div className="h-28 w-28 overflow-hidden rounded-full border-4 border-slate-700 bg-slate-800 text-slate-100">
+            <div className="h-28 w-28 overflow-hidden rounded-full border-4 border-slate-700 bg-slate-800 text-slate-100 shadow-[0_18px_35px_rgba(2,6,23,0.32)]">
               {profile.avatarUrl ? (
-                <img src={profile.avatarUrl} alt="Avatar" className="h-full w-full object-cover" />
+                <img src={profile.avatarUrl} alt="Foto de perfil" className="h-full w-full object-cover" />
               ) : (
-                <div className="flex h-full w-full items-center justify-center text-2xl font-bold">{avatarInitials || 'U'}</div>
+                <div className="flex h-full w-full items-center justify-center bg-[radial-gradient(circle_at_50%_20%,rgba(34,211,238,0.18),rgba(15,23,42,0.95)_68%)] text-slate-400">
+                  <User size={42} strokeWidth={1.6} aria-hidden="true" />
+                </div>
               )}
             </div>
-            <label className="absolute bottom-1 right-1 inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-full bg-cyan-600 text-white shadow-lg hover:bg-cyan-500">
+            <label className="absolute bottom-1 right-1 inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-full border border-cyan-300/35 bg-cyan-600 text-white shadow-lg transition hover:bg-cyan-500 focus-within:ring-2 focus-within:ring-cyan-300/80">
               <Camera size={16} />
               <input type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={handlePhotoChange} />
             </label>
