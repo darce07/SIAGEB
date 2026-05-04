@@ -17,6 +17,7 @@ import { isSupabaseConfigured, supabase } from '../lib/supabase.js';
 
 const AUTH_KEY = 'monitoreoAuth';
 const PROFILE_KEY = 'monitoreoProfile';
+const LOGIN_EVENT_AT_KEY = 'monitoreoLoginEventAt';
 const SESSION_LOGOUT_REASON_KEY = 'monitoreoSessionLogoutReason';
 const SESSION_LOGOUT_REASON_INACTIVITY = 'inactivity';
 const EMAIL_DOMAIN_OPTIONS = ['ugel.gob.pe', 'gmail.com', 'outlook.com', 'hotmail.com'];
@@ -475,6 +476,7 @@ export default function Login() {
       };
       localStorage.setItem(AUTH_KEY, JSON.stringify(payload));
       localStorage.setItem('monitoreoProfile', JSON.stringify(profile || {}));
+      localStorage.setItem(LOGIN_EVENT_AT_KEY, String(Date.now()));
       navigate('/monitoreo/inicio', { replace: true });
     } finally {
       setIsSubmitting(false);

@@ -7,7 +7,6 @@ import {
   Filter,
   Clock3,
   ClipboardCheck,
-  Loader2,
   Plus,
   Search,
   Siren,
@@ -15,6 +14,7 @@ import {
 import Card from '../components/ui/Card.jsx';
 import ConfirmModal from '../components/ui/ConfirmModal.jsx';
 import MonitoreoCard from '../components/monitoreos/MonitoreoCard.jsx';
+import { Skeleton } from '../components/ui/Skeleton.jsx';
 import { supabase } from '../lib/supabase.js';
 
 const AUTH_KEY = 'monitoreoAuth';
@@ -845,17 +845,17 @@ export default function MonitoreoSelect() {
 
   return (
     <div
-      className={`flex min-w-0 flex-col gap-6 rounded-3xl p-4 sm:p-6 ${
+      className={`flex min-w-0 flex-col gap-4 rounded-3xl p-3.5 sm:p-5 ${
         isLightTheme
           ? 'border border-slate-200 bg-white text-slate-900 shadow-sm'
           : 'border border-slate-800/70 bg-slate-950/55 text-slate-100'
       }`}
     >
-      <div className="flex min-w-0 flex-wrap items-start justify-between gap-4">
+      <div className="flex min-w-0 flex-wrap items-start justify-between gap-3">
         <div className="flex flex-col gap-1.5">
           <h1
             title="Monitoreos"
-            className={`max-w-[70ch] truncate text-3xl font-semibold ${
+            className={`max-w-[70ch] truncate text-[2rem] font-semibold leading-tight ${
               isLightTheme ? 'text-slate-900' : 'text-slate-100'
             }`}
           >
@@ -932,9 +932,9 @@ export default function MonitoreoSelect() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
         <Card
-          className={`p-4 shadow-sm ${
+          className={`p-3 shadow-sm ${
             isLightTheme
               ? 'border border-slate-200 bg-white'
               : 'border border-slate-700/70 bg-slate-900/55'
@@ -942,7 +942,7 @@ export default function MonitoreoSelect() {
         >
           <div className="mb-2 flex items-start justify-between">
             <span
-              className={`inline-flex h-8 w-8 items-center justify-center rounded-lg ${
+              className={`inline-flex h-7 w-7 items-center justify-center rounded-lg ${
                 isLightTheme
                   ? 'bg-cyan-50 text-cyan-700'
                   : 'bg-cyan-500/15 text-cyan-300'
@@ -957,12 +957,12 @@ export default function MonitoreoSelect() {
           <p className={`text-[11px] uppercase tracking-[0.14em] ${isLightTheme ? 'text-slate-500' : 'text-slate-400'}`}>
             Activos
           </p>
-          <p className={`mt-1 text-2xl font-semibold ${isLightTheme ? 'text-slate-900' : 'text-slate-100'}`}>
+          <p className={`mt-1 text-[1.65rem] font-semibold leading-none ${isLightTheme ? 'text-slate-900' : 'text-slate-100'}`}>
             {dashboardMetrics.active}
           </p>
         </Card>
         <Card
-          className={`p-4 shadow-sm ${
+          className={`p-3 shadow-sm ${
             isLightTheme
               ? 'border border-slate-200 bg-white'
               : 'border border-slate-700/70 bg-slate-900/55'
@@ -970,7 +970,7 @@ export default function MonitoreoSelect() {
         >
           <div className="mb-2 flex items-start justify-between">
             <span
-              className={`inline-flex h-8 w-8 items-center justify-center rounded-lg ${
+              className={`inline-flex h-7 w-7 items-center justify-center rounded-lg ${
                 isLightTheme
                   ? 'bg-amber-50 text-amber-700'
                   : 'bg-amber-500/15 text-amber-300'
@@ -985,12 +985,12 @@ export default function MonitoreoSelect() {
           <p className={`text-[11px] uppercase tracking-[0.14em] ${isLightTheme ? 'text-slate-500' : 'text-slate-400'}`}>
             Programados
           </p>
-          <p className={`mt-1 text-2xl font-semibold ${isLightTheme ? 'text-slate-900' : 'text-slate-100'}`}>
+          <p className={`mt-1 text-[1.65rem] font-semibold leading-none ${isLightTheme ? 'text-slate-900' : 'text-slate-100'}`}>
             {dashboardMetrics.scheduled}
           </p>
         </Card>
         <Card
-          className={`p-4 shadow-sm ${
+          className={`p-3 shadow-sm ${
             isLightTheme
               ? 'border border-slate-200 bg-white'
               : 'border border-slate-700/70 bg-slate-900/55'
@@ -998,7 +998,7 @@ export default function MonitoreoSelect() {
         >
           <div className="mb-2 flex items-start justify-between">
             <span
-              className={`inline-flex h-8 w-8 items-center justify-center rounded-lg ${
+              className={`inline-flex h-7 w-7 items-center justify-center rounded-lg ${
                 isLightTheme
                   ? 'bg-emerald-50 text-emerald-700'
                   : 'bg-emerald-500/15 text-emerald-300'
@@ -1013,12 +1013,12 @@ export default function MonitoreoSelect() {
           <p className={`text-[11px] uppercase tracking-[0.14em] ${isLightTheme ? 'text-slate-500' : 'text-slate-400'}`}>
             Cerrados
           </p>
-          <p className={`mt-1 text-2xl font-semibold ${isLightTheme ? 'text-slate-900' : 'text-slate-100'}`}>
+          <p className={`mt-1 text-[1.65rem] font-semibold leading-none ${isLightTheme ? 'text-slate-900' : 'text-slate-100'}`}>
             {dashboardMetrics.closed}
           </p>
         </Card>
         <Card
-          className={`p-4 shadow-sm ${
+          className={`p-3 shadow-sm ${
             isLightTheme
               ? 'border border-slate-200 bg-white'
               : 'border border-slate-700/70 bg-slate-900/55'
@@ -1026,7 +1026,7 @@ export default function MonitoreoSelect() {
         >
           <div className="mb-2 flex items-start justify-between">
             <span
-              className={`inline-flex h-8 w-8 items-center justify-center rounded-lg ${
+              className={`inline-flex h-7 w-7 items-center justify-center rounded-lg ${
                 isLightTheme
                   ? 'bg-rose-50 text-rose-700'
                   : 'bg-rose-500/15 text-rose-300'
@@ -1041,20 +1041,20 @@ export default function MonitoreoSelect() {
           <p className={`text-[11px] uppercase tracking-[0.14em] ${isLightTheme ? 'text-slate-500' : 'text-slate-400'}`}>
             Alertas
           </p>
-          <p className={`mt-1 text-2xl font-semibold ${isLightTheme ? 'text-slate-900' : 'text-slate-100'}`}>
+          <p className={`mt-1 text-[1.65rem] font-semibold leading-none ${isLightTheme ? 'text-slate-900' : 'text-slate-100'}`}>
             {dashboardMetrics.alerts}
           </p>
         </Card>
       </div>
 
-      <div className="grid grid-cols-1 gap-3 lg:grid-cols-[1.2fr_auto]">
+      <div className="grid grid-cols-1 gap-2.5 lg:grid-cols-[1.2fr_auto]">
         <label className="relative">
           <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
           <input
             value={searchTerm}
             onChange={(event) => setSearchTerm(event.target.value)}
             placeholder="Buscar monitoreos..."
-            className={`h-10 w-full rounded-xl border pl-9 pr-3 text-sm outline-none placeholder:text-slate-500 focus:border-cyan-700 ${
+            className={`h-9 w-full rounded-xl border pl-9 pr-3 text-sm outline-none placeholder:text-slate-500 focus:border-cyan-700 ${
               isLightTheme
                 ? 'border-slate-300 bg-white text-slate-900'
                 : 'border-slate-700/70 bg-slate-900/60 text-slate-100'
@@ -1064,7 +1064,7 @@ export default function MonitoreoSelect() {
         <select
           value={sortMode}
           onChange={(event) => setSortMode(event.target.value)}
-          className={`h-10 rounded-xl border px-3 text-sm outline-none focus:border-cyan-700 ${
+          className={`h-9 rounded-xl border px-3 text-sm outline-none focus:border-cyan-700 ${
             isLightTheme
               ? 'border-slate-300 bg-white text-slate-700'
               : 'border-slate-700/70 bg-slate-900/60 text-slate-200'
@@ -1077,27 +1077,45 @@ export default function MonitoreoSelect() {
       </div>
 
       {isLoading ? (
-        <Card
-          className={`flex flex-col gap-4 p-4 shadow-sm ${
-            isLightTheme
-              ? 'border border-slate-200 bg-white'
-              : 'border border-slate-700/70 bg-slate-900/55'
-          }`}
+        <div
+          className="grid grid-cols-1 gap-2.5 md:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-5"
+          role="status"
+          aria-label="Cargando monitoreos"
         >
-          <div className={`flex items-center gap-2 text-sm ${isLightTheme ? 'text-slate-700' : 'text-slate-200'}`}>
-            <Loader2 size={16} className="animate-spin" />
-            <p>Cargando monitoreos...</p>
-          </div>
-          <div className={`h-1.5 overflow-hidden rounded-full border ${
-            isLightTheme ? 'border-slate-200 bg-slate-100' : 'border-slate-700/70 bg-slate-800/70'
-          }`}>
-            <span className="block h-full w-1/3 animate-pulse rounded-full bg-cyan-600/60" />
-          </div>
-          <div className="space-y-2" aria-hidden="true">
-            <div className="h-3 w-2/3 animate-pulse rounded-lg bg-slate-200" />
-            <div className="h-3 w-1/2 animate-pulse rounded-lg bg-slate-200" />
-          </div>
-        </Card>
+          {Array.from({ length: 8 }).map((_, index) => (
+            <div
+              key={`monitoreo-card-skeleton-${index}`}
+              className={`overflow-hidden rounded-xl border shadow-sm ${
+                isLightTheme
+                  ? 'border-slate-200 bg-white'
+                  : 'border-slate-700/70 bg-slate-900/55'
+              }`}
+            >
+              <Skeleton className="h-24 rounded-none" tone={index % 2 === 0 ? 'block' : 'soft'} />
+              <div className="space-y-2.5 p-3">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex-1 space-y-2">
+                    <Skeleton className="h-4 w-4/5" />
+                    <Skeleton className="h-4 w-3/5" tone="soft" />
+                  </div>
+                  <div className="flex shrink-0 gap-1.5">
+                    <Skeleton className="h-7 w-7 rounded-lg" />
+                    <Skeleton className="h-7 w-7 rounded-lg" tone="soft" />
+                  </div>
+                </div>
+                <div className="space-y-1.5">
+                  <Skeleton className="h-3 w-full" tone="soft" />
+                  <Skeleton className="h-3 w-2/3" tone="soft" />
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Skeleton className="h-6 w-24 rounded-full" />
+                  <Skeleton className="h-6 w-28 rounded-full" tone="soft" />
+                </div>
+                <Skeleton className="h-9 w-full rounded-lg" />
+              </div>
+            </div>
+          ))}
+        </div>
       ) : filteredTemplates.length === 0 ? (
         <Card
           className={`flex flex-col gap-3 p-4 shadow-sm ${
@@ -1111,7 +1129,7 @@ export default function MonitoreoSelect() {
           </p>
         </Card>
       ) : (
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
+        <div className="grid grid-cols-1 gap-2.5 md:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-5">
           {filteredTemplates.map((template, index) => {
             const { status, statusType, statusText } = resolveTemplateDisplayStatus(template);
             const isActive = status === 'active';

@@ -24,6 +24,7 @@ import ConfirmModal from '../components/ui/ConfirmModal.jsx';
 import Input from '../components/ui/Input.jsx';
 import Select from '../components/ui/Select.jsx';
 import SectionHeader from '../components/ui/SectionHeader.jsx';
+import { SkeletonTable } from '../components/ui/Skeleton.jsx';
 import { supabase } from '../lib/supabase.js';
 import { getRoleLabel } from '../lib/roles.js';
 
@@ -48,6 +49,27 @@ const ROLE_OPTIONS = [
 ];
 
 const PASSWORD_LENGTH = 9;
+const USERS_CACHE_KEY = 'agebre:monitoreo:usuarios:v1';
+
+const readSessionCache = (key) => {
+  if (typeof window === 'undefined') return null;
+  try {
+    const parsed = JSON.parse(window.sessionStorage.getItem(key) || 'null');
+    return Array.isArray(parsed?.items) ? parsed.items : null;
+  } catch {
+    return null;
+  }
+};
+
+const writeSessionCache = (key, items) => {
+  if (typeof window === 'undefined') return;
+  try {
+    window.sessionStorage.setItem(key, JSON.stringify({ savedAt: Date.now(), items }));
+  } catch {
+    // Cache best-effort: quota/privacy limits must not block the admin screen.
+  }
+};
+
 const buildFullName = (firstName, lastName) => `${firstName || ''} ${lastName || ''}`.trim();
 const pickRandom = (chars) => chars[Math.floor(Math.random() * chars.length)];
 
@@ -243,16 +265,23 @@ export default function MonitoreoUsuarios() {
         const debugAuth =
           typeof window !== 'undefined' &&
           (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
-        const { data: authUserData } = await supabase.auth.getUser();
-        const authUserId = authUserData?.user?.id || '';
-        const authUserEmail = authUserData?.user?.email || '';
+        const requesterId = currentAuth?.id || currentProfile?.id || '';
+        const requesterEmail = currentAuth?.email || currentProfile?.email || '';
+        let authUserId = '';
+        let authUserEmail = '';
+
+        if (!requesterId || !requesterEmail) {
+          const { data: authUserData } = await supabase.auth.getUser();
+          authUserId = authUserData?.user?.id || '';
+          authUserEmail = authUserData?.user?.email || '';
+        }
 
         const { data, error } = await supabase.functions.invoke('admin-users', {
           body: {
             ...(body || {}),
             access_token: accessToken,
-            requester_id: currentAuth?.id || currentProfile?.id || authUserId || '',
-            requester_email: currentAuth?.email || currentProfile?.email || authUserEmail || '',
+            requester_id: requesterId || authUserId || '',
+            requester_email: requesterEmail || authUserEmail || '',
             requester_doc_number: currentAuth?.docNumber || currentProfile?.doc_number || '',
             ...(debugAuth ? { debug_auth: true } : {}),
           },
@@ -309,8 +338,15 @@ export default function MonitoreoUsuarios() {
     }, 2800);
   };
 
-  const loadUsers = async () => {
-    setLoading(true);
+  const loadUsers = async ({ useCache = true } = {}) => {
+    const cacheKey = `${USERS_CACHE_KEY}:${currentAuth?.id || currentAuth?.email || currentProfile?.id || 'default'}`;
+    const cachedUsers = useCache ? readSessionCache(cacheKey) : null;
+    if (cachedUsers) {
+      setUsers(cachedUsers);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
     setError('');
 
     const sessionReady = await ensureAuthSession();
@@ -320,7 +356,7 @@ export default function MonitoreoUsuarios() {
       const message = 'Sesion invalida. Vuelve a iniciar sesion.';
       setError(message);
       showToast(message, 'error');
-      setUsers([]);
+      if (!cachedUsers) setUsers([]);
       setLoading(false);
       navigate('/login', { replace: true });
       return;
@@ -339,7 +375,7 @@ export default function MonitoreoUsuarios() {
         console.error('Usuarios list unauthorized', fnError);
         setError(message);
         showToast(message, 'error');
-        setUsers([]);
+        if (!cachedUsers) setUsers([]);
         setLoading(false);
         return;
       }
@@ -353,9 +389,11 @@ export default function MonitoreoUsuarios() {
       console.error('Usuarios list error', fnError, details);
       setError(message);
       showToast(message, 'error');
-      setUsers([]);
+      if (!cachedUsers) setUsers([]);
     } else {
-      setUsers(data?.data || []);
+      const nextUsers = data?.data || [];
+      setUsers(nextUsers);
+      writeSessionCache(cacheKey, nextUsers);
     }
 
     setLoading(false);
@@ -948,41 +986,41 @@ export default function MonitoreoUsuarios() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-                <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900/70">
-                  <div className="rounded-full bg-cyan-100 p-3 text-cyan-700 dark:bg-cyan-500/15 dark:text-cyan-300">
-                    <Shield size={18} />
+              <div className="grid grid-cols-1 gap-2.5 md:grid-cols-4">
+                <div className="flex min-h-[74px] items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 dark:border-slate-800 dark:bg-slate-900/70">
+                  <div className="rounded-full bg-cyan-100 p-2.5 text-cyan-700 dark:bg-cyan-500/15 dark:text-cyan-300">
+                    <Shield size={15} />
                   </div>
                   <div>
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Total usuarios</p>
-                    <p className="text-3xl font-bold text-slate-900 dark:text-slate-100">{totalUsers}</p>
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">Total usuarios</p>
+                    <p className="text-[1.65rem] font-bold leading-none text-slate-900 dark:text-slate-100">{totalUsers}</p>
                   </div>
                 </div>
-                <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900/70">
-                  <div className="rounded-full bg-emerald-100 p-3 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300">
-                    <UserCheck size={18} />
+                <div className="flex min-h-[74px] items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 dark:border-slate-800 dark:bg-slate-900/70">
+                  <div className="rounded-full bg-emerald-100 p-2.5 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300">
+                    <UserCheck size={15} />
                   </div>
                   <div>
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Activos</p>
-                    <p className="text-3xl font-bold text-slate-900 dark:text-slate-100">{activeUsers}</p>
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">Activos</p>
+                    <p className="text-[1.65rem] font-bold leading-none text-slate-900 dark:text-slate-100">{activeUsers}</p>
                   </div>
                 </div>
-                <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900/70">
-                  <div className="rounded-full bg-amber-100 p-3 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300">
-                    <AlertTriangle size={18} />
+                <div className="flex min-h-[74px] items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 dark:border-slate-800 dark:bg-slate-900/70">
+                  <div className="rounded-full bg-amber-100 p-2.5 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300">
+                    <AlertTriangle size={15} />
                   </div>
                   <div>
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Pendientes</p>
-                    <p className="text-3xl font-bold text-slate-900 dark:text-slate-100">{pendingUsers}</p>
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">Pendientes</p>
+                    <p className="text-[1.65rem] font-bold leading-none text-slate-900 dark:text-slate-100">{pendingUsers}</p>
                   </div>
                 </div>
-                <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900/70">
-                  <div className="rounded-full bg-rose-100 p-3 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300">
-                    <UserX size={18} />
+                <div className="flex min-h-[74px] items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 dark:border-slate-800 dark:bg-slate-900/70">
+                  <div className="rounded-full bg-rose-100 p-2.5 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300">
+                    <UserX size={15} />
                   </div>
                   <div>
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Inactivos</p>
-                    <p className="text-3xl font-bold text-slate-900 dark:text-slate-100">{inactiveUsers}</p>
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">Inactivos</p>
+                    <p className="text-[1.65rem] font-bold leading-none text-slate-900 dark:text-slate-100">{inactiveUsers}</p>
                   </div>
                 </div>
               </div>
@@ -1205,14 +1243,8 @@ export default function MonitoreoUsuarios() {
 
               <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900/70">
                 {loading ? (
-                  <div className="px-6 py-6">
-                    <div className="flex items-center gap-2 text-sm text-cyan-700 dark:text-cyan-200">
-                      <Loader2 size={16} className="animate-spin" />
-                      <p>Cargando usuarios...</p>
-                    </div>
-                    <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800/70">
-                      <span className="block h-full w-1/3 animate-pulse rounded-full bg-cyan-500/70" />
-                    </div>
+                  <div className="p-3">
+                    <SkeletonTable rows={8} columns={5} />
                   </div>
                 ) : filteredUsers.length === 0 ? (
                   <p className="px-6 py-6 text-sm text-slate-500 dark:text-slate-400">No se encontraron usuarios.</p>

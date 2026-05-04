@@ -5,6 +5,7 @@ import MonitoreoLayout from './routes/MonitoreoLayout.jsx';
 import MonitoreoCrearMonitoreo from './pages/MonitoreoCrearMonitoreo.jsx';
 import MonitoreoInicio from './pages/MonitoreoInicio.jsx';
 import MonitoreoConfiguracion from './pages/MonitoreoConfiguracion.jsx';
+import MonitoreoPerfil from './pages/MonitoreoPerfil.jsx';
 import MonitoreoReportes from './pages/MonitoreoReportes.jsx';
 import MonitoreoSeguimiento from './pages/MonitoreoSeguimiento.jsx';
 import MonitoreoSelect from './pages/MonitoreoSelect.jsx';
@@ -109,6 +110,33 @@ export default function App() {
     });
   }, []);
 
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof document === 'undefined') return undefined;
+    const root = document.documentElement;
+    const media = window.matchMedia('(max-height: 800px)');
+
+    const applyViewportCompactFlag = () => {
+      root.dataset.viewportCompact = media.matches ? 'true' : 'false';
+    };
+
+    applyViewportCompactFlag();
+    if (typeof media.addEventListener === 'function') {
+      media.addEventListener('change', applyViewportCompactFlag);
+    } else if (typeof media.addListener === 'function') {
+      media.addListener(applyViewportCompactFlag);
+    }
+    window.addEventListener('resize', applyViewportCompactFlag);
+
+    return () => {
+      if (typeof media.removeEventListener === 'function') {
+        media.removeEventListener('change', applyViewportCompactFlag);
+      } else if (typeof media.removeListener === 'function') {
+        media.removeListener(applyViewportCompactFlag);
+      }
+      window.removeEventListener('resize', applyViewportCompactFlag);
+    };
+  }, []);
+
   return (
     <Routes>
       <Route path="/" element={<Navigate to="/login" replace />} />
@@ -142,7 +170,7 @@ export default function App() {
         <Route path="inicio" element={<MonitoreoInicio />} />
         <Route path="seguimiento" element={<MonitoreoSeguimiento />} />
         <Route path="configuracion" element={<MonitoreoConfiguracion />} />
-        <Route path="perfil" element={<Navigate to="/monitoreo/configuracion?seccion=cuenta" replace />} />
+        <Route path="perfil" element={<MonitoreoPerfil />} />
         <Route path="reportes" element={<MonitoreoReportes />} />
         <Route path="reportes/:templateId" element={<MonitoreoReportes />} />
         <Route

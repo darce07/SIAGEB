@@ -5,13 +5,13 @@ import {
   BarChart3,
   Building2,
   CalendarRange,
-  CircleHelp,
   ChevronLeft,
   ChevronRight,
   ClipboardList,
   Clock3,
   FileClock,
   LayoutDashboard,
+  Sun,
   LogOut,
   Loader2,
   PanelLeftOpen,
@@ -50,6 +50,8 @@ const SETTINGS_EVENT_NAME = 'monitoreo-settings-updated';
 const SESSION_ACTIVITY_PREFIX = 'monitoreoSessionLastActivity';
 const SESSION_LOGOUT_REASON_KEY = 'monitoreoSessionLogoutReason';
 const NOTIFICATIONS_STORAGE_KEY = 'monitoreoNotifications';
+const LOGIN_EVENT_AT_KEY = 'monitoreoLoginEventAt';
+const NOTIFICATION_WELCOME_CONSUMED_KEY = 'monitoreoWelcomeConsumedForLogin';
 const AUTOSAVE_ALERT_KEY = 'monitoreoAutosaveAlert';
 const AUTOSAVE_ALERT_EVENT_NAME = 'monitoreo-autosave-alert-updated';
 const SESSION_LOGOUT_REASON_INACTIVITY = 'inactivity';
@@ -1153,6 +1155,8 @@ export default function MonitoreoLayout() {
   );
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
+  const [isNotificationsWelcomeOpen, setIsNotificationsWelcomeOpen] = useState(false);
+  const [isNotificationPulseActive, setIsNotificationPulseActive] = useState(false);
   const [isAssistantOpen, setIsAssistantOpen] = useState(
     () => localStorage.getItem('monitoreoAssistantOpen') === 'true',
   );
@@ -1185,6 +1189,14 @@ export default function MonitoreoLayout() {
   const [fontSize, setFontSize] = useState(() => localStorage.getItem('monitoreoFontSize') || 'normal');
   const [theme, setTheme] = useState(() => resolveThemePreference());
   const [density, setDensity] = useState(() => resolveDensityPreference());
+  const [isViewportCompact, setIsViewportCompact] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    return window.matchMedia('(max-height: 800px)').matches;
+  });
+  const [isViewportDense, setIsViewportDense] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    return window.matchMedia('(max-width: 1480px)').matches;
+  });
   const [highContrast, setHighContrast] = useState(() =>
     readBooleanSetting(HIGH_CONTRAST_STORAGE_KEY, false),
   );
@@ -1194,6 +1206,51 @@ export default function MonitoreoLayout() {
   const [assistantQuickSuggestions, setAssistantQuickSuggestions] = useState(() =>
     readBooleanSetting(ASSISTANT_QUICK_ACTIONS_KEY, true),
   );
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+    const media = window.matchMedia('(max-height: 800px)');
+    const applyViewportCompact = () => setIsViewportCompact(media.matches);
+    applyViewportCompact();
+
+    if (typeof media.addEventListener === 'function') {
+      media.addEventListener('change', applyViewportCompact);
+    } else if (typeof media.addListener === 'function') {
+      media.addListener(applyViewportCompact);
+    }
+    window.addEventListener('resize', applyViewportCompact);
+
+    return () => {
+      if (typeof media.removeEventListener === 'function') {
+        media.removeEventListener('change', applyViewportCompact);
+      } else if (typeof media.removeListener === 'function') {
+        media.removeListener(applyViewportCompact);
+      }
+      window.removeEventListener('resize', applyViewportCompact);
+    };
+  }, []);
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+    const media = window.matchMedia('(max-width: 1480px)');
+    const applyViewportDense = () => setIsViewportDense(media.matches);
+    applyViewportDense();
+
+    if (typeof media.addEventListener === 'function') {
+      media.addEventListener('change', applyViewportDense);
+    } else if (typeof media.addListener === 'function') {
+      media.addListener(applyViewportDense);
+    }
+    window.addEventListener('resize', applyViewportDense);
+
+    return () => {
+      if (typeof media.removeEventListener === 'function') {
+        media.removeEventListener('change', applyViewportDense);
+      } else if (typeof media.removeListener === 'function') {
+        media.removeListener(applyViewportDense);
+      }
+      window.removeEventListener('resize', applyViewportDense);
+    };
+  }, []);
   const [assistantCloseOnOutside, setAssistantCloseOnOutside] = useState(() =>
     readBooleanSetting(ASSISTANT_AUTO_CLOSE_KEY, true),
   );
@@ -1301,13 +1358,23 @@ export default function MonitoreoLayout() {
       }),
     [userRole, assistantGreetingContext, notificationPrefs, autosaveAlert],
   );
-  const notificationTotalCount = useMemo(
-    () => notificationItems.reduce((total, item) => total + toCount(item.count), 0),
+  const notificationTotalCount = useMemo(() => notificationItems.length, [notificationItems]);
+  const notificationBadgeText = useMemo(() => toBadgeLabel(notificationTotalCount), [notificationTotalCount]);
+  const hasUrgentNotifications = useMemo(
+    () =>
+      notificationItems.some(
+        (item) => item.tone === 'critical' || item.id === 'pending-reports' || item.id === 'due-soon-monitoring',
+      ),
     [notificationItems],
   );
-  const notificationBadgeText = useMemo(() => toBadgeLabel(notificationTotalCount), [notificationTotalCount]);
 
   const isFicha = location.pathname.includes('/monitoreo/ficha-escritura');
+  const toggleNotificationsPanel = useCallback(() => {
+    setIsAssistantOpen(false);
+    setIsNotificationsWelcomeOpen(false);
+    setIsNotificationsOpen((prev) => !prev);
+  }, []);
+
   const applyPreferences = (
     nextThemePreference,
     nextFontSize,
@@ -1366,6 +1433,11 @@ export default function MonitoreoLayout() {
     setIsSettingsOpen(false);
     navigate('/monitoreo/configuracion');
   };
+
+  const toggleThemeQuick = useCallback(() => {
+    const effective = resolveEffectiveTheme(theme);
+    setTheme(effective === 'light' ? 'dark' : 'light');
+  }, [theme]);
   const normalizeMessages = (messages = []) => {
     const normalized = (Array.isArray(messages) ? messages : []).map((message) => ({
       ...message,
@@ -2446,6 +2518,51 @@ export default function MonitoreoLayout() {
   }, []);
 
   useEffect(() => {
+    if (!hasUrgentNotifications) {
+      setIsNotificationPulseActive(false);
+      return undefined;
+    }
+
+    let mounted = true;
+    let turnOffTimerId = null;
+
+    const startPulseWindow = () => {
+      if (!mounted) return;
+      setIsNotificationPulseActive(true);
+      if (turnOffTimerId) window.clearTimeout(turnOffTimerId);
+      turnOffTimerId = window.setTimeout(() => {
+        if (!mounted) return;
+        setIsNotificationPulseActive(false);
+      }, 15000);
+    };
+
+    startPulseWindow();
+    const pulseIntervalId = window.setInterval(startPulseWindow, 10 * 60 * 1000);
+
+    return () => {
+      mounted = false;
+      if (turnOffTimerId) window.clearTimeout(turnOffTimerId);
+      window.clearInterval(pulseIntervalId);
+    };
+  }, [hasUrgentNotifications]);
+
+  useEffect(() => {
+    if (!notificationItems.length) return;
+    if (location.pathname === '/login') return;
+    const loginEventAt = localStorage.getItem(LOGIN_EVENT_AT_KEY) || '';
+    if (!loginEventAt) return;
+    const consumedForLogin = sessionStorage.getItem(NOTIFICATION_WELCOME_CONSUMED_KEY) || '';
+    if (consumedForLogin === loginEventAt) return;
+
+    const openTimerId = window.setTimeout(() => {
+      setIsNotificationsWelcomeOpen(true);
+      sessionStorage.setItem(NOTIFICATION_WELCOME_CONSUMED_KEY, loginEventAt);
+    }, 900);
+
+    return () => window.clearTimeout(openTimerId);
+  }, [notificationItems, location.pathname]);
+
+  useEffect(() => {
     applyPreferences(theme, fontSize, density, highContrast, reduceMotion);
   }, [theme, fontSize, density, highContrast, reduceMotion]);
 
@@ -2596,6 +2713,7 @@ export default function MonitoreoLayout() {
       if (!(target instanceof Node)) return;
       if (notificationsPanelRef.current?.contains(target)) return;
       if (notificationsToggleButtonRef.current?.contains(target)) return;
+      if (target instanceof Element && target.closest('[data-notification-toggle="true"]')) return;
       setIsNotificationsOpen(false);
     };
 
@@ -3629,7 +3747,7 @@ export default function MonitoreoLayout() {
     ];
   }, [isFicha, navBadges, navigate, selectedTemplateSections, selectedTemplateVisibleBlocks, userRole]);
 
-  const isCompactDensity = density === DENSITY_COMPACT;
+  const isCompactDensity = density === DENSITY_COMPACT || isViewportCompact || isViewportDense;
   const sidebarDesktopRailClass = isSidebarCollapsed
     ? isCompactDensity
       ? 'w-[84px] px-2 py-2.5'
@@ -3637,14 +3755,6 @@ export default function MonitoreoLayout() {
     : isCompactDensity
       ? 'w-[214px] p-2.5'
       : 'w-[228px] p-3';
-
-  const sidebarProfileCardClass = isSidebarCollapsed
-    ? isCompactDensity
-      ? 'min-h-[88px] px-1.5 py-2'
-      : 'min-h-[98px] px-2 py-2.5'
-    : isCompactDensity
-      ? 'min-h-[70px] px-2 py-2'
-      : 'min-h-[74px] px-2.5 py-2';
 
   const sidebarDesktopButtonSizeClass = isSidebarCollapsed
     ? isCompactDensity
@@ -3660,19 +3770,13 @@ export default function MonitoreoLayout() {
       : `${isCompactDensity ? 'ml-2 max-w-[122px]' : 'ml-2.5 max-w-[132px]'} translate-x-0 opacity-100`
   }`;
 
-  const sidebarHeaderTextClass = `min-w-0 overflow-hidden transition-all duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] ${
-    isSidebarCollapsed
-      ? 'pointer-events-none max-w-0 translate-x-2 opacity-0'
-      : `${isCompactDensity ? 'max-w-[110px]' : 'max-w-[118px]'} translate-x-0 opacity-100`
-  }`;
-
   const sidebarRailToggleButtonClass =
     `inline-flex ${isCompactDensity ? 'h-9 w-9' : 'h-10 w-10'} shrink-0 items-center justify-center rounded-xl border border-slate-700/70 bg-slate-900/55 text-slate-300 transition-all duration-200 ease-out hover:-translate-y-[1px] hover:border-cyan-400/40 hover:bg-slate-800/80 hover:text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/80 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950`;
 
-  const sidebarDesktopNavClass = `mt-2 flex min-h-0 flex-1 flex-col scrollbar-thin ${
+  const sidebarDesktopNavClass = `mt-0 flex min-h-0 flex-1 flex-col scrollbar-thin ${
     isSidebarCollapsed
-      ? `${isCompactDensity ? 'items-center gap-3' : 'items-center gap-3.5'} overflow-y-auto overflow-x-hidden pr-0.5`
-      : `${isCompactDensity ? 'gap-2' : 'gap-2.5'} overflow-y-auto pr-1`
+      ? `${isCompactDensity ? 'items-center gap-1.5' : 'items-center gap-2'} overflow-y-auto overflow-x-hidden pr-0.5`
+      : `${isCompactDensity ? 'gap-1.5' : 'gap-2'} overflow-y-auto pr-1`
   }`;
 
   const sidebarDesktopFooterClass = `mt-4 border-t border-slate-800/65 pt-3 ${
@@ -3735,7 +3839,7 @@ export default function MonitoreoLayout() {
 
   const getSidebarDesktopButtonClass = ({ active = false, tone = 'neutral', disabled = false } = {}) => {
     const base =
-      `group relative inline-flex items-center rounded-xl text-sm font-medium transition-all duration-200 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/80 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950 ${sidebarDesktopButtonSizeClass}`;
+      `group relative flex items-center rounded-xl text-sm font-medium transition-all duration-200 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/80 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950 ${sidebarDesktopButtonSizeClass}`;
 
     if (disabled) {
       return `${base} cursor-not-allowed text-slate-500/90 opacity-80`;
@@ -3894,48 +3998,28 @@ export default function MonitoreoLayout() {
         <aside
           className={`monitoreo-sidebar hidden flex-col border-r border-slate-700/45 bg-gradient-to-b from-slate-950/95 via-slate-950/90 to-slate-900/82 shadow-[20px_0_50px_rgba(2,6,23,0.45)] backdrop-blur-xl transition-[width,padding,box-shadow,background-color] duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] lg:sticky lg:top-0 lg:flex lg:h-[100dvh] lg:overflow-visible lg:overscroll-contain ${sidebarDesktopRailClass}`}
         >
-          <div
-            className={`monitoreo-sidebar-profile mb-4 rounded-2xl border border-slate-700/45 bg-slate-900/42 shadow-[inset_0_0_0_1px_rgba(15,23,42,0.35)] transition-all duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] ${sidebarProfileCardClass}`}
-          >
-            <div className={`flex h-full ${isSidebarCollapsed ? 'flex-col items-center justify-between' : 'items-center justify-between gap-3'}`}>
-              <div
-                className={`min-w-0 items-center ${isSidebarCollapsed ? 'order-2 flex w-full justify-center' : 'order-1 flex flex-1 gap-3'}`}
-                title={isSidebarCollapsed ? `${displayName || 'Usuario'} · ${roleLabel}` : undefined}
-              >
-                <div className="flex h-12 w-12 items-center justify-center overflow-hidden rounded-2xl border border-slate-700/70 bg-slate-800/80 text-sm font-semibold text-slate-200 shadow-[0_8px_20px_rgba(2,6,23,0.45)]">
-                  {avatarUrl ? (
-                    <img src={avatarUrl} alt="Avatar" className="h-full w-full object-cover" />
-                  ) : (
-                    <span>{initials || 'U'}</span>
-                  )}
-                </div>
-                <div className={sidebarHeaderTextClass}>
-                  <p className="truncate text-sm font-semibold text-slate-100">{displayName || 'Cargando...'}</p>
-                  <p className="truncate text-xs text-slate-400">{roleLabel}</p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setIsSidebarCollapsed((current) => !current)}
-                className={`${sidebarRailToggleButtonClass} ${isSidebarCollapsed ? 'order-1 mb-2' : 'order-2'}`}
-                aria-label={isSidebarCollapsed ? 'Expandir barra lateral' : 'Colapsar barra lateral'}
-                title={isSidebarCollapsed ? 'Expandir barra lateral' : 'Colapsar barra lateral'}
-              >
-                {isSidebarCollapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
-              </button>
-            </div>
+          <div className="mb-2 flex justify-end">
+            <button
+              type="button"
+              onClick={() => setIsSidebarCollapsed((current) => !current)}
+              className={sidebarRailToggleButtonClass}
+              aria-label={isSidebarCollapsed ? 'Expandir barra lateral' : 'Colapsar barra lateral'}
+              title={isSidebarCollapsed ? 'Expandir barra lateral' : 'Colapsar barra lateral'}
+            >
+              {isSidebarCollapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
+            </button>
           </div>
 
           <div className="mt-1 flex min-h-0 flex-1 flex-col">
             <nav className={sidebarDesktopNavClass}>
               {sidebarGroups.map((group) => (
-                <div key={`desktop-group-${group.id}`} className={isSidebarCollapsed ? 'w-full space-y-2' : 'space-y-1.5'}>
+                <div key={`desktop-group-${group.id}`} className={isSidebarCollapsed ? 'w-full space-y-1' : 'space-y-1.5'}>
                   {!isSidebarCollapsed ? (
                     <p className="px-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-500/90">
                       {group.label}
                     </p>
                   ) : null}
-                  <div className={isSidebarCollapsed ? 'space-y-2' : 'space-y-0.5'}>
+                  <div className={isSidebarCollapsed ? 'space-y-1' : 'space-y-0.5'}>
                     {group.items.map((item) => {
                       const isActive = isFicha
                         ? activeSection === item.id
@@ -3985,16 +4069,6 @@ export default function MonitoreoLayout() {
           <div className={sidebarDesktopFooterClass}>
             <button
               type="button"
-              onClick={() => setIsSettingsOpen(true)}
-              aria-label="Ajustes"
-              title={isSidebarCollapsed ? 'Ajustes' : undefined}
-              className={getSidebarDesktopButtonClass()}
-            >
-              <Settings size={16} className={getSidebarDesktopIconClass()} />
-              <span className={sidebarDesktopLabelClass}>Ajustes</span>
-            </button>
-            <button
-              type="button"
               onClick={() => setIsLogoutOpen(true)}
               aria-label="Cerrar sesión"
               title={isSidebarCollapsed ? 'Cerrar sesión' : undefined}
@@ -4033,13 +4107,15 @@ export default function MonitoreoLayout() {
 
               <div className="ml-4 flex items-center gap-2">
                 <button
+                  data-notification-toggle="true"
                   ref={notificationsToggleButtonRef}
                   type="button"
-                  onClick={() => {
-                    setIsAssistantOpen(false);
-                    setIsNotificationsOpen((prev) => !prev);
-                  }}
-                  className="relative inline-flex h-10 w-10 items-center justify-center rounded-full border border-slate-700/60 text-slate-300 transition hover:border-slate-500/70 hover:text-slate-100"
+                  onClick={toggleNotificationsPanel}
+                  className={`relative inline-flex h-10 w-10 items-center justify-center rounded-full border text-slate-300 transition hover:text-slate-100 ${
+                    hasUrgentNotifications && isNotificationPulseActive
+                      ? 'animate-pulse border-rose-500/80 bg-rose-500/20 shadow-[0_0_0_2px_rgba(244,63,94,0.25)] hover:border-rose-400/80'
+                      : 'border-slate-700/60 hover:border-slate-500/70'
+                  }`}
                   aria-label="Notificaciones"
                   title="Notificaciones"
                 >
@@ -4052,17 +4128,17 @@ export default function MonitoreoLayout() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => setIsSettingsOpen(true)}
+                  onClick={toggleThemeQuick}
                   className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-slate-700/60 text-slate-300 transition hover:border-slate-500/70 hover:text-slate-100"
-                  aria-label="Consulta"
-                  title="Consulta"
+                  aria-label="Cambiar tema"
+                  title="Cambiar tema"
                 >
-                  <CircleHelp size={16} />
+                  <Sun size={16} />
                 </button>
                 <div className="mx-1 h-8 w-px bg-slate-700/60" />
                 <button
                   type="button"
-                  onClick={() => setIsSettingsOpen(true)}
+                  onClick={() => navigate('/monitoreo/perfil')}
                   className="inline-flex items-center gap-3 rounded-xl px-2 py-1 text-left transition hover:bg-slate-800/55"
                   aria-label="Perfil"
                   title="Perfil"
@@ -4097,13 +4173,15 @@ export default function MonitoreoLayout() {
               <span className="text-xs font-semibold tracking-[0.08em] text-slate-100">Monitoreo</span>
               <div className="flex items-center gap-2">
                 <button
+                  data-notification-toggle="true"
                   ref={notificationsToggleButtonRef}
                   type="button"
-                  onClick={() => {
-                    setIsAssistantOpen(false);
-                    setIsNotificationsOpen((prev) => !prev);
-                  }}
-                  className="relative inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-700/60 text-slate-300 transition hover:border-slate-500/70"
+                  onClick={toggleNotificationsPanel}
+                  className={`relative inline-flex h-8 w-8 items-center justify-center rounded-lg border text-slate-300 transition ${
+                    hasUrgentNotifications && isNotificationPulseActive
+                      ? 'animate-pulse border-rose-500/80 bg-rose-500/20 shadow-[0_0_0_2px_rgba(244,63,94,0.25)] hover:border-rose-400/80'
+                      : 'border-slate-700/60 hover:border-slate-500/70'
+                  }`}
                   aria-label="Notificaciones"
                   title="Notificaciones"
                 >
@@ -4116,12 +4194,12 @@ export default function MonitoreoLayout() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => setIsSettingsOpen(true)}
+                  onClick={toggleThemeQuick}
                   className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-700/60 text-slate-300 transition hover:border-slate-500/70"
-                  aria-label="Ajustes"
-                  title="Ajustes"
+                  aria-label="Cambiar tema"
+                  title="Cambiar tema"
                 >
-                  <Settings size={15} />
+                  <Sun size={15} />
                 </button>
               </div>
             </div>
@@ -4176,14 +4254,6 @@ export default function MonitoreoLayout() {
                   </p>
                 </div>
               </div>
-              <button
-                type="button"
-                onClick={() => setIsNotificationsOpen(false)}
-                className="rounded-full border border-slate-700/60 p-1 text-slate-300 transition hover:border-slate-500"
-                aria-label="Cerrar notificaciones"
-              >
-                <X size={14} />
-              </button>
             </div>
             <div className={isCompactDensity ? 'space-y-2 overflow-y-auto px-3 py-3' : 'space-y-2.5 overflow-y-auto px-4 py-4'}>
               {notificationItems.length ? (
@@ -4226,6 +4296,109 @@ export default function MonitoreoLayout() {
                     </article>
                   );
                 })
+              ) : (
+                <div className="rounded-xl border border-slate-800/70 bg-slate-900/60 px-4 py-5 text-center">
+                  <p className="text-sm font-semibold text-slate-100">Todo en orden</p>
+                  <p className="mt-1 text-xs text-slate-400">No hay alertas pendientes en este momento.</p>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
+      {isNotificationsWelcomeOpen ? (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/65 p-4 backdrop-blur-[2px]">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="Aviso de notificaciones"
+            className="w-full max-w-2xl overflow-hidden rounded-2xl border border-cyan-500/35 bg-slate-950 text-slate-100 shadow-[0_30px_90px_-35px_rgba(0,0,0,0.95)]"
+          >
+            <div className="flex items-center justify-between border-b border-cyan-500/30 bg-cyan-500/10 px-4 py-3">
+              <div className="flex items-center gap-2.5">
+                <span className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-cyan-400/55 bg-cyan-500/20 text-cyan-100">
+                  <Bell size={15} />
+                </span>
+                <div>
+                  <p className="text-sm font-semibold text-cyan-100">Resumen de notificaciones</p>
+                  <p className="text-xs text-cyan-100/80">
+                    {notificationItems.length
+                      ? `${notificationItems.length} alerta${notificationItems.length === 1 ? '' : 's'} para revisar ahora`
+                      : 'Sin alertas activas'}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsNotificationsWelcomeOpen(false)}
+                className="rounded-full border border-cyan-400/45 p-1 text-cyan-100 transition hover:border-cyan-300/70"
+                aria-label="Cerrar aviso"
+                title="Cerrar"
+              >
+                <X size={15} />
+              </button>
+            </div>
+
+            <div className="max-h-[68dvh] space-y-3 overflow-y-auto px-4 py-4">
+              {notificationItems.length ? (
+                <>
+                  <div className="rounded-xl border border-cyan-500/40 bg-cyan-500/12 px-3.5 py-3">
+                    <p className="text-sm font-semibold text-cyan-100">
+                      {notificationItems.filter((item) => item.tone === 'critical').length > 0
+                        ? `Prioriza ${notificationItems.filter((item) => item.tone === 'critical').length} alerta${notificationItems.filter((item) => item.tone === 'critical').length === 1 ? '' : 's'} urgente${notificationItems.filter((item) => item.tone === 'critical').length === 1 ? '' : 's'}.`
+                        : `Tienes ${notificationItems.length} alerta${notificationItems.length === 1 ? '' : 's'} para revisar.`}
+                    </p>
+                    <p className="mt-1 text-xs leading-5 text-cyan-100/80">
+                      Revisa este resumen para mantener el seguimiento al dia.
+                    </p>
+                  </div>
+
+                  <div className="rounded-xl border border-slate-700/70 bg-slate-900/70 p-3">
+                    <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">
+                      Resumen interactivo
+                    </p>
+                    <ul className="mt-2 space-y-2">
+                      {notificationItems.map((item) => {
+                        const Icon = item.icon || Bell;
+                        return (
+                          <li
+                            key={`welcome-${item.id}`}
+                            className="flex items-center justify-between gap-2 rounded-lg border border-slate-700/60 bg-slate-900/70 px-2.5 py-2"
+                          >
+                            <div className="flex min-w-0 items-center gap-2">
+                              <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-slate-600/70 bg-slate-900 text-slate-200">
+                                <Icon size={12} />
+                              </span>
+                              <div className="min-w-0">
+                                <p className="truncate text-xs font-semibold text-slate-100">{item.title}</p>
+                                <p className="truncate text-[11px] text-slate-400">{item.description}</p>
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              className="inline-flex shrink-0 rounded-md border border-cyan-400/55 bg-cyan-500/15 px-2.5 py-1 text-[11px] font-semibold text-cyan-100 transition hover:border-cyan-300/70 hover:bg-cyan-500/25"
+                              onClick={() => {
+                                setIsNotificationsWelcomeOpen(false);
+                                navigate(item.actionPath);
+                              }}
+                            >
+                              Revisar
+                            </button>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </div>
+                  <div className="flex justify-end">
+                    <button
+                      type="button"
+                      onClick={() => setIsNotificationsWelcomeOpen(false)}
+                      className="inline-flex rounded-lg border border-slate-600/80 bg-slate-900/80 px-3 py-1.5 text-xs font-semibold text-slate-200 transition hover:border-slate-500/80"
+                    >
+                      Entendido
+                    </button>
+                  </div>
+                </>
               ) : (
                 <div className="rounded-xl border border-slate-800/70 bg-slate-900/60 px-4 py-5 text-center">
                   <p className="text-sm font-semibold text-slate-100">Todo en orden</p>
@@ -4738,6 +4911,7 @@ export default function MonitoreoLayout() {
     </SidebarContext.Provider>
   );
 }
+
 
 
 

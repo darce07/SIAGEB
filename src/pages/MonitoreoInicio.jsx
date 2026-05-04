@@ -5,9 +5,9 @@ import {
   ArrowUpRight,
   CalendarDays,
   CheckCircle2,
-  Loader2,
   TrendingUp,
 } from 'lucide-react';
+import { Skeleton, SkeletonTable } from '../components/ui/Skeleton.jsx';
 import { supabase } from '../lib/supabase.js';
 import { getRoleLabel, hasCddDashboardAccessRole } from '../lib/roles.js';
 
@@ -34,6 +34,17 @@ const STATUS_FILTER_OPTIONS = [
   { value: 'in_progress', label: 'En proceso' },
   { value: 'pending', label: 'Pendientes' },
   { value: 'expired', label: 'Vencidos' },
+];
+
+const WEEKDAY_OPTIONS = [
+  { value: 'all', label: 'Todos' },
+  { value: '1', label: 'Lunes' },
+  { value: '2', label: 'Martes' },
+  { value: '3', label: 'Miércoles' },
+  { value: '4', label: 'Jueves' },
+  { value: '5', label: 'Viernes' },
+  { value: '6', label: 'Sábado' },
+  { value: '0', label: 'Domingo' },
 ];
 
 const toSafeDate = (value) => {
@@ -132,6 +143,39 @@ const doesTemplateMatchDateFilter = (template, filter) => {
   const safeStart = startAt || endAt;
   const safeEnd = endAt || startAt;
   return safeStart <= window.end && safeEnd >= window.start;
+};
+
+const doesTemplateMatchWeekdayFilter = (template, filter) => {
+  const selectedWeekday = String(filter?.weekday || 'all');
+  if (selectedWeekday === 'all') return true;
+
+  const expectedDay = Number(selectedWeekday);
+  if (Number.isNaN(expectedDay)) return true;
+
+  const window = getDateWindowFromFilter(filter);
+  const startAt = toSafeDate(template?.availability?.startAt) || toSafeDate(template?.created_at);
+  const endAt = toSafeDate(template?.availability?.endAt) || toSafeDate(template?.updated_at);
+  if (!startAt && !endAt) return false;
+
+  const baseStart = startAt || endAt;
+  const baseEnd = endAt || startAt;
+  let scanStart = new Date(baseStart);
+  let scanEnd = new Date(baseEnd);
+
+  if (window) {
+    scanStart = new Date(Math.max(scanStart.getTime(), window.start.getTime()));
+    scanEnd = new Date(Math.min(scanEnd.getTime(), window.end.getTime()));
+  }
+
+  if (scanStart > scanEnd) return false;
+
+  const cursor = new Date(scanStart.getFullYear(), scanStart.getMonth(), scanStart.getDate());
+  const limit = new Date(scanEnd.getFullYear(), scanEnd.getMonth(), scanEnd.getDate());
+  while (cursor <= limit) {
+    if (cursor.getDay() === expectedDay) return true;
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return false;
 };
 
 const normalizeText = (value) => String(value || '').trim();
@@ -267,6 +311,7 @@ export default function MonitoreoInicio() {
     year: String(now.getFullYear()),
     month: 'all',
     day: 'all',
+    weekday: 'all',
     area: 'all',
     status: 'all',
   });
@@ -274,6 +319,7 @@ export default function MonitoreoInicio() {
     year: String(now.getFullYear()),
     month: 'all',
     day: 'all',
+    weekday: 'all',
     area: 'all',
     status: 'all',
   });
@@ -371,7 +417,7 @@ export default function MonitoreoInicio() {
   const dayOptions = useMemo(() => {
     const month = Number(pendingFilters.month || 0);
     if (!month) {
-      return ['all'];
+      return ['all', ...Array.from({ length: 31 }, (_, index) => String(index + 1))];
     }
     const days = getDaysInMonth(pendingFilters.year, month);
     return ['all', ...Array.from({ length: days }, (_, index) => String(index + 1))];
@@ -433,6 +479,7 @@ export default function MonitoreoInicio() {
     const selectedStatus = appliedFilters.status || 'all';
     return cddTemplates.filter((template) => {
       if (!doesTemplateMatchDateFilter(template, appliedFilters)) return false;
+      if (!doesTemplateMatchWeekdayFilter(template, appliedFilters)) return false;
       const filterStatus = getTemplateFilterStatus(template);
       if (selectedStatus !== 'all' && selectedStatus !== filterStatus) return false;
       const area = normalizeText(getTemplateScope(template)?.cddArea);
@@ -570,11 +617,12 @@ export default function MonitoreoInicio() {
       if (!validRoles.has(String(row.chiefRole || '').toLowerCase())) return;
       const key = row.chiefName || 'Sin jefe';
       if (!grouped.has(key)) {
-        grouped.set(key, { name: key, completed: 0, goal: 0, monitorings: 0 });
+        grouped.set(key, { name: key, completed: 0, goal: 0, totalProgress: 0, monitorings: 0 });
       }
       const item = grouped.get(key);
       item.completed += row.completed;
       item.goal += row.goal;
+      item.totalProgress += clampPercent(row.progress);
       item.monitorings += 1;
     });
 
@@ -582,7 +630,7 @@ export default function MonitoreoInicio() {
       .map((row) => ({
         ...row,
         goal: Math.max(row.goal, 0),
-        efficiency: row.goal > 0 ? clampPercent((row.completed / row.goal) * 100) : 0,
+        efficiency: row.monitorings > 0 ? clampPercent(row.totalProgress / row.monitorings) : 0,
       }))
       .sort((a, b) => b.efficiency - a.efficiency)
       .slice(0, 5);
@@ -598,9 +646,44 @@ export default function MonitoreoInicio() {
   const chartRows = indicatorStats;
   const bestDelta = bestIndicator ? clampPercent(bestIndicator.progress - globalProgress.progress) : 0;
   const worstDelta = worstIndicator ? -clampPercent(globalProgress.progress - worstIndicator.progress) : 0;
+  const monitoringStatusSummary = useMemo(() => {
+    const summary = { total: 0, active: 0, scheduled: 0, closed: 0 };
+    filteredTemplates.forEach((template) => {
+      const status = getTemplateFilterStatus(template);
+      summary.total += 1;
+      if (status === 'in_progress') summary.active += 1;
+      else if (status === 'pending') summary.scheduled += 1;
+      else if (status === 'expired') summary.closed += 1;
+    });
+    return summary;
+  }, [filteredTemplates]);
+
+  const priorityAlerts = useMemo(
+    () => [
+      {
+        id: 'closed',
+        label: 'Monitoreos cerrados',
+        value: monitoringStatusSummary.closed,
+        detail: 'Revisar cierre y evidencias fuera de plazo.',
+      },
+      {
+        id: 'scheduled',
+        label: 'Programados',
+        value: monitoringStatusSummary.scheduled,
+        detail: 'Próximos monitoreos por iniciar.',
+      },
+      {
+        id: 'risk',
+        label: 'Riesgo por bajo avance',
+        value: templateStats.filter((row) => row.progress < 30).length,
+        detail: 'Monitoreos con avance menor al 30%.',
+      },
+    ],
+    [monitoringStatusSummary.closed, monitoringStatusSummary.scheduled, templateStats],
+  );
 
   return (
-    <div className={`space-y-6 ${isLightTheme ? 'text-slate-900' : 'text-[#e6edf5]'}`}>
+    <div className={`monitoreo-inicio-page space-y-6 ${isLightTheme ? 'text-slate-900' : 'text-[#e6edf5]'}`}>
       {!hasDashboardAccess ? (
         <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-4 text-sm text-amber-700">
           Esta vista está habilitada solo para Director, Jefe de Area y Administrador. Tu rol actual: {roleLabel}.
@@ -613,15 +696,14 @@ export default function MonitoreoInicio() {
 
       {hasDashboardAccess ? (
         <>
-          <section className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+          <section className="flex flex-col gap-2.5 md:flex-row md:items-center md:justify-between">
             <div>
-              <h2 className={`text-3xl font-extrabold tracking-tight ${isLightTheme ? 'text-slate-900' : 'text-[#eef4fb]'}`}>Dashboard de Monitoreo</h2>
-              <p className={`mt-1 text-sm ${isLightTheme ? 'text-slate-500' : 'text-[#8ea2b8]'}`}>Visualización en tiempo real del desempeño académico y administrativo.</p>
+              <h2 className={`text-[1.65rem] font-extrabold tracking-tight leading-tight ${isLightTheme ? 'text-slate-900' : 'text-[#eef4fb]'}`}>Dashboard de Monitoreo</h2>
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <button
                 type="button"
-                className={`inline-flex items-center gap-2 rounded-lg border px-4 py-2 text-sm font-semibold transition ${
+                className={`inline-flex h-9 items-center gap-2 rounded-lg border px-3.5 text-sm font-semibold transition ${
                   isLightTheme
                     ? 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
                     : 'border-[#2c4a62] bg-[#111922] text-[#d7e5f3] hover:bg-[#18232f]'
@@ -633,24 +715,24 @@ export default function MonitoreoInicio() {
               <button
                 type="button"
                 onClick={() => setAppliedFilters({ ...pendingFilters })}
-                className="inline-flex items-center gap-2 rounded-lg bg-[#0a8fb3] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#0b7f9e]"
+                className="inline-flex h-9 items-center gap-2 rounded-lg bg-[#0a8fb3] px-3.5 text-sm font-semibold text-white transition hover:bg-[#0b7f9e]"
               >
                 Aplicar Filtros
               </button>
             </div>
           </section>
 
-          <section className={`rounded-xl border p-4 shadow-[0_12px_24px_-4px_rgba(15,23,42,0.04)] ${
+          <section className={`rounded-xl border p-3 shadow-[0_10px_20px_-8px_rgba(15,23,42,0.2)] ${
             isLightTheme ? 'border-slate-200 bg-white' : 'border-[#25435d] bg-[#151c23]'
           }`}>
             <div className="grid grid-cols-1 gap-4 lg:grid-cols-4">
-              <div className="lg:col-span-3 grid grid-cols-2 gap-3 md:grid-cols-4">
+              <div className="lg:col-span-3 grid grid-cols-2 gap-3 md:grid-cols-5">
                 <label className={`flex flex-col gap-1 text-xs ${isLightTheme ? 'text-slate-600' : 'text-[#95a8bc]'}`}>
                   <span className={`text-[10px] font-semibold uppercase tracking-[0.12em] ${isLightTheme ? 'text-slate-500' : 'text-[#8da1b6]'}`}>Año</span>
                   <select
                     value={pendingFilters.year}
                     onChange={(event) => setPendingFilters((prev) => ({ ...prev, year: event.target.value }))}
-                    className={`rounded-lg border px-3 py-2 text-sm ${
+                    className={`h-9 rounded-lg border px-2.5 text-sm ${
                       isLightTheme
                         ? 'border-slate-200 bg-slate-50 text-slate-700'
                         : 'border-[#2b4962] bg-[#121922] text-[#e5edf6]'
@@ -664,7 +746,7 @@ export default function MonitoreoInicio() {
                   <select
                     value={pendingFilters.month}
                     onChange={(event) => setPendingFilters((prev) => ({ ...prev, month: event.target.value }))}
-                    className={`rounded-lg border px-3 py-2 text-sm ${
+                    className={`h-9 rounded-lg border px-2.5 text-sm ${
                       isLightTheme
                         ? 'border-slate-200 bg-slate-50 text-slate-700'
                         : 'border-[#2b4962] bg-[#121922] text-[#e5edf6]'
@@ -674,11 +756,11 @@ export default function MonitoreoInicio() {
                   </select>
                 </label>
                 <label className={`flex flex-col gap-1 text-xs ${isLightTheme ? 'text-slate-600' : 'text-[#95a8bc]'}`}>
-                  <span className={`text-[10px] font-semibold uppercase tracking-[0.12em] ${isLightTheme ? 'text-slate-500' : 'text-[#8da1b6]'}`}>Día</span>
+                  <span className={`text-[10px] font-semibold uppercase tracking-[0.12em] ${isLightTheme ? 'text-slate-500' : 'text-[#8da1b6]'}`}>Día del mes</span>
                   <select
                     value={pendingFilters.day}
                     onChange={(event) => setPendingFilters((prev) => ({ ...prev, day: event.target.value }))}
-                    className={`rounded-lg border px-3 py-2 text-sm ${
+                    className={`h-9 rounded-lg border px-2.5 text-sm ${
                       isLightTheme
                         ? 'border-slate-200 bg-slate-50 text-slate-700'
                         : 'border-[#2b4962] bg-[#121922] text-[#e5edf6]'
@@ -688,11 +770,29 @@ export default function MonitoreoInicio() {
                   </select>
                 </label>
                 <label className={`flex flex-col gap-1 text-xs ${isLightTheme ? 'text-slate-600' : 'text-[#95a8bc]'}`}>
+                  <span className={`text-[10px] font-semibold uppercase tracking-[0.12em] ${isLightTheme ? 'text-slate-500' : 'text-[#8da1b6]'}`}>Día semana</span>
+                  <select
+                    value={pendingFilters.weekday}
+                    onChange={(event) => setPendingFilters((prev) => ({ ...prev, weekday: event.target.value }))}
+                    className={`h-9 rounded-lg border px-2.5 text-sm ${
+                      isLightTheme
+                        ? 'border-slate-200 bg-slate-50 text-slate-700'
+                        : 'border-[#2b4962] bg-[#121922] text-[#e5edf6]'
+                    }`}
+                  >
+                    {WEEKDAY_OPTIONS.map((weekday) => (
+                      <option key={weekday.value} value={weekday.value}>
+                        {weekday.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className={`flex flex-col gap-1 text-xs ${isLightTheme ? 'text-slate-600' : 'text-[#95a8bc]'}`}>
                   <span className={`text-[10px] font-semibold uppercase tracking-[0.12em] ${isLightTheme ? 'text-slate-500' : 'text-[#8da1b6]'}`}>Área Académica</span>
                   <select
                     value={pendingFilters.area}
                     onChange={(event) => setPendingFilters((prev) => ({ ...prev, area: event.target.value }))}
-                    className={`rounded-lg border px-3 py-2 text-sm ${
+                    className={`h-9 rounded-lg border px-2.5 text-sm ${
                       isLightTheme
                         ? 'border-slate-200 bg-slate-50 text-slate-700'
                         : 'border-[#2b4962] bg-[#121922] text-[#e5edf6]'
@@ -710,7 +810,7 @@ export default function MonitoreoInicio() {
                       key={option.value}
                       type="button"
                       onClick={() => setPendingFilters((prev) => ({ ...prev, status: option.value }))}
-                      className={`rounded-full px-3 py-1 text-xs font-semibold transition ${
+                      className={`rounded-full px-2.5 py-1 text-[11px] font-semibold transition ${
                         pendingFilters.status === option.value
                           ? 'bg-cyan-100 text-cyan-700'
                           : isLightTheme
@@ -726,8 +826,31 @@ export default function MonitoreoInicio() {
             </div>
           </section>
 
-          <section className="grid grid-cols-12 gap-4">
-            <div className="col-span-12 space-y-4 lg:col-span-4">
+          <section className="grid grid-cols-2 gap-3 md:grid-cols-4">
+            <article className={`rounded-lg border p-3 ${isLightTheme ? 'border-slate-200 bg-white' : 'border-[#25435d] bg-[#151c23]'}`}>
+              <p className={`text-[10px] uppercase tracking-[0.12em] ${isLightTheme ? 'text-slate-500' : 'text-[#95a8bc]'}`}>Progreso Global</p>
+              <p className={`mt-1 text-2xl font-black ${isLightTheme ? 'text-slate-900' : 'text-[#f0f6fc]'}`}>{formatPercentPrecise(globalProgress.progress)}</p>
+              <p className={`text-[11px] ${isLightTheme ? 'text-slate-500' : 'text-[#90a3b8]'}`}>Meta {globalProgress.goal} · Real {globalProgress.completed}</p>
+            </article>
+            <article className={`rounded-lg border p-3 ${isLightTheme ? 'border-slate-200 bg-white' : 'border-[#25435d] bg-[#151c23]'}`}>
+              <p className={`text-[10px] uppercase tracking-[0.12em] ${isLightTheme ? 'text-slate-500' : 'text-[#95a8bc]'}`}>Mejor Área</p>
+              <p className={`mt-1 truncate text-base font-bold ${isLightTheme ? 'text-slate-900' : 'text-[#f0f6fc]'}`}>{bestIndicator?.area || 'Sin área'}</p>
+              <p className="text-[11px] text-emerald-500">{bestIndicator ? formatPercentPrecise(bestIndicator.progress) : '0%'}</p>
+            </article>
+            <article className={`rounded-lg border p-3 ${isLightTheme ? 'border-slate-200 bg-white' : 'border-[#25435d] bg-[#151c23]'}`}>
+              <p className={`text-[10px] uppercase tracking-[0.12em] ${isLightTheme ? 'text-slate-500' : 'text-[#95a8bc]'}`}>Peor Área</p>
+              <p className={`mt-1 truncate text-base font-bold ${isLightTheme ? 'text-slate-900' : 'text-[#f0f6fc]'}`}>{worstIndicator?.area || 'Sin área'}</p>
+              <p className="text-[11px] text-rose-500">{worstIndicator ? formatPercentPrecise(worstIndicator.progress) : '0%'}</p>
+            </article>
+            <article className={`rounded-lg border p-3 ${isLightTheme ? 'border-slate-200 bg-white' : 'border-[#25435d] bg-[#151c23]'}`}>
+              <p className={`text-[10px] uppercase tracking-[0.12em] ${isLightTheme ? 'text-slate-500' : 'text-[#95a8bc]'}`}>Monitoreos Activos</p>
+              <p className={`mt-1 text-2xl font-black ${isLightTheme ? 'text-slate-900' : 'text-[#f0f6fc]'}`}>{monitoringStatusSummary.active}</p>
+              <p className={`text-[11px] ${isLightTheme ? 'text-slate-500' : 'text-[#90a3b8]'}`}>Total {monitoringStatusSummary.total}</p>
+            </article>
+          </section>
+
+          <section className="grid grid-cols-12 gap-3">
+            <div className="col-span-12 space-y-3 lg:col-span-4 lg:order-2">
               <div className={`relative overflow-hidden rounded-xl border-l-4 border-emerald-500 p-4 shadow-[0_12px_24px_-4px_rgba(15,23,42,0.04)] ${
                 isLightTheme ? 'bg-white' : 'bg-[#171d23]'
               }`}>
@@ -814,43 +937,12 @@ export default function MonitoreoInicio() {
                 />
               </div>
 
-              <div className={`rounded-xl p-5 shadow-[0_12px_24px_-4px_rgba(15,23,42,0.04)] ${isLightTheme ? 'bg-white' : 'bg-[#171d23]'}`}>
-                <div className="mb-4 flex items-center justify-between">
-                  <h3 className={`text-lg font-semibold ${isLightTheme ? 'text-slate-900' : 'text-[#f0f6fc]'}`}>Top Eficiencia Jefes</h3>
-                  <span className={`text-xs font-bold ${isLightTheme ? 'text-cyan-700' : 'text-[#34d3ff]'}`}>Este periodo</span>
-                </div>
-                {isLoading ? (
-                  <div className="flex items-center gap-2 text-sm text-slate-600"><Loader2 size={14} className="animate-spin" /> Cargando...</div>
-                ) : !topChiefs.length ? (
-                  <p className="text-sm text-slate-500">No hay jefes con datos suficientes.</p>
-                ) : (
-                  <div className="space-y-3">
-                    {topChiefs.map((chief) => (
-                      <div key={chief.name} className={`flex items-center gap-3 rounded-lg p-2 ${isLightTheme ? 'hover:bg-slate-50' : 'hover:bg-[#202a35]'}`}>
-                        <div className={`flex h-10 w-10 items-center justify-center rounded-full text-xs font-bold ${isLightTheme ? 'bg-cyan-100 text-cyan-700' : 'bg-[#083746] text-[#45ddff]'}`}>
-                          {String(chief.name || 'J').split(' ').map((part) => part[0]).join('').slice(0, 2).toUpperCase()}
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <p className={`truncate text-sm font-semibold ${isLightTheme ? 'text-slate-900' : 'text-[#e7f0f8]'}`}>{chief.name}</p>
-                          <p className={`text-xs ${isLightTheme ? 'text-slate-500' : 'text-[#90a3b8]'}`}>{pluralize(chief.monitorings, 'monitoreo', 'monitoreos')}</p>
-                        </div>
-                        <div className="w-16 text-right">
-                          <p className={`text-sm font-black ${isLightTheme ? 'text-cyan-700' : 'text-[#34d3ff]'}`}>{formatPercent(chief.efficiency)}</p>
-                          <div className={`mt-1 h-1.5 overflow-hidden rounded-full ${isLightTheme ? 'bg-slate-100' : 'bg-[#2a3541]'}`}>
-                            <div className="h-full rounded-full bg-cyan-600" style={{ width: `${clampPercent(chief.efficiency)}%` }} />
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
             </div>
 
-            <div className={`col-span-12 rounded-xl p-5 shadow-[0_12px_24px_-4px_rgba(15,23,42,0.04)] lg:col-span-8 ${isLightTheme ? 'bg-white' : 'bg-[#171d23]'}`}>
+            <div className={`inicio-panel col-span-12 rounded-xl p-4 shadow-[0_10px_20px_-8px_rgba(15,23,42,0.2)] lg:col-span-8 lg:order-1 ${isLightTheme ? 'bg-white' : 'bg-[#171d23]'}`}>
               <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
                 <div>
-                  <h3 className={`text-2xl font-semibold ${isLightTheme ? 'text-slate-900' : 'text-[#f0f6fc]'}`}>Meta vs Real por Desempeño</h3>
+                  <h3 className={`inicio-chart-title text-2xl font-semibold ${isLightTheme ? 'text-slate-900' : 'text-[#f0f6fc]'}`}>Meta vs Real por Desempeño</h3>
                   <p className={`text-xs ${isLightTheme ? 'text-slate-500' : 'text-[#8ea2b8]'}`}>Comparativa trimestral de objetivos alcanzados.</p>
                 </div>
                 <div className={`flex items-center gap-4 text-xs ${isLightTheme ? 'text-slate-600' : 'text-[#a9bbcc]'}`}>
@@ -860,32 +952,52 @@ export default function MonitoreoInicio() {
               </div>
 
               {isLoading ? (
-                <div className="flex items-center gap-2 text-sm text-slate-600"><Loader2 size={14} className="animate-spin" /> Cargando métricas...</div>
+                <div className="flex h-[290px] items-end gap-5 px-2" aria-hidden="true">
+                  {Array.from({ length: 5 }).map((_, index) => (
+                    <div key={`inicio-chart-skeleton-${index}`} className="flex flex-1 flex-col items-center gap-2">
+                      <div className="flex h-52 items-end gap-2">
+                        <Skeleton className="w-9 rounded-t-lg" style={{ height: `${120 + index * 12}px` }} />
+                        <Skeleton className="w-9 rounded-t-lg" tone="soft" style={{ height: `${80 + index * 10}px` }} />
+                      </div>
+                      <Skeleton className="h-3 w-24" />
+                    </div>
+                  ))}
+                </div>
               ) : !hasData ? (
                 <p className="text-sm text-slate-500">No hay monitoreos con Compromiso de Desempeño para el filtro aplicado.</p>
               ) : (
-                <div className="overflow-x-auto pb-2">
+                <div className="overflow-x-auto pb-1">
                   <div
-                    className="flex items-end gap-5 px-1"
-                    style={{ minWidth: `${Math.max(chartRows.length * 150, 760)}px` }}
+                    className="flex items-end gap-4 px-1"
+                    style={{ minWidth: `${Math.max(chartRows.length * 156, 780)}px` }}
                   >
                     {chartRows.map((row) => {
-                      const maxHeight = 230;
+                      const maxHeight = 190;
                       const goalHeight = Math.max(4, Math.round((clampPercent(row.goalBarPercent) / 100) * maxHeight));
                       const realHeight = Math.max(8, Math.round((clampPercent(row.realBarPercent) / 100) * maxHeight));
                       return (
-                        <div key={row.id} className="flex w-[130px] shrink-0 flex-col items-center gap-3">
-                          <div className="flex h-[250px] items-end gap-2">
+                        <div key={row.id} className="flex w-[140px] shrink-0 flex-col items-center gap-2">
+                          <div className="inicio-chart-track flex h-[220px] items-end gap-2">
                             <div className="flex w-10 flex-col items-center gap-1">
+                              <span
+                                className={`text-[10px] font-bold leading-none ${
+                                  isLightTheme ? 'text-slate-500' : 'text-[#9eb0c3]'
+                                }`}
+                              >
+                                {formatPercentPrecise(row.goalBarPercent)}
+                              </span>
                               <div className={`w-full rounded-t-lg ${isLightTheme ? 'bg-slate-200' : 'bg-[#667788]'}`} style={{ height: `${goalHeight}px` }} />
                             </div>
                             <div className="flex w-10 flex-col items-center gap-1">
+                              <span className="text-[10px] font-bold leading-none text-cyan-400">
+                                {formatPercentPrecise(row.realBarPercent)}
+                              </span>
                               <div className="w-full rounded-t-lg bg-cyan-600" style={{ height: `${realHeight}px` }} />
                             </div>
                           </div>
                           <p
                             title={row.indicator}
-                            className={`line-clamp-3 h-12 text-center text-[11px] font-bold leading-4 ${isLightTheme ? 'text-slate-500' : 'text-[#9eb0c3]'}`}
+                            className={`inicio-chart-label line-clamp-4 min-h-[4.5rem] text-center text-[11px] font-bold leading-[1.05rem] break-words ${isLightTheme ? 'text-slate-500' : 'text-[#9eb0c3]'}`}
                           >
                             {row.indicator}
                           </p>
@@ -916,6 +1028,80 @@ export default function MonitoreoInicio() {
                 </div>
               </div>
             </div>
+
+            <div className="col-span-12 grid grid-cols-1 gap-3 lg:grid-cols-3">
+              <div className={`inicio-panel rounded-xl p-4 shadow-[0_10px_20px_-8px_rgba(15,23,42,0.2)] ${isLightTheme ? 'bg-white' : 'bg-[#171d23]'}`}>
+                <div className="mb-3 flex items-center justify-between">
+                  <h3 className={`text-base font-semibold ${isLightTheme ? 'text-slate-900' : 'text-[#f0f6fc]'}`}>Top jefes</h3>
+                  <span className={`text-xs font-bold ${isLightTheme ? 'text-cyan-700' : 'text-[#34d3ff]'}`}>Este periodo</span>
+                </div>
+                {isLoading ? (
+                  <div className="space-y-3">
+                    {Array.from({ length: 3 }).map((_, index) => (
+                      <div key={`chief-skeleton-${index}`} className="flex items-center gap-3">
+                        <Skeleton className="h-9 w-9 rounded-full" />
+                        <div className="min-w-0 flex-1 space-y-2">
+                          <Skeleton className="h-3 w-4/5" />
+                          <Skeleton className="h-2 w-1/2" tone="soft" />
+                        </div>
+                        <Skeleton className="h-2 w-14" />
+                      </div>
+                    ))}
+                  </div>
+                ) : !topChiefs.length ? (
+                  <p className="text-sm text-slate-500">No hay jefes con datos suficientes.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {topChiefs.map((chief) => (
+                      <div key={chief.name} className={`flex items-center gap-2.5 rounded-lg p-2 ${isLightTheme ? 'hover:bg-slate-50' : 'hover:bg-[#202a35]'}`}>
+                        <div className={`flex h-9 w-9 items-center justify-center rounded-full text-xs font-bold ${isLightTheme ? 'bg-cyan-100 text-cyan-700' : 'bg-[#083746] text-[#45ddff]'}`}>
+                          {String(chief.name || 'J').split(' ').map((part) => part[0]).join('').slice(0, 2).toUpperCase()}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className={`truncate text-sm font-semibold ${isLightTheme ? 'text-slate-900' : 'text-[#e7f0f8]'}`}>{chief.name}</p>
+                          <p className={`text-xs ${isLightTheme ? 'text-slate-500' : 'text-[#90a3b8]'}`}>{pluralize(chief.monitorings, 'monitoreo', 'monitoreos')}</p>
+                        </div>
+                        <div className="w-14 text-right">
+                          <p className={`text-sm font-black ${isLightTheme ? 'text-cyan-700' : 'text-[#34d3ff]'}`}>{formatPercent(chief.efficiency)}</p>
+                          <div className={`mt-1 h-1.5 overflow-hidden rounded-full ${isLightTheme ? 'bg-slate-100' : 'bg-[#2a3541]'}`}>
+                            <div className="h-full rounded-full bg-cyan-600" style={{ width: `${clampPercent(chief.efficiency)}%` }} />
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className={`inicio-panel rounded-xl p-4 shadow-[0_10px_20px_-8px_rgba(15,23,42,0.2)] ${isLightTheme ? 'bg-white' : 'bg-[#171d23]'}`}>
+                <h3 className={`mb-3 text-base font-semibold ${isLightTheme ? 'text-slate-900' : 'text-[#f0f6fc]'}`}>Alertas / Prioridades</h3>
+                <div className="space-y-2">
+                  {priorityAlerts.map((alert) => (
+                    <div key={alert.id} className={`rounded-lg border p-2.5 ${alert.value > 0 ? 'border-rose-500/40 bg-rose-500/10' : 'border-slate-700/35 bg-slate-900/20'}`}>
+                      <div className="flex items-center justify-between gap-2">
+                        <p className={`text-[12px] font-semibold ${isLightTheme ? 'text-slate-900' : 'text-[#e7f0f8]'}`}>{alert.label}</p>
+                        <span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${alert.value > 0 ? 'bg-rose-500/20 text-rose-400' : isLightTheme ? 'bg-slate-100 text-slate-600' : 'bg-slate-700/50 text-slate-300'}`}>{alert.value}</span>
+                      </div>
+                      <p className={`mt-1 text-[11px] ${isLightTheme ? 'text-slate-500' : 'text-[#8ea2b8]'}`}>{alert.detail}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className={`inicio-panel rounded-xl p-4 shadow-[0_10px_20px_-8px_rgba(15,23,42,0.2)] ${isLightTheme ? 'bg-white' : 'bg-[#171d23]'}`}>
+                <h3 className={`mb-3 text-base font-semibold ${isLightTheme ? 'text-slate-900' : 'text-[#f0f6fc]'}`}>Tareas pendientes</h3>
+                <div className="space-y-2">
+                  <div className="rounded-lg border border-slate-700/35 bg-slate-900/20 p-2.5">
+                    <p className={`text-[12px] font-semibold ${isLightTheme ? 'text-slate-900' : 'text-[#e7f0f8]'}`}>Aplicar filtros del periodo</p>
+                    <p className={`mt-1 text-[11px] ${isLightTheme ? 'text-slate-500' : 'text-[#8ea2b8]'}`}>Valida año, mes, día y estado para depurar el tablero.</p>
+                  </div>
+                  <div className="rounded-lg border border-slate-700/35 bg-slate-900/20 p-2.5">
+                    <p className={`text-[12px] font-semibold ${isLightTheme ? 'text-slate-900' : 'text-[#e7f0f8]'}`}>Revisar monitoreos cerrados</p>
+                    <p className={`mt-1 text-[11px] ${isLightTheme ? 'text-slate-500' : 'text-[#8ea2b8]'}`}>{monitoringStatusSummary.closed} registros requieren verificación de cierre.</p>
+                  </div>
+                </div>
+              </div>
+            </div>
           </section>
 
           <section className={`overflow-hidden rounded-xl shadow-[0_12px_24px_-4px_rgba(15,23,42,0.04)] ${isLightTheme ? 'bg-white' : 'bg-[#171d23]'}`}>
@@ -928,7 +1114,9 @@ export default function MonitoreoInicio() {
             </div>
 
             {isLoading ? (
-              <div className="px-5 py-5 text-sm text-slate-600"><Loader2 size={14} className="mr-2 inline animate-spin" />Cargando actividad...</div>
+              <div className="p-3">
+                <SkeletonTable rows={7} columns={5} />
+              </div>
             ) : !detailedRows.length ? (
               <p className="px-5 py-5 text-sm text-slate-500">Sin actividad para el filtro aplicado.</p>
             ) : (

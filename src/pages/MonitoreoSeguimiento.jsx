@@ -13,10 +13,9 @@ import {
 import Card from '../components/ui/Card.jsx';
 import ConfirmModal from '../components/ui/ConfirmModal.jsx';
 import Input from '../components/ui/Input.jsx';
-import InlineOperationalSummary from '../components/ui/InlineOperationalSummary.jsx';
 import MonitoreoGestionMonitoreos from './MonitoreoGestionMonitoreos.jsx';
-import SectionHeader from '../components/ui/SectionHeader.jsx';
 import Select from '../components/ui/Select.jsx';
+import { Skeleton, SkeletonText } from '../components/ui/Skeleton.jsx';
 import { supabase } from '../lib/supabase.js';
 
 const getLocalJson = (key, fallback = {}) => {
@@ -53,6 +52,33 @@ const MODALITY_VARIANTS = {
   ebr: ['ebr', 'EBR'],
   ebe: ['ebe', 'EBE'],
 };
+const LOCAL_MONITORING_COVERS = Object.entries(
+  import.meta.glob('../img/monitoreos/*.{png,jpg,jpeg,webp,avif}', {
+    eager: true,
+    import: 'default',
+  }),
+)
+  .map(([path, url]) => ({
+    path,
+    url,
+    fileName: String(path).split('/').pop()?.toLowerCase() || '',
+  }))
+  .sort((left, right) => {
+    const leftNum = Number.parseInt(left.fileName, 10);
+    const rightNum = Number.parseInt(right.fileName, 10);
+    if (Number.isNaN(leftNum) || Number.isNaN(rightNum)) return left.fileName.localeCompare(right.fileName);
+    return leftNum - rightNum;
+  });
+const COVER_FOCUS_BY_FILE = {
+  '1.jpg': 'center center',
+  '2.jpg': 'center 45%',
+  '3.jpg': 'center 52%',
+  '4.jpg': 'center 45%',
+  '5.jpg': 'center 42%',
+  '6.jpg': 'center 50%',
+  '7.jpg': 'center 45%',
+  '8.jpg': 'center 38%',
+};
 
 const normalizeLevelValue = (value) => {
   const raw = String(value || '').toLowerCase();
@@ -60,6 +86,27 @@ const normalizeLevelValue = (value) => {
   if (LEVEL_VARIANTS.primary.includes(raw)) return 'primary';
   if (LEVEL_VARIANTS.secondary.includes(raw)) return 'secondary';
   return 'initial';
+};
+
+const hashSeed = (value = '') => {
+  let hash = 0;
+  for (let i = 0; i < value.length; i += 1) {
+    hash = (hash << 5) - hash + value.charCodeAt(i);
+    hash |= 0;
+  }
+  return Math.abs(hash);
+};
+
+const resolveMonitoringCover = (event) => {
+  const customCover = String(event?.cover_image_url || event?.coverImageUrl || '').trim();
+  if (customCover) return { url: customCover, objectPosition: 'center center' };
+  if (!LOCAL_MONITORING_COVERS.length) return { url: '', objectPosition: 'center center' };
+  const seed = `${event?.id || ''}-${event?.title || ''}`;
+  const selected = LOCAL_MONITORING_COVERS[hashSeed(seed) % LOCAL_MONITORING_COVERS.length];
+  return {
+    url: selected?.url || '',
+    objectPosition: COVER_FOCUS_BY_FILE[selected?.fileName] || 'center center',
+  };
 };
 
 const normalizeModalityValue = (value) => {
@@ -144,10 +191,12 @@ const formatDateContextLabel = (value) => {
 
 const statusFromEvent = (event) => {
   const now = new Date();
-  const end = new Date(event.end_at);
+  const start = toSafeDate(event?.start_at);
+  const end = toSafeDate(event?.end_at);
   if (event.status === 'hidden') return 'hidden';
   if (event.status === 'closed') return 'closed';
-  if (end < now) return 'expired';
+  if (end && end < now) return 'closed';
+  if (start && start > now) return 'scheduled';
   return 'active';
 };
 
@@ -161,10 +210,10 @@ const levelLabel = (value) =>
   ({ initial: 'Inicial', primary: 'Primaria', secondary: 'Secundaria' }[normalizeLevelValue(value)] || '-');
 const modalityLabel = (value) => ({ ebr: 'EBR', ebe: 'EBE' }[normalizeModalityValue(value)] || '-');
 const statusLabel = (value) =>
-  ({ active: 'Activo', hidden: 'Oculto', closed: 'Cerrado', expired: 'Vencido' }[value] || 'Activo');
+  ({ active: 'Activo', scheduled: 'Programado', hidden: 'Oculto', closed: 'Cerrado' }[value] || 'Activo');
 
 const statusBadgeClass = (value) => {
-  if (value === 'expired') return 'border-amber-500/50 bg-amber-500/10 text-amber-200';
+  if (value === 'scheduled') return 'border-sky-500/50 bg-sky-500/10 text-sky-200';
   if (value === 'hidden') return 'border-slate-600/80 bg-slate-700/40 text-slate-300';
   if (value === 'closed') return 'border-rose-500/40 bg-rose-500/10 text-rose-200';
   return 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200';
@@ -173,7 +222,7 @@ const statusBadgeClass = (value) => {
 const eventColorClass = (event) => {
   const status = statusFromEvent(event);
   if (status === 'hidden') return 'border-slate-600/80 bg-slate-700/60 text-slate-200';
-  if (status === 'expired' || status === 'closed') return 'border-amber-500/60 bg-amber-500/20 text-amber-100';
+  if (status === 'closed') return 'border-amber-500/60 bg-amber-500/20 text-amber-100';
   if (['ugel_date', 'fecha_ugel', 'celebration', 'commemorative'].includes(String(event.event_type || '').toLowerCase())) {
     return 'border-amber-500/50 bg-amber-500/20 text-amber-100';
   }
@@ -229,7 +278,7 @@ const isInProgressMonitoringEvent = (event, now = new Date()) => {
 const getEventOperationalState = (event, now = new Date()) => {
   const category = getEventCategory(event);
   const status = statusFromEvent(event);
-  if (category === 'monitoring' && (status === 'expired' || status === 'closed')) return 'overdue';
+  if (category === 'monitoring' && status === 'closed') return 'overdue';
   if (isDueSoonEvent(event, now)) return 'due_soon';
   if (isDraftMonitoringEvent(event)) return 'draft';
   if (isInProgressMonitoringEvent(event, now)) return 'in_progress';
@@ -300,7 +349,7 @@ const summarizeDayRisk = (dayEvents, now = new Date()) => {
     const category = getEventCategory(event);
     const state = statusFromEvent(event);
     if (category === 'activity' || category === 'ugel') summary.activities += 1;
-    if (category === 'monitoring' && (state === 'expired' || state === 'closed')) summary.overdue += 1;
+    if (category === 'monitoring' && state === 'closed') summary.overdue += 1;
     if (isDueSoonEvent(event, now)) summary.dueSoon += 1;
     if (isDraftMonitoringEvent(event)) summary.drafts += 1;
     if (isInProgressMonitoringEvent(event, now)) summary.inProgress += 1;
@@ -410,7 +459,7 @@ export default function MonitoreoSeguimiento() {
     try {
       const { data: templatesData, error: templatesError } = await supabase
         .from('monitoring_templates')
-        .select('id,title,description,status,availability,created_by,created_at,updated_at')
+        .select('id,title,description,status,availability,levels_config,created_by,created_at,updated_at')
         .order('updated_at', { ascending: false });
       if (templatesError) {
         setError(`No se pudieron cargar monitoreos base: ${templatesError.message}`);
@@ -455,6 +504,9 @@ export default function MonitoreoSeguimiento() {
       }
 
       const templateById = new Map((templatesData || []).map((item) => [item.id, item]));
+      const templateByTitle = new Map(
+        (templatesData || []).map((item) => [normalizeTitle(item.title), item]),
+      );
       const publishedTemplateTitles = new Set(
         (templatesData || [])
           .filter((item) => item.status === 'published')
@@ -467,7 +519,8 @@ export default function MonitoreoSeguimiento() {
       );
       const normalizedEvents = (eventsData || [])
         .filter((item) => {
-          const sourceTemplate = templateById.get(item.id);
+          const sourceTemplate =
+            templateById.get(item.id) || templateByTitle.get(normalizeTitle(item.title));
           if (sourceTemplate) {
             const isPublished = sourceTemplate.status === 'published';
             return isPublished || (isAdmin && showDrafts);
@@ -482,10 +535,14 @@ export default function MonitoreoSeguimiento() {
           return true;
         })
         .map((item) => {
-          const sourceTemplate = templateById.get(item.id);
+          const sourceTemplate =
+            templateById.get(item.id) || templateByTitle.get(normalizeTitle(item.title));
+          const sourceLevelsConfig = sourceTemplate?.levels_config || {};
+          const sourceCoverImageUrl = String(sourceLevelsConfig?.coverImageUrl || '').trim();
           return {
             ...item,
             template_status: sourceTemplate?.status || null,
+            cover_image_url: String(item?.cover_image_url || item?.coverImageUrl || sourceCoverImageUrl || '').trim(),
           };
         });
       const existingIds = new Set(normalizedEvents.map((item) => item.id));
@@ -509,6 +566,7 @@ export default function MonitoreoSeguimiento() {
           created_at: template.created_at,
           updated_at: template.updated_at,
           template_status: template.status,
+          cover_image_url: String(template?.levels_config?.coverImageUrl || '').trim(),
           monitoring_event_responsibles: [],
           monitoring_event_objectives: [],
         }));
@@ -547,38 +605,46 @@ export default function MonitoreoSeguimiento() {
     return map;
   }, [users]);
 
+  const matchesNonStatusFilters = (event) => {
+    if (!isAdmin && event.status === 'hidden') return false;
+
+    if (scopeFilter === 'mine') {
+      const isMine =
+        event.created_by === currentUserId ||
+        (event.monitoring_event_responsibles || []).some(
+          (responsible) => responsible.user_id === currentUserId,
+        );
+      if (!isMine) return false;
+    }
+
+    if (levelFilter !== 'all') {
+      const hasLevel = (event.monitoring_event_responsibles || []).some(
+        (responsible) => normalizeLevelValue(responsible.level) === levelFilter,
+      );
+      if (!hasLevel) return false;
+    }
+
+    if (modalityFilter !== 'all') {
+      const hasModality = (event.monitoring_event_responsibles || []).some(
+        (responsible) => normalizeModalityValue(responsible.modality) === modalityFilter,
+      );
+      if (!hasModality) return false;
+    }
+
+    return true;
+  };
+
+  const nonStatusFilteredEvents = useMemo(
+    () => events.filter((event) => matchesNonStatusFilters(event)),
+    [events, scopeFilter, levelFilter, modalityFilter, isAdmin, currentUserId],
+  );
+
   const visibleEvents = useMemo(() => {
-    return events.filter((event) => {
+    return nonStatusFilteredEvents.filter((event) => {
       const eventStatus = statusFromEvent(event);
-      if (!isAdmin && event.status === 'hidden') return false;
-
-      if (scopeFilter === 'mine') {
-        const isMine =
-          event.created_by === currentUserId ||
-          (event.monitoring_event_responsibles || []).some(
-            (responsible) => responsible.user_id === currentUserId,
-          );
-        if (!isMine) return false;
-      }
-
-      if (levelFilter !== 'all') {
-        const hasLevel = (event.monitoring_event_responsibles || []).some(
-          (responsible) => normalizeLevelValue(responsible.level) === levelFilter,
-        );
-        if (!hasLevel) return false;
-      }
-
-      if (modalityFilter !== 'all') {
-        const hasModality = (event.monitoring_event_responsibles || []).some(
-          (responsible) => normalizeModalityValue(responsible.modality) === modalityFilter,
-        );
-        if (!hasModality) return false;
-      }
-
-      if (statusFilter !== 'all' && eventStatus !== statusFilter) return false;
-      return true;
+      return statusFilter === 'all' || eventStatus === statusFilter;
     });
-  }, [events, scopeFilter, levelFilter, modalityFilter, statusFilter, isAdmin, currentUserId]);
+  }, [nonStatusFilteredEvents, statusFilter]);
 
   const miniCalendarDays = useMemo(() => buildCalendarDays(currentDate), [currentDate]);
 
@@ -588,13 +654,13 @@ export default function MonitoreoSeguimiento() {
       const key = normalizeDay(day).toISOString();
       map.set(
         key,
-        visibleEvents.filter((event) =>
-          isInRange(day, new Date(event.start_at), new Date(event.end_at)),
-        ),
+          nonStatusFilteredEvents.filter((event) =>
+            isInRange(day, new Date(event.start_at), new Date(event.end_at)),
+          ),
       );
     });
     return map;
-  }, [miniCalendarDays, visibleEvents]);
+  }, [miniCalendarDays, nonStatusFilteredEvents]);
 
   const selectedDay = useMemo(() => {
     if (selectedDayKey) return new Date(selectedDayKey);
@@ -617,17 +683,22 @@ export default function MonitoreoSeguimiento() {
     const byMap = eventsByDay.get(key);
     const baseEvents =
       byMap ||
-      visibleEvents.filter((event) =>
+      nonStatusFilteredEvents.filter((event) =>
         isInRange(selectedDay, new Date(event.start_at), new Date(event.end_at)),
       );
     return baseEvents.slice().sort((left, right) => compareEventsByPriority(left, right));
-  }, [selectedDay, eventsByDay, visibleEvents]);
+  }, [selectedDay, eventsByDay, nonStatusFilteredEvents]);
+
+  const selectedDayEventsByStatus = useMemo(() => {
+    if (statusFilter === 'all') return selectedDayEvents;
+    return selectedDayEvents.filter((event) => statusFromEvent(event) === statusFilter);
+  }, [selectedDayEvents, statusFilter]);
 
   const selectedDayEvent = useMemo(() => {
-    if (!selectedDayEvents.length) return null;
-    const found = selectedDayEvents.find((item) => item.id === selectedEventId);
-    return found || selectedDayEvents[0];
-  }, [selectedDayEvents, selectedEventId]);
+    if (!selectedDayEventsByStatus.length) return null;
+    const found = selectedDayEventsByStatus.find((item) => item.id === selectedEventId);
+    return found || selectedDayEventsByStatus[0];
+  }, [selectedDayEventsByStatus, selectedEventId]);
 
   const selectedDayEventsPreview = useMemo(() => selectedDayEvents.slice(0, 3), [selectedDayEvents]);
   const selectedDayEventsHiddenCount = Math.max(0, selectedDayEvents.length - selectedDayEventsPreview.length);
@@ -1099,7 +1170,7 @@ export default function MonitoreoSeguimiento() {
     const dueSoon = monitoringEvents.filter((event) => isDueSoonEvent(event, now)).length;
     const overdue = monitoringEvents.filter((event) => {
       const state = statusFromEvent(event);
-      return state === 'expired' || state === 'closed';
+      return state === 'closed';
     }).length;
     const drafts = monitoringEvents.filter((event) => isDraftMonitoringEvent(event)).length;
     return { inProgress, dueSoon, overdue, drafts };
@@ -1145,6 +1216,23 @@ export default function MonitoreoSeguimiento() {
   const hasNoGlobalEvents = baseEvents.length === 0;
   const hasNoEventsByFilters = !hasNoGlobalEvents && visibleEvents.length === 0;
   const hasNoEventsInCurrentMonth = !hasNoEventsByFilters && visibleEvents.length > 0 && !hasVisibleEventsInCurrentMonth;
+  const orderedVisibleEvents = useMemo(
+    () => visibleEvents.slice().sort((left, right) => compareEventsByPriority(left, right)),
+    [visibleEvents],
+  );
+  const stitchDisplayEvents = useMemo(() => orderedVisibleEvents, [orderedVisibleEvents]);
+  const stitchStatusCounts = useMemo(() => {
+    const summary = { total: 0, active: 0, scheduled: 0, closed: 0 };
+    nonStatusFilteredEvents.forEach((event) => {
+      const status = statusFromEvent(event);
+      if (status === 'hidden') return;
+      summary.total += 1;
+      if (status === 'closed') summary.closed += 1;
+      else if (status === 'scheduled') summary.scheduled += 1;
+      else if (status === 'active') summary.active += 1;
+    });
+    return summary;
+  }, [nonStatusFilteredEvents]);
 
   const resetFilters = () => {
     setScopeFilter('all');
@@ -1205,7 +1293,7 @@ export default function MonitoreoSeguimiento() {
             {eventTypeLabel(event.event_type)}
           </span>
         </div>
-        {eventStatus === 'expired' || eventStatus === 'closed' ? (
+        {eventStatus === 'closed' ? (
           <p className="mt-1 text-[10px] text-rose-200/90">Requiere atencion prioritaria.</p>
         ) : null}
       </button>
@@ -1213,92 +1301,44 @@ export default function MonitoreoSeguimiento() {
   };
 
   return (
-    <div className="flex flex-col gap-3">
-      <Card className="w-full rounded-[16px] border border-white/10 bg-white/[0.04] p-3 shadow-[0_10px_30px_-18px_rgba(0,0,0,0.65)]">
-        <div className="flex flex-wrap items-center gap-2.5">
-          <SectionHeader title="Seguimiento" size="page" />
-        </div>
-
-        <div className="mt-2.5 flex flex-wrap items-center gap-2">
-          <span className="inline-flex h-7 items-center rounded-lg border border-slate-700/60 bg-slate-900/55 px-2 text-[10px] uppercase tracking-[0.12em] text-slate-400">
-            Filtros
-          </span>
-          <div className="min-w-[150px] flex-1 sm:flex-none sm:w-[180px]">
-            <Select compact hideLabel id="scopeFilterLeft" label="Vista" value={scopeFilter} onChange={(event) => setScopeFilter(event.target.value)}>
-              <option value="all">Vista: todos</option>
-              <option value="mine">Vista: solo asignados</option>
-            </Select>
-          </div>
-          <div className="min-w-[150px] flex-1 sm:flex-none sm:w-[180px]">
-            <Select compact hideLabel id="statusFilterLeft" label="Estado" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
-              <option value="all">Estado: todos</option>
-              <option value="active">Estado: activo</option>
-              <option value="hidden">Estado: oculto</option>
-              <option value="expired">Estado: vencido</option>
-              <option value="closed">Estado: cerrado</option>
-            </Select>
-          </div>
-          <div className="min-w-[150px] flex-1 sm:flex-none sm:w-[180px]">
-            <Select compact hideLabel id="levelFilterLeft" label="Nivel" value={levelFilter} onChange={(event) => setLevelFilter(event.target.value)}>
-              <option value="all">Nivel: todos</option>
-              <option value="initial">Nivel: inicial</option>
-              <option value="primary">Nivel: primaria</option>
-              <option value="secondary">Nivel: secundaria</option>
-            </Select>
-          </div>
-          <div className="min-w-[150px] flex-1 sm:flex-none sm:w-[180px]">
-            <Select compact hideLabel id="modalityFilterLeft" label="Modalidad" value={modalityFilter} onChange={(event) => setModalityFilter(event.target.value)}>
-              <option value="all">Modalidad: todas</option>
-              <option value="ebr">Modalidad: EBR</option>
-              <option value="ebe">Modalidad: EBE</option>
-            </Select>
-          </div>
-          {isAdmin ? (
-            <label className="ml-auto inline-flex h-7 items-center gap-2 rounded-lg border border-slate-700/60 bg-slate-900/50 px-2 text-[11px] text-slate-300">
-              <input
-                type="checkbox"
-                checked={showDrafts}
-                onChange={(event) => setShowDrafts(event.target.checked)}
-                className="h-3.5 w-3.5 rounded border-slate-500 bg-slate-900"
-              />
-              Ver borradores
-            </label>
-          ) : null}
-        </div>
-
-        <div className="mt-2">
-          <InlineOperationalSummary summary={operationalSummary} collapsible defaultCollapsed />
-          {isOperationalSummaryEmpty ? (
-            <p className="mt-1.5 text-[11px] text-slate-400">No hay monitoreos activos en este momento.</p>
-          ) : null}
-        </div>
-      </Card>
-
+    <div className="flex flex-col gap-4">
       {error ? <p className="text-sm text-rose-400">{error}</p> : null}
       {success ? <p className="text-sm text-emerald-300">{success}</p> : null}
 
       {loading ? (
-        <Card className="flex flex-col gap-4 rounded-[18px] border border-white/10 bg-white/5 p-3 shadow-[0_10px_30px_-18px_rgba(0,0,0,0.65)]">
-          <div className="flex items-center gap-2 text-sm text-cyan-200">
-            <Loader2 size={16} className="animate-spin" />
-            <p>Cargando seguimiento...</p>
+        <Card className="grid gap-4 rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900/70 lg:grid-cols-[360px_minmax(0,1fr)]">
+          <div className="space-y-4">
+            <Skeleton className="h-7 w-40" />
+            <div className="grid grid-cols-7 gap-2">
+              {Array.from({ length: 35 }).map((_, index) => (
+                <Skeleton key={`seguimiento-calendar-${index}`} className="h-8 rounded-lg" tone={index % 6 === 0 ? 'block' : 'soft'} />
+              ))}
+            </div>
+            <SkeletonText lines={4} />
           </div>
-          <div className="h-1.5 overflow-hidden rounded-full border border-slate-700/60 bg-slate-900/70">
-            <span className="block h-full w-1/3 animate-pulse rounded-full bg-cyan-400/70" />
-          </div>
-          <div className="grid gap-2 sm:grid-cols-2" aria-hidden="true">
-            <div className="h-24 animate-pulse rounded-xl border border-slate-800/70 bg-slate-900/45" />
-            <div className="h-24 animate-pulse rounded-xl border border-slate-800/70 bg-slate-900/45" />
+          <div className="space-y-3">
+            <Skeleton className="h-8 w-56" />
+            {Array.from({ length: 3 }).map((_, index) => (
+              <div key={`seguimiento-card-${index}`} className="grid overflow-hidden rounded-xl border border-slate-200 dark:border-slate-800 md:grid-cols-[180px_minmax(0,1fr)]">
+                <Skeleton className="h-28 rounded-none" />
+                <div className="space-y-2 p-3">
+                  <Skeleton className="h-4 w-24" />
+                  <Skeleton className="h-5 w-3/4" />
+                  <Skeleton className="h-3 w-40" />
+                  <Skeleton className="h-2 w-full" />
+                </div>
+              </div>
+            ))}
           </div>
         </Card>
       ) : (
         <div className="grid gap-4">
         {hasNoEventsByFilters ? (
-          <Card className="rounded-[16px] border border-amber-500/30 bg-amber-500/10 p-3">
-            <p className="text-sm font-semibold text-amber-100">
+          <Card className="rounded-xl border border-amber-300 bg-amber-50 p-3">
+            <p className="text-sm font-semibold text-amber-800">
               No encontramos resultados con los filtros actuales.
             </p>
-            <p className="mt-1 text-xs text-amber-200/90">
+            <p className="mt-1 text-xs text-amber-700">
               {areFiltersActive
                 ? 'Prueba cambiando el estado, nivel o modalidad.'
                 : 'Intenta actualizar la vista para cargar nuevos registros.'}
@@ -1315,324 +1355,168 @@ export default function MonitoreoSeguimiento() {
           </Card>
         ) : null}
 
-        <Card className="seguimiento-calendar-card min-w-0 rounded-[20px] border border-white/10 bg-white/5 p-3 shadow-[0_14px_36px_-20px_rgba(0,0,0,0.72)]">
-          <div
-            className={`rounded-[20px] border p-3 transition-all duration-300 ${
-              isCalendarHighContrast
-                ? 'seguimiento-calendar-surface calendar-high-contrast border-slate-500/80 bg-slate-950/95 shadow-[0_12px_30px_-18px_rgba(2,6,23,0.95)]'
-                : 'seguimiento-calendar-surface border-slate-800/60 bg-[radial-gradient(120%_90%_at_50%_0%,rgba(56,189,248,0.10),transparent_56%),linear-gradient(180deg,rgba(15,23,42,0.88),rgba(2,6,23,0.82))]'
-            }`}
-          >
-            <div className="mb-2.5 flex items-center justify-between gap-2">
-              <div className="flex min-w-0 items-center gap-2">
-                <span
-                  className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border ${
-                    isCalendarHighContrast
-                      ? 'border-slate-500/80 bg-slate-900 text-cyan-200'
-                      : 'border-cyan-400/30 bg-cyan-500/10 text-cyan-200'
-                  }`}
-                >
-                  <CalendarDays size={14} />
-                </span>
-                <p className="truncate text-[13px] font-semibold capitalize text-slate-100">
-                  {currentDate.toLocaleDateString('es-PE', { month: 'long', year: 'numeric' })}
-                </p>
+        <Card className="seguimiento-calendar-card min-w-0 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950">
+          <div className="flex min-h-[640px] flex-col lg:flex-row">
+            <aside className="w-full border-b border-slate-200 bg-slate-50 p-6 dark:border-slate-800 dark:bg-slate-900 lg:w-[380px] lg:border-b-0 lg:border-r">
+              <div className="flex items-center justify-between">
+                <button type="button" onClick={() => navigateCalendar(-1)} className="rounded-full p-2 transition hover:bg-slate-200 dark:hover:bg-slate-800" title="Mes anterior">
+                  <ChevronLeft size={18} className="text-slate-700 dark:text-slate-200" />
+                </button>
+                <p className="text-xl font-semibold capitalize text-slate-900 dark:text-slate-100">{currentDate.toLocaleDateString('es-PE', { month: 'long', year: 'numeric' })}</p>
+                <button type="button" onClick={() => navigateCalendar(1)} className="rounded-full p-2 transition hover:bg-slate-200 dark:hover:bg-slate-800" title="Mes siguiente">
+                  <ChevronRight size={18} className="text-slate-700 dark:text-slate-200" />
+                </button>
               </div>
 
-              <div className="flex shrink-0 items-center gap-1.5">
-                <button
-                  type="button"
-                  onClick={() => setIsCalendarHighContrast((prev) => !prev)}
-                  title={isCalendarHighContrast ? 'Desactivar alto contraste' : 'Activar alto contraste'}
-                  className={`inline-flex h-8 items-center justify-center rounded-full border px-2.5 text-[10px] font-semibold transition-all duration-200 ${
-                    isCalendarHighContrast
-                      ? 'border-cyan-300/70 bg-cyan-500/20 text-cyan-100'
-                      : 'border-slate-700/70 bg-slate-900/70 text-slate-200 hover:border-cyan-400/55 hover:text-cyan-100'
-                  }`}
-                >
-                  {isCalendarHighContrast ? 'AA' : 'Aa'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const today = normalizeDay(new Date());
-                    const todayKey = today.toISOString();
-                    const todayEvents = (eventsByDay.get(todayKey) || [])
-                      .slice()
-                      .sort((left, right) => compareEventsByPriority(left, right));
-                    setCurrentDate(today);
-                    setSelectedDayKey(todayKey);
-                    setSelectedEventId(todayEvents.length ? todayEvents[0].id : '');
-                  }}
-                  className="inline-flex h-8 items-center justify-center rounded-full border border-slate-700/70 bg-slate-900/70 px-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-200 transition-all duration-200 hover:-translate-y-[1px] hover:border-cyan-400/55 hover:bg-slate-800/90 hover:text-cyan-100"
-                >
-                  Hoy
-                </button>
-                <button
-                  type="button"
-                  onClick={() => navigateCalendar(-1)}
-                  className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-700/70 bg-slate-900/70 text-slate-200 transition-all duration-200 hover:-translate-y-[1px] hover:border-cyan-400/55 hover:bg-slate-800/90 hover:text-cyan-100"
-                  title="Mes anterior"
-                >
-                  <ChevronLeft size={14} />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => navigateCalendar(1)}
-                  className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-700/70 bg-slate-900/70 text-slate-200 transition-all duration-200 hover:-translate-y-[1px] hover:border-cyan-400/55 hover:bg-slate-800/90 hover:text-cyan-100"
-                  title="Mes siguiente"
-                >
-                  <ChevronRight size={14} />
-                </button>
+              <div className="mt-4 grid grid-cols-7 gap-1 text-center text-sm text-slate-500 dark:text-slate-400">
+                {['D', 'L', 'M', 'M', 'J', 'V', 'S'].map((label) => (
+                  <span key={`stitch-weekday-${label}`} className="py-1">{label}</span>
+                ))}
               </div>
-            </div>
-            <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[10.5px] text-slate-300">
-              {Object.entries(CATEGORY_DOT_STYLES).map(([key, item]) => (
-                <span
-                  key={key}
-                  className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 ${
-                    isCalendarHighContrast
-                      ? 'border-slate-600/90 bg-slate-950 text-slate-100'
-                      : 'border-slate-700/70 bg-slate-900/75'
-                  }`}
-                >
-                  <span
-                    className={`h-1.5 w-1.5 rounded-full ring-1 ring-offset-1 ring-offset-slate-900 ${item.className}`}
-                  />
-                  {item.label}
-                </span>
-              ))}
-              <span
-                className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 ${
-                  isCalendarHighContrast
-                    ? 'border-rose-300/70 bg-rose-400/20 text-rose-100'
-                    : 'border-rose-500/35 bg-rose-500/10 text-rose-100'
-                }`}
-              >
-                Riesgo vencido
-              </span>
-              <span
-                className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 ${
-                  isCalendarHighContrast
-                    ? 'border-amber-300/70 bg-amber-400/20 text-amber-100'
-                    : 'border-amber-500/35 bg-amber-500/10 text-amber-100'
-                }`}
-              >
-                Riesgo por vencer
-              </span>
-              <span className="ml-auto inline-flex items-center gap-1 rounded-full border border-cyan-400/30 bg-cyan-500/10 px-2 py-0.5 text-cyan-100">
-                {selectedDayEvents.length} eventos seleccionados
-              </span>
-            </div>
-            {hasNoEventsInCurrentMonth ? (
-              <div className="mt-2 rounded-lg border border-slate-700/70 bg-slate-900/50 px-2.5 py-2 text-[11px] text-slate-300">
-                Este mes aun no tiene eventos registrados.
-              </div>
-            ) : null}
-            <div className="mt-2.5 grid gap-2.5 lg:grid-cols-[minmax(0,7fr)_minmax(260px,3fr)] lg:items-start">
-              <div className="min-w-0">
-                <div className="grid grid-cols-7 gap-1.5">
-                  {['L', 'M', 'X', 'J', 'V', 'S', 'D'].map((label) => (
-                    <span
-                      key={`mini-w-${label}`}
-                      className={`text-center text-[10px] font-semibold uppercase tracking-[0.12em] ${
-                        isCalendarHighContrast ? 'text-slate-300' : 'text-slate-500'
-                      }`}
-                    >
-                      {label}
-                    </span>
-                  ))}
-                </div>
-                <div className="mt-1.5 grid grid-cols-7 gap-1.5">
-                  {miniCalendarDays.map((day) => {
-                    const dayKey = normalizeDay(day).toISOString();
-                    const dayEvents = eventsByDay.get(dayKey) || [];
-                    const isMiniToday = isSameDay(day, new Date());
-                    const isMiniSelected = selectedDayKey === dayKey;
-                    const isMiniCurrentMonth = day.getMonth() === currentDate.getMonth();
-                    const isMiniWeekend = day.getDay() === 0 || day.getDay() === 6;
-                    const dayCategories = Array.from(
-                      new Set(dayEvents.map((event) => getEventCategory(event)).filter(Boolean)),
-                    ).slice(0, 3);
-                    const dayTooltip = dayCategories
-                      .map((category) => CATEGORY_DOT_STYLES[category]?.label)
-                      .filter(Boolean)
-                      .join(' / ');
-                    const dayLabel = day.toLocaleDateString('es-PE', {
-                      day: '2-digit',
-                      month: '2-digit',
-                      year: 'numeric',
-                    });
-                    const dayRisk = summarizeDayRisk(dayEvents);
-                    const prioritizedDayEvents = dayEvents
-                      .slice()
-                      .sort((left, right) => compareEventsByPriority(left, right));
-                    const hasOverdue = dayRisk.overdue > 0;
-                    const hasDueSoon = dayRisk.dueSoon > 0;
-                    const hasDrafts = dayRisk.drafts > 0;
-                    const riskNotes = [];
-                    if (hasOverdue) riskNotes.push(`${dayRisk.overdue} vencido${dayRisk.overdue === 1 ? '' : 's'}`);
-                    if (hasDueSoon) riskNotes.push(`${dayRisk.dueSoon} por vencer`);
-                    if (hasDrafts) riskNotes.push(`${dayRisk.drafts} borrador${dayRisk.drafts === 1 ? '' : 'es'}`);
-                    const dayRiskClass = hasOverdue
-                      ? 'border-rose-500/70 bg-rose-500/16 text-rose-50 shadow-[inset_0_1px_0_rgba(254,202,202,0.25)]'
-                      : hasDueSoon
-                        ? 'border-amber-400/70 bg-amber-500/14 text-amber-50 shadow-[inset_0_1px_0_rgba(254,243,199,0.24)]'
-                        : hasDrafts
-                          ? 'border-indigo-400/65 bg-indigo-500/14 text-indigo-50 shadow-[inset_0_1px_0_rgba(199,210,254,0.24)]'
-                          : '';
 
-                    return (
-                      <button
-                        key={`mini-${dayKey}`}
-                        type="button"
-                        onClick={() => handleCalendarDaySelection(day, dayKey, prioritizedDayEvents)}
-                        aria-label={`${dayLabel}. ${dayEvents.length} evento${dayEvents.length === 1 ? '' : 's'}.${riskNotes.length ? ` ${riskNotes.join('. ')}.` : ''}`}
-                        title={dayTooltip || dayLabel}
-                        className={`relative inline-flex h-10 items-center justify-center rounded-full border text-[11px] font-semibold transition-all duration-200 ease-out ${
-                          isCalendarHighContrast
-                            ? isMiniSelected
-                              ? 'border-cyan-200 bg-cyan-300 text-slate-950 shadow-[0_10px_24px_-14px_rgba(56,189,248,0.9)]'
-                              : isMiniToday
-                                ? 'border-emerald-200 bg-emerald-300 text-slate-950'
-                                : isMiniCurrentMonth
-                                  ? 'border-slate-500/80 bg-slate-950 text-slate-100 hover:-translate-y-[1px] hover:border-cyan-300'
-                                  : 'border-slate-800 bg-slate-950/70 text-slate-500'
-                            : isMiniSelected
-                              ? 'border-cyan-300/80 bg-gradient-to-r from-cyan-400/30 via-sky-400/20 to-indigo-500/25 text-slate-50 shadow-[0_12px_24px_-16px_rgba(56,189,248,0.95),inset_0_1px_0_rgba(186,230,253,0.45)]'
-                              : isMiniToday
-                                ? 'border-emerald-400/55 bg-emerald-500/15 text-emerald-100'
-                                : isMiniCurrentMonth
-                                  ? `${dayRiskClass || `border-slate-800/80 ${
-                                      isMiniWeekend
-                                        ? 'bg-slate-900/70 text-slate-300'
-                                        : 'bg-slate-900/48 text-slate-200'
-                                    } shadow-[inset_0_1px_0_rgba(148,163,184,0.10)]`} hover:-translate-y-[1px] hover:border-cyan-400/45 hover:bg-slate-800/85 hover:text-slate-100`
-                                  : 'border-slate-900/70 bg-slate-950/40 text-slate-500 hover:border-slate-700/70 hover:bg-slate-900/55'
-                        }`}
-                      >
-                        {hasOverdue || hasDueSoon || hasDrafts ? (
-                          <span
-                            className={`absolute left-[6px] top-[6px] h-1.5 w-1.5 rounded-full ${
-                              hasOverdue
-                                ? 'bg-rose-300'
-                                : hasDueSoon
-                                  ? 'bg-amber-300'
-                                  : 'bg-indigo-300'
-                            }`}
-                          />
-                        ) : null}
-                        {day.getDate()}
-                        {dayCategories.length ? (
-                          <span className="absolute bottom-[4px] left-1/2 flex -translate-x-1/2 items-center gap-1">
-                            {dayCategories.map((category) => (
-                              <span
-                                key={`${dayKey}-${category}`}
-                                className={`h-1.5 w-1.5 rounded-full ring-1 ${
-                                  isCalendarHighContrast ? 'ring-slate-900/90' : 'ring-slate-300/50'
-                                } ${CATEGORY_DOT_STYLES[category]?.className || 'bg-slate-400'}`}
-                              />
-                            ))}
-                          </span>
-                        ) : null}
-                        {dayEvents.length > 1 ? (
-                          <span
-                            className={`absolute -right-1 -top-1 inline-flex min-w-[16px] items-center justify-center rounded-full border px-1 text-[9px] font-semibold leading-4 ${
-                              isCalendarHighContrast
-                                ? 'border-cyan-300/70 bg-cyan-200 text-slate-950'
-                                : 'border-cyan-400/30 bg-slate-950/95 text-cyan-100 shadow-[0_0_0_1px_rgba(15,23,42,0.65)]'
-                            }`}
-                          >
-                            {dayEvents.length > 9 ? '+9' : dayEvents.length}
-                          </span>
-                        ) : null}
-                      </button>
-                    );
-                  })}
+              <div className="mt-1 grid grid-cols-7 gap-1">
+                {miniCalendarDays.map((day) => {
+                  const dayKey = normalizeDay(day).toISOString();
+                  const dayEvents = eventsByDay.get(dayKey) || [];
+                  const isSelected = selectedDayKey === dayKey;
+                  const isCurrentMonth = day.getMonth() === currentDate.getMonth();
+                  const hasAlert = dayEvents.some((event) => statusFromEvent(event) === 'closed');
+                  const hasActivity = dayEvents.length > 0;
+                  const prioritizedDayEvents = dayEvents.slice().sort((left, right) => compareEventsByPriority(left, right));
+                  return (
+                    <button key={`stitch-day-${dayKey}`} type="button" onClick={() => handleCalendarDaySelection(day, dayKey, prioritizedDayEvents)} className={`relative h-10 rounded-lg text-sm font-medium transition ${isSelected ? 'bg-cyan-600 text-white shadow-sm' : isCurrentMonth ? 'text-slate-800 hover:bg-slate-200 dark:text-slate-200 dark:hover:bg-slate-800' : 'text-slate-400 dark:text-slate-600'}`}>
+                      {day.getDate()}
+                      {hasAlert ? (<span className="absolute bottom-1 left-1/2 h-1 w-1 -translate-x-1/2 rounded-full bg-rose-500" />) : hasActivity ? (<span className="absolute bottom-1 left-1/2 h-1 w-1 -translate-x-1/2 rounded-full bg-emerald-500" />) : null}
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div className="mt-6 border-t border-slate-200 pt-5 dark:border-slate-800">
+                <h3 className="mb-3 text-xl font-semibold text-slate-900 dark:text-slate-100">Filtros de Estado</h3>
+                <div className="space-y-2">
+                  <label className="flex cursor-pointer items-center gap-3 rounded-xl bg-slate-100 px-3 py-3 hover:bg-slate-200/80 dark:bg-slate-800 dark:hover:bg-slate-700/80">
+                    <input type="checkbox" checked={statusFilter === 'all'} onChange={(event) => setStatusFilter(event.target.checked ? 'all' : 'all')} className="h-5 w-5 rounded border-slate-300 text-slate-600" />
+                    <span className="flex-1 text-sm font-semibold text-slate-800 dark:text-slate-100">Total</span>
+                    <span className="rounded-full bg-slate-200 px-2 py-0.5 text-xs font-semibold text-slate-700 dark:bg-slate-700 dark:text-slate-100">{stitchStatusCounts.total}</span>
+                  </label>
+                  <label className="flex cursor-pointer items-center gap-3 rounded-xl bg-slate-100 px-3 py-3 hover:bg-slate-200/80 dark:bg-slate-800 dark:hover:bg-slate-700/80">
+                    <input type="checkbox" checked={statusFilter === 'active'} onChange={(event) => setStatusFilter(event.target.checked ? 'active' : 'all')} className="h-5 w-5 rounded border-slate-300 text-cyan-600" />
+                    <span className="flex-1 text-sm font-semibold text-slate-800 dark:text-slate-100">Activos</span>
+                    <span className="rounded-full bg-cyan-100 px-2 py-0.5 text-xs font-semibold text-cyan-700">{stitchStatusCounts.active}</span>
+                  </label>
+                  <label className="flex cursor-pointer items-center gap-3 rounded-xl bg-slate-100 px-3 py-3 hover:bg-slate-200/80 dark:bg-slate-800 dark:hover:bg-slate-700/80">
+                    <input type="checkbox" checked={statusFilter === 'scheduled'} onChange={(event) => setStatusFilter(event.target.checked ? 'scheduled' : 'all')} className="h-5 w-5 rounded border-slate-300 text-sky-600" />
+                    <span className="flex-1 text-sm font-semibold text-slate-800 dark:text-slate-100">Programados</span>
+                    <span className="rounded-full bg-sky-100 px-2 py-0.5 text-xs font-semibold text-sky-700">{stitchStatusCounts.scheduled}</span>
+                  </label>
+                  <label className="flex cursor-pointer items-center gap-3 rounded-xl bg-slate-100 px-3 py-3 hover:bg-slate-200/80 dark:bg-slate-800 dark:hover:bg-slate-700/80">
+                    <input type="checkbox" checked={statusFilter === 'closed'} onChange={(event) => setStatusFilter(event.target.checked ? 'closed' : 'all')} className="h-5 w-5 rounded border-slate-300 text-rose-600" />
+                    <span className="flex-1 text-sm font-semibold text-slate-800 dark:text-slate-100">Cerrados</span>
+                    <span className="rounded-full bg-rose-100 px-2 py-0.5 text-xs font-semibold text-rose-700">{stitchStatusCounts.closed}</span>
+                  </label>
                 </div>
               </div>
 
-              <aside className="rounded-xl border border-slate-800/70 bg-slate-950/35 p-2.5 lg:sticky lg:top-2">
-                <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="mt-6 rounded-2xl border border-cyan-200 bg-cyan-50 p-4 dark:border-cyan-800/60 dark:bg-cyan-950/20">
+                <p className="text-sm font-bold text-cyan-900 dark:text-cyan-200">Resumen Diario</p>
+                <p className="mt-1 text-sm leading-relaxed text-slate-700 dark:text-slate-300">Hoy tienes {operationalSummary.inProgress || 0} inspecciones pendientes y {operationalSummary.overdue || 0} reporte(s) critico(s) que requieren atencion inmediata.</p>
+              </div>
+            </aside>
+
+            <section className="flex-1 bg-slate-100 p-6 dark:bg-slate-950">
+              <div className="mx-auto flex max-w-[960px] flex-col gap-6">
+                <div className="flex items-end justify-between gap-3">
                   <div>
-                    <p className="text-xs uppercase tracking-[0.12em] text-slate-400">Dia seleccionado</p>
-                    <p className="mt-0.5 text-sm font-semibold capitalize text-slate-100">{selectedDayLabel}</p>
-                    <p className="mt-0.5 text-[11px] text-slate-400">
-                      {`${selectedDayEvents.length} evento${selectedDayEvents.length === 1 ? '' : 's'} | ${selectedDayCategoryCounts.monitoring || 0} monitoreo${selectedDayCategoryCounts.monitoring === 1 ? '' : 's'} | ${selectedDayCategoryCounts.activity || 0} actividad${selectedDayCategoryCounts.activity === 1 ? '' : 'es'}`}
-                    </p>
+                    <h1 className="text-3xl font-bold text-slate-900 dark:text-slate-100">Eventos de Monitoreo</h1>
+                    <p className="text-base text-slate-600 dark:text-slate-400">Gestion y seguimiento de inspecciones operativas en tiempo real.</p>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => setIsDayModalOpen(true)}
-                    disabled={selectedDayEvents.length === 0}
-                    className="inline-flex h-8 items-center rounded-xl border border-cyan-500/35 bg-cyan-500/10 px-3 text-[11px] font-semibold text-cyan-100 transition hover:border-cyan-400/65 disabled:cursor-not-allowed disabled:border-slate-700/60 disabled:bg-slate-900/45 disabled:text-slate-500"
-                  >
-                    {selectedDayEvents.length > 0
-                      ? `Ver detalle (${selectedDayEvents.length})`
-                      : 'Dia sin eventos'}
-                  </button>
+                  {isAdmin ? (<button type="button" onClick={() => handleCreateMonitoringFromDate(selectedDay)} className="inline-flex items-center gap-2 rounded-xl bg-cyan-700 px-5 py-3 text-base font-bold text-white shadow-sm transition hover:brightness-110"><Plus size={18} /> Nuevo Evento</button>) : null}
                 </div>
 
-                {selectedDayEvents.length > 0 ? (
-                  <div className="mt-2 space-y-1.5">
-                    {selectedDayEventsPreview.map((event) => (
-                      <button
-                        key={`day-preview-${event.id}`}
-                        type="button"
-                        onClick={() => {
-                          setSelectedEventId(event.id);
-                          setIsDayModalOpen(true);
-                        }}
-                        className="flex w-full items-center justify-between gap-2 rounded-lg border border-slate-800/70 bg-slate-900/45 px-2.5 py-2 text-left transition hover:border-slate-700/80 hover:bg-slate-900/70"
-                      >
-                        <div className="min-w-0">
-                          <p title={event.title} className="truncate text-[12.5px] font-semibold text-slate-100">
-                            {truncateLabel(event.title, 64)}
-                          </p>
-                          <p className="mt-0.5 text-[10.5px] text-slate-400">
-                            {formatEventRangeLabel(event.start_at, event.end_at)}
-                          </p>
-                        </div>
-                        <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-semibold ${operationalStateBadgeClass(getEventOperationalState(event))}`}>
-                          {operationalStateLabel(getEventOperationalState(event))}
-                        </span>
-                      </button>
-                    ))}
+                {stitchDisplayEvents.length ? (
+                  stitchDisplayEvents.map((event) => {
+                    const status = statusFromEvent(event);
+                    const objectives = (event.monitoring_event_objectives || []).slice().sort((a, b) => (a.order_index ?? a.order ?? 0) - (b.order_index ?? b.order ?? 0));
+                    const completed = objectives.filter((item) => item.completed).length;
+                    const progressPercent = objectives.length ? Math.round((completed / objectives.length) * 100) : 0;
+                    const eventCover = resolveMonitoringCover(event);
+                    const progressClass = status === 'closed' ? 'bg-rose-600' : status === 'scheduled' ? 'bg-sky-600' : 'bg-cyan-700';
+                    const statusClass =
+                      status === 'closed'
+                        ? 'bg-rose-100 text-rose-700'
+                        : status === 'scheduled'
+                          ? 'bg-sky-100 text-sky-700'
+                          : status === 'hidden'
+                            ? 'bg-slate-200 text-slate-700'
+                            : 'bg-cyan-100 text-cyan-700';
+                    const dateLabel = toSafeDate(event.end_at) ? toSafeDate(event.end_at).toLocaleDateString('es-PE', { day: '2-digit', month: 'short', year: 'numeric' }) : 'Sin fecha';
+                    const responsibles = (event.monitoring_event_responsibles || []).slice(0, 2);
+                    return (
+                      <article key={`stitch-event-${event.id}`} className="overflow-hidden rounded-xl border border-slate-300 bg-white shadow-sm transition hover:shadow-md dark:border-slate-700 dark:bg-slate-900">
+                        <div className="flex flex-col md:flex-row">
+                          <div
+                            className="h-36 w-full bg-slate-200 dark:bg-slate-800 md:h-auto md:w-52"
+                            style={{
+                              backgroundImage: eventCover.url ? `url(${eventCover.url})` : 'none',
+                              backgroundSize: 'cover',
+                              backgroundPosition: eventCover.objectPosition,
+                            }}
+                          />
+                          <div className="flex-1 p-3">
+                            <div className="flex items-start justify-between gap-3">
+                              <div>
+                                <div className="mb-0.5 flex items-center gap-2">
+                                  <span className={`rounded px-2 py-0.5 text-xs font-bold uppercase tracking-wider ${statusClass}`}>{statusLabel(status)}</span>
+                                  <span className="text-xs text-slate-500 dark:text-slate-400">{dateLabel}</span>
+                                </div>
+                                <h3 className="text-lg font-semibold leading-snug text-slate-900 dark:text-slate-100">{truncateLabel(event.title, 95)}</h3>
+                              </div>
+                              <div className="flex -space-x-2">
+                                {responsibles.map((responsible) => {
+                                  const profile = usersById.get(responsible.user_id);
+                                  const fullName = profile?.full_name || `${profile?.first_name || ''} ${profile?.last_name || ''}`.trim() || 'Responsable';
+                                  const initials = fullName.split(' ').filter(Boolean).slice(0, 2).map((part) => part[0]).join('').toUpperCase();
+                                  return (<span key={`stitch-resp-${event.id}-${responsible.id}`} className="inline-flex h-7 w-7 items-center justify-center rounded-full border-2 border-white bg-slate-200 text-[10px] font-bold text-slate-700 dark:border-slate-900 dark:bg-slate-700 dark:text-slate-200" title={fullName}>{initials || 'R'}</span>);
+                                })}
+                              </div>
+                            </div>
 
-                    {selectedDayEventsHiddenCount > 0 ? (
-                      <p className="text-[11px] text-slate-400">+{selectedDayEventsHiddenCount} evento(s) adicional(es)</p>
-                    ) : null}
-                  </div>
+                            <div className="mt-2.5 grid grid-cols-1 gap-2.5 md:grid-cols-2">
+                              <div>
+                                <p className="text-xs font-medium uppercase tracking-wide text-slate-700 dark:text-slate-300">Checklist de Objetivos</p>
+                                <ul className="mt-1.5 space-y-1">
+                                  {objectives.slice(0, 3).map((objective) => (
+                                    <li key={`stitch-obj-${event.id}-${objective.id}`} className="flex items-start gap-2 text-xs text-slate-700 dark:text-slate-300">
+                                      <input type="checkbox" checked={Boolean(objective.completed)} onChange={() => toggleObjective(objective)} disabled={!isAdmin} className="mt-0.5 h-4 w-4 rounded border-slate-300" />
+                                      <span className={objective.completed ? 'line-through text-slate-400 dark:text-slate-500' : ''}>{getObjectiveText(objective)}</span>
+                                    </li>
+                                  ))}
+                                </ul>
+                              </div>
+
+                              <div className="flex flex-col justify-between">
+                                <div className="h-2 w-full overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700"><div className={`h-full ${progressClass}`} style={{ width: `${progressPercent}%` }} /></div>
+                                <div className="mt-2.5 flex justify-end gap-2">
+                                  {isAdmin ? (<button type="button" onClick={() => openEditModal(event)} className="rounded-lg border border-cyan-700 px-3 py-1.5 text-xs font-bold text-cyan-700 transition hover:bg-cyan-50">Modificar</button>) : null}
+                                  <button type="button" onClick={() => { setSelectedEventId(event.id); setIsDayModalOpen(true); }} className="rounded-lg bg-cyan-700 px-3 py-1.5 text-xs font-bold text-white transition hover:brightness-110">Ver Detalles</button>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </article>
+                    );
+                  })
                 ) : (
-                  <div className="mt-2 rounded-lg border border-slate-800/70 bg-slate-900/40 p-2.5">
-                    <p className="text-xs text-slate-300">No hay eventos registrados para este dia.</p>
-                    <p className="mt-1 text-[11px] text-slate-500">
-                      Puedes agregar un monitoreo o actividad si lo necesitas.
-                    </p>
+                  <div className="rounded-xl border border-slate-200 bg-white p-4 text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
+                    {statusFilter !== 'all'
+                      ? 'No hay eventos para el estado seleccionado.'
+                      : 'No hay eventos registrados con los filtros actuales.'}
                   </div>
                 )}
-                {isAdmin ? (
-                  <div className="mt-2 flex flex-wrap gap-2 border-t border-slate-800/70 pt-2">
-                    <button
-                      type="button"
-                      onClick={() => handleCreateMonitoringFromDate(selectedDay)}
-                      className="ds-btn ds-btn-primary h-8 px-3 text-xs"
-                    >
-                      <Plus size={13} />
-                      Crear monitoreo
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => openCreateModalWithPreset('activity', selectedDay)}
-                      className="ds-btn ds-btn-secondary h-8 px-3 text-xs"
-                    >
-                      <Plus size={13} />
-                      Registrar actividad
-                    </button>
-                  </div>
-                ) : null}
-              </aside>
-            </div>
+              </div>
+            </section>
           </div>
         </Card>
 
@@ -1765,7 +1649,7 @@ export default function MonitoreoSeguimiento() {
                                     onChange={() => toggleObjective(objective)}
                                     className="h-4 w-4 rounded border-slate-500 bg-slate-900"
                                   />
-                                  <span className={objective.completed ? 'line-through text-slate-400' : ''}>{getObjectiveText(objective)}</span>
+                                  <span className={objective.completed ? 'line-through text-slate-400 dark:text-slate-500' : ''}>{getObjectiveText(objective)}</span>
                                 </label>
                               ))
                           )}
@@ -1999,3 +1883,4 @@ export default function MonitoreoSeguimiento() {
     </div>
   );
 }
+

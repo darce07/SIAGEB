@@ -24,6 +24,7 @@ import ConfirmModal from '../components/ui/ConfirmModal.jsx';
 import Input from '../components/ui/Input.jsx';
 import SectionHeader from '../components/ui/SectionHeader.jsx';
 import Select from '../components/ui/Select.jsx';
+import { SkeletonTable } from '../components/ui/Skeleton.jsx';
 import { supabase } from '../lib/supabase.js';
 import markerIcon2xUrl from 'leaflet/dist/images/marker-icon-2x.png';
 import markerIconUrl from 'leaflet/dist/images/marker-icon.png';
@@ -51,6 +52,7 @@ const EMPTY_FORM = {
 
 const PAGE_SIZE = 10;
 const DB_FETCH_BATCH_SIZE = 1000;
+const INSTITUTIONS_CACHE_KEY = 'agebre:monitoreo:instituciones:v1';
 const STATIC_MAP_POINT_FALLBACK = { lat: -12.0464, lon: -77.0428, label: 'LIMA', zoom: 15 };
 const DISTRICT_STATIC_POINTS = {
   ATE: { lat: -12.0406, lon: -76.9237, label: 'ATE', zoom: 16 },
@@ -77,6 +79,25 @@ const normalizeText = (value) => String(value || '').trim();
 const normalizeCode = (value) => normalizeText(value).replace(/\s+/g, '');
 const isNumericCode = (value) => /^\d+$/.test(normalizeCode(value));
 const onlyDigits = (value) => String(value || '').replace(/\D/g, '');
+const readSessionCache = (key) => {
+  if (typeof window === 'undefined') return null;
+  try {
+    const parsed = JSON.parse(window.sessionStorage.getItem(key) || 'null');
+    return Array.isArray(parsed?.items) ? parsed.items : null;
+  } catch {
+    return null;
+  }
+};
+
+const writeSessionCache = (key, items) => {
+  if (typeof window === 'undefined') return;
+  try {
+    window.sessionStorage.setItem(key, JSON.stringify({ savedAt: Date.now(), items }));
+  } catch {
+    // Cache best-effort: large institution catalogs may exceed storage quotas.
+  }
+};
+
 const normalizeDistrictKey = (value) =>
   String(value || '')
     .normalize('NFD')
@@ -208,8 +229,15 @@ export default function MonitoreoInstituciones() {
     }, 2800);
   };
 
-  const loadInstitutions = async () => {
-    setLoading(true);
+  const loadInstitutions = async ({ useCache = true } = {}) => {
+    const cacheKey = `${INSTITUTIONS_CACHE_KEY}:${auth?.id || auth?.email || profile?.id || 'default'}`;
+    const cachedInstitutions = useCache ? readSessionCache(cacheKey) : null;
+    if (cachedInstitutions) {
+      setInstitutions(cachedInstitutions);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
     setError('');
 
     try {
@@ -239,7 +267,9 @@ export default function MonitoreoInstituciones() {
         from += DB_FETCH_BATCH_SIZE;
       }
 
-      setInstitutions(dedupeInstitutions(accumulatedInstitutions));
+      const nextInstitutions = dedupeInstitutions(accumulatedInstitutions);
+      setInstitutions(nextInstitutions);
+      writeSessionCache(cacheKey, nextInstitutions);
     } catch (loadError) {
       const message =
         loadError instanceof Error
@@ -247,7 +277,7 @@ export default function MonitoreoInstituciones() {
           : 'No se pudieron cargar las instituciones educativas.';
       setError(message);
       showToast(message, 'error');
-      setInstitutions([]);
+      if (!cachedInstitutions) setInstitutions([]);
     } finally {
       setLoading(false);
     }
@@ -873,29 +903,29 @@ export default function MonitoreoInstituciones() {
             </div>
           </div>
 
-          <div className="order-3 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-            <div className="rounded-xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900/70">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Total Instituciones</p>
-              <div className="mt-2 flex items-end justify-between">
-                <p className="text-3xl font-bold text-cyan-700 dark:text-cyan-300">{summary.total}</p>
+          <div className="order-3 grid grid-cols-1 gap-2.5 md:grid-cols-4">
+            <div className="rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 dark:border-slate-800 dark:bg-slate-900/70">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">Total Instituciones</p>
+              <div className="mt-1.5 flex items-end justify-between">
+                <p className="text-[1.65rem] font-bold leading-none text-cyan-700 dark:text-cyan-300">{summary.total}</p>
                 <span className="rounded-full bg-emerald-100 px-2 py-1 text-[11px] font-semibold text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-200">
                   +2.4%
                 </span>
               </div>
             </div>
-            <div className="rounded-xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900/70">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Activas</p>
-              <div className="mt-2 flex items-end justify-between">
-                <p className="text-3xl font-bold text-emerald-700 dark:text-emerald-300">{summary.active}</p>
+            <div className="rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 dark:border-slate-800 dark:bg-slate-900/70">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">Activas</p>
+              <div className="mt-1.5 flex items-end justify-between">
+                <p className="text-[1.65rem] font-bold leading-none text-emerald-700 dark:text-emerald-300">{summary.active}</p>
                 <span className="text-xs text-slate-400">
                   {summary.total ? `${((summary.active / summary.total) * 100).toFixed(1)}% del total` : '0.0% del total'}
                 </span>
               </div>
             </div>
-            <div className="rounded-xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900/70">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Nivel Primaria</p>
-              <div className="mt-2 flex items-end justify-between gap-2">
-                <p className="text-3xl font-bold text-slate-800 dark:text-slate-100">{primaryCount}</p>
+            <div className="rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 dark:border-slate-800 dark:bg-slate-900/70">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">Nivel Primaria</p>
+              <div className="mt-1.5 flex items-end justify-between gap-2">
+                <p className="text-[1.65rem] font-bold leading-none text-slate-800 dark:text-slate-100">{primaryCount}</p>
                 <div className="h-1.5 w-20 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700">
                   <div
                     className="h-full rounded-full bg-cyan-600"
@@ -904,10 +934,10 @@ export default function MonitoreoInstituciones() {
                 </div>
               </div>
             </div>
-            <div className="rounded-xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900/70">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Sin Supervisión (30D)</p>
-              <div className="mt-2 flex items-end justify-between">
-                <p className="text-3xl font-bold text-rose-700 dark:text-rose-300">{staleWithoutSupervision30d}</p>
+            <div className="rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 dark:border-slate-800 dark:bg-slate-900/70">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">Sin Supervisión (30D)</p>
+              <div className="mt-1.5 flex items-end justify-between">
+                <p className="text-[1.65rem] font-bold leading-none text-rose-700 dark:text-rose-300">{staleWithoutSupervision30d}</p>
                 <AlertTriangle size={17} className="text-rose-600 dark:text-rose-300" />
               </div>
             </div>
@@ -1006,11 +1036,8 @@ export default function MonitoreoInstituciones() {
 
           <div className="order-5 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xl dark:border-slate-800 dark:bg-slate-900/70">
             {loading ? (
-              <div className="px-6 py-5">
-                <div className="flex items-center gap-2 text-sm text-cyan-700 dark:text-cyan-200">
-                  <Loader2 size={16} className="animate-spin" />
-                  <p>Cargando instituciones educativas...</p>
-                </div>
+              <div className="p-3">
+                <SkeletonTable rows={7} columns={6} />
               </div>
             ) : filteredInstitutions.length === 0 ? (
               <p className="px-6 py-5 text-sm text-slate-500 dark:text-slate-400">No se encontraron IE con los filtros actuales.</p>
@@ -1162,7 +1189,7 @@ export default function MonitoreoInstituciones() {
                     <Input id="codLocalIe" label="Código Local" value={form.codLocal} onChange={(event) => setForm((prev) => ({ ...prev, codLocal: event.target.value }))} placeholder="Solo números" error={fieldErrors.codLocal} />
                     <Input id="nombreIe" label="Nombre de la Institución" value={form.nombreIe} onChange={(event) => setForm((prev) => ({ ...prev, nombreIe: event.target.value }))} className="md:col-span-2" error={fieldErrors.nombreIe} />
                     <div ref={districtComboRef} className="relative flex flex-col gap-1.5">
-                      <label htmlFor="distritoIe" className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">
+                      <label htmlFor="distritoIe" className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">
                         Distrito
                       </label>
                       <div className="flex items-center rounded-lg border border-slate-300 bg-slate-50 focus-within:border-cyan-500/70 focus-within:ring-2 focus-within:ring-cyan-500/20 dark:border-slate-700 dark:bg-slate-900">
@@ -1377,3 +1404,4 @@ export default function MonitoreoInstituciones() {
     </div>
   );
 }
+
