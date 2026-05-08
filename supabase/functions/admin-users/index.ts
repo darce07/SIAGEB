@@ -15,6 +15,11 @@ const jsonResponse = (status: number, body: Record<string, unknown>) =>
 const buildFullName = (firstName?: string, lastName?: string) => `${firstName || ''} ${lastName || ''}`.trim();
 const normalizeRole = (value: unknown) => String(value || 'user').trim().toLowerCase();
 const ALLOWED_ROLES = new Set(['admin', 'user', 'especialista', 'director', 'jefe_area']);
+const ALLOWED_USER_AREAS = new Set(['', 'ASGESE', 'AGEBRE', 'APP', 'DIRECCION', 'COPROA', 'ADMINISTRACION', 'RECURSOS HUMANOS', 'RRHH']);
+const normalizeUserArea = (value: unknown) => {
+  const normalized = String(value || '').trim().toUpperCase();
+  return ALLOWED_USER_AREAS.has(normalized) ? normalized : '';
+};
 const normalizeStatus = (value: unknown) => String(value || 'active').trim().toLowerCase();
 const normalizeDocType = (value: unknown) => String(value || '').trim().toUpperCase();
 const normalizeDocNumber = (docType: string, value: unknown) => {
@@ -162,7 +167,7 @@ const findAuthUserByEmail = async (
 const getProfileById = async (adminClient: ReturnType<typeof createClient>, id: string) => {
   const { data, error } = await adminClient
     .from('profiles')
-    .select('id,role,status,doc_type,doc_number')
+    .select('id,role,status,doc_type,doc_number,user_area')
     .eq('id', id)
     .maybeSingle();
 
@@ -462,6 +467,7 @@ Deno.serve(async (req) => {
     const lastName = String(payload.last_name || '').trim();
     const role = normalizeRole(payload.role);
     const status = normalizeStatus(payload.status);
+    const userArea = normalizeUserArea(payload.user_area);
     const docType = normalizeDocType(payload.doc_type);
     const docNumber = normalizeDocNumber(docType, payload.doc_number);
     const email = String(payload.email || '').trim().toLowerCase();
@@ -549,6 +555,7 @@ Deno.serve(async (req) => {
       first_name: firstName,
       last_name: lastName,
       full_name: buildFullName(firstName, lastName),
+      user_area: userArea || null,
       role,
       status,
       doc_type: docType || null,
@@ -625,6 +632,7 @@ Deno.serve(async (req) => {
     if (payload.first_name !== undefined) updates.first_name = String(payload.first_name || '');
     if (payload.last_name !== undefined) updates.last_name = String(payload.last_name || '');
     if (payload.full_name !== undefined) updates.full_name = String(payload.full_name || '');
+    if (payload.user_area !== undefined) updates.user_area = normalizeUserArea(payload.user_area) || null;
     if (payload.role !== undefined) updates.role = normalizeRole(payload.role);
     if (payload.status !== undefined) updates.status = normalizeStatus(payload.status);
     if (payload.doc_type !== undefined) updates.doc_type = normalizeDocType(payload.doc_type);
@@ -633,8 +641,14 @@ Deno.serve(async (req) => {
     const nextPassword = payload.password !== undefined ? String(payload.password || '') : '';
     if (nextPassword) updates.temp_credential = nextPassword;
 
-    const { error } = await adminClient.from('profiles').update(updates).eq('id', id);
+    const { data: updatedProfile, error } = await adminClient
+      .from('profiles')
+      .update(updates)
+      .eq('id', id)
+      .select('*')
+      .maybeSingle();
     if (error) return jsonResponse(500, { error: error.message });
+    if (!updatedProfile) return jsonResponse(404, { error: 'No se pudo confirmar la actualizacion del usuario.' });
 
     if (payload.role !== undefined) {
       await adminClient.auth.admin.updateUserById(id, {
@@ -666,7 +680,7 @@ Deno.serve(async (req) => {
       }
     }
 
-    return jsonResponse(200, { success: true });
+    return jsonResponse(200, { success: true, data: updatedProfile });
   }
 
   if (action === 'disable') {

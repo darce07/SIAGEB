@@ -12,7 +12,6 @@ import {
   Filter,
   Loader2,
   MapPin,
-  MoreVertical,
   Pencil,
   Plus,
   Power,
@@ -847,6 +846,18 @@ export default function MonitoreoInstituciones() {
 
   const rangeStart = filteredInstitutions.length ? (currentPage - 1) * PAGE_SIZE + 1 : 0;
   const rangeEnd = Math.min(currentPage * PAGE_SIZE, filteredInstitutions.length);
+  const paginationItems = (() => {
+    if (totalPages <= 5) return Array.from({ length: totalPages }, (_, index) => index + 1);
+    const pages = new Set([1, totalPages, currentPage, currentPage - 1, currentPage + 1]);
+    return Array.from(pages)
+      .filter((page) => page >= 1 && page <= totalPages)
+      .sort((left, right) => left - right)
+      .reduce((items, page, index, pagesList) => {
+        if (index > 0 && page - pagesList[index - 1] > 1) items.push('ellipsis');
+        items.push(page);
+        return items;
+      }, []);
+  })();
 
   return (
     <div className="flex flex-col gap-6">
@@ -873,13 +884,13 @@ export default function MonitoreoInstituciones() {
         </div>
       ) : null}
 
-      <div className="rounded-[28px] border border-slate-200 bg-slate-50 p-5 shadow-[0_8px_26px_rgba(15,23,42,0.08)] dark:border-slate-800 dark:bg-slate-950/70 md:p-8">
-        <div className="flex flex-col gap-8">
+      <div className="rounded-[24px] border border-slate-200 bg-slate-50 p-5 shadow-[0_8px_26px_rgba(15,23,42,0.08)] dark:border-[#a9927d]/40 dark:bg-[#22333b] md:p-6">
+        <div className="flex flex-col gap-6">
           <div className="flex flex-wrap items-end justify-between gap-4">
             <div className="space-y-1">
-              <h1 className="text-4xl font-extrabold tracking-tight text-slate-900 dark:text-slate-100">Catálogo de Instituciones</h1>
+              <h1 className="text-3xl font-extrabold tracking-tight text-slate-900 dark:text-slate-100">Catálogo de Instituciones</h1>
               <p className="text-sm text-slate-600 dark:text-slate-400">
-                Gestión y monitoreo del padrón nacional de centros educativos.
+                Gestión centralizada del padrón de centros educativos.
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-3">
@@ -894,98 +905,65 @@ export default function MonitoreoInstituciones() {
               <button
                 type="button"
                 onClick={() => setIsFormExpanded((current) => !current)}
-                className="inline-flex items-center gap-2 rounded-lg bg-cyan-700 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-cyan-800"
+                className="inline-flex items-center gap-2 rounded-lg bg-cyan-700 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-cyan-800 dark:bg-[#426b69] dark:hover:bg-[#4f7d7a]"
               >
                 <Plus size={16} />
-                {isFormExpanded ? 'Ocultar Registro' : 'Registrar Institución'}
+                {isFormExpanded ? 'Ocultar Registro' : 'Nueva Institución'}
                 {isFormExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
               </button>
             </div>
           </div>
 
-          <div className="order-3 grid grid-cols-1 gap-2.5 md:grid-cols-4">
-            <div className="rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 dark:border-slate-800 dark:bg-slate-900/70">
-              <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">Total Instituciones</p>
-              <div className="mt-1.5 flex items-end justify-between">
-                <p className="text-[1.65rem] font-bold leading-none text-cyan-700 dark:text-cyan-300">{summary.total}</p>
-                <span className="rounded-full bg-emerald-100 px-2 py-1 text-[11px] font-semibold text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-200">
-                  +2.4%
-                </span>
+          <div className="order-3 grid grid-cols-1 gap-5 md:grid-cols-4">
+            <div className="flex min-h-[86px] flex-col justify-between rounded-xl border border-slate-200/70 bg-white p-5 shadow-sm dark:border-[#a9927d]/35 dark:bg-[#171d23]">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500 dark:text-[#d8c4b2]">Total Instituciones</p>
+                <Building2 size={17} className="text-cyan-700 dark:text-cyan-200" />
+              </div>
+              <div className="mt-2 flex items-baseline gap-2">
+                <p className="text-2xl font-bold leading-none text-slate-900 dark:text-slate-100">{summary.total}</p>
+                <span className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-200">+2.4%</span>
               </div>
             </div>
-            <div className="rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 dark:border-slate-800 dark:bg-slate-900/70">
-              <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">Activas</p>
-              <div className="mt-1.5 flex items-end justify-between">
-                <p className="text-[1.65rem] font-bold leading-none text-emerald-700 dark:text-emerald-300">{summary.active}</p>
-                <span className="text-xs text-slate-400">
+            <div className="flex min-h-[86px] flex-col justify-between rounded-xl border border-slate-200/70 bg-white p-5 shadow-sm dark:border-[#a9927d]/35 dark:bg-[#171d23]">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500 dark:text-[#d8c4b2]">Instituciones Activas</p>
+                <CheckCircle2 size={17} className="text-emerald-700 dark:text-emerald-200" />
+              </div>
+              <div className="mt-2 flex items-baseline gap-2">
+                <p className="text-2xl font-bold leading-none text-slate-900 dark:text-slate-100">{summary.active}</p>
+                <span className="text-[11px] text-slate-500 dark:text-slate-400">
                   {summary.total ? `${((summary.active / summary.total) * 100).toFixed(1)}% del total` : '0.0% del total'}
                 </span>
               </div>
             </div>
-            <div className="rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 dark:border-slate-800 dark:bg-slate-900/70">
-              <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">Nivel Primaria</p>
-              <div className="mt-1.5 flex items-end justify-between gap-2">
-                <p className="text-[1.65rem] font-bold leading-none text-slate-800 dark:text-slate-100">{primaryCount}</p>
-                <div className="h-1.5 w-20 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700">
-                  <div
-                    className="h-full rounded-full bg-cyan-600"
-                    style={{ width: `${summary.total ? Math.min(100, (primaryCount / summary.total) * 100) : 0}%` }}
-                  />
-                </div>
+            <div className="flex min-h-[86px] flex-col justify-between rounded-xl border border-slate-200/70 bg-white p-5 shadow-sm dark:border-[#a9927d]/35 dark:bg-[#171d23]">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500 dark:text-[#d8c4b2]">Nivel Primaria</p>
+                <Building2 size={17} className="text-cyan-600 dark:text-cyan-200" />
+              </div>
+              <div className="mt-2 flex items-baseline gap-2">
+                <p className="text-2xl font-bold leading-none text-slate-900 dark:text-slate-100">{primaryCount}</p>
+                <span className="text-[11px] text-slate-500 dark:text-slate-400">Principal segmento</span>
               </div>
             </div>
-            <div className="rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 dark:border-slate-800 dark:bg-slate-900/70">
-              <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">Sin Supervisión (30D)</p>
-              <div className="mt-1.5 flex items-end justify-between">
-                <p className="text-[1.65rem] font-bold leading-none text-rose-700 dark:text-rose-300">{staleWithoutSupervision30d}</p>
+            <div className="flex min-h-[86px] flex-col justify-between rounded-xl border border-rose-200 bg-rose-50/70 p-5 shadow-sm dark:border-rose-300/30 dark:bg-rose-950/20">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-rose-700 dark:text-rose-200">Sin Supervisión</p>
                 <AlertTriangle size={17} className="text-rose-600 dark:text-rose-300" />
+              </div>
+              <div className="mt-2 flex items-baseline gap-2">
+                <p className="text-2xl font-bold leading-none text-rose-700 dark:text-rose-200">{staleWithoutSupervision30d}</p>
+                <span className="text-[11px] font-semibold text-rose-700 dark:text-rose-200">Acción requerida</span>
               </div>
             </div>
           </div>
 
-          <div className="order-4 rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900/70">
-            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
-              <Select id="filterNivel" label="Nivel Educativo" value={levelFilter} onChange={(event) => setLevelFilter(event.target.value)}>
-                <option value="all">Todos los niveles</option>
-                <option value="inicial_cuna_jardin">INICIAL CUNA JARDIN</option>
-                <option value="inicial_jardin">INICIAL JARDIN</option>
-                <option value="primaria">PRIMARIA</option>
-                <option value="secundaria">SECUNDARIA</option>
-                <option value="tecnico_productiva">TECNICO PRODUCTIVA</option>
-              </Select>
-              <Select id="filterModalidad" label="Modalidad" value={modalityFilter} onChange={(event) => setModalityFilter(event.target.value)}>
-                <option value="all">Todas las modalidades</option>
-                <option value="EBR">EBR</option>
-                <option value="EBE">EBE</option>
-                <option value="EBA">EBA</option>
-              </Select>
-              <Select id="filterEstado" label="Estado Operativo" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
-                <option value="all">Cualquier estado</option>
-                <option value="active">Activa</option>
-                <option value="inactive">Inactiva</option>
-              </Select>
-              <Select id="filterDistrito" label="Región / DRE" value={districtFilter} onChange={(event) => setDistrictFilter(event.target.value)}>
-                <option value="all">Todas las regiones</option>
-                {districtOptions.map((item) => (
-                  <option key={item} value={item}>
-                    {item}
-                  </option>
-                ))}
-              </Select>
-              <button
-                type="button"
-                onClick={() => setCurrentPage(1)}
-                className="mt-6 inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-slate-800 px-4 text-sm font-semibold text-white transition hover:bg-slate-900 dark:bg-slate-700 dark:hover:bg-slate-600"
-              >
-                <Filter size={15} />
-                Aplicar filtros
-              </button>
-            </div>
-
-            <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto]">
+          <div className="order-4 rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:border-[#a9927d]/35 dark:bg-[#171d23]">
+            <div className="grid gap-3 lg:grid-cols-[minmax(260px,1fr)_repeat(4,minmax(120px,auto))]">
               <div ref={searchBoxRef} className="relative">
                 <label className="sr-only" htmlFor="searchIe">Buscar IE</label>
-                <div className="flex h-10 items-center gap-2 rounded-lg border border-slate-300 bg-slate-50 px-3 dark:border-slate-700 dark:bg-slate-900">
+                <div className="flex h-10 items-center gap-2 rounded-lg border border-slate-300 bg-slate-50 px-3 dark:border-[#a9927d]/35 dark:bg-[#22333b]">
                   <Search size={14} className="text-slate-400" />
                   <input
                     id="searchIe"
@@ -996,12 +974,12 @@ export default function MonitoreoInstituciones() {
                     }}
                     onFocus={() => setIsSearchFocused(true)}
                     onKeyDown={handleSearchKeyDown}
-                    placeholder="Buscar instituciones por nombre o código modular..."
+                    placeholder="Buscar por nombre o código modular..."
                     className="w-full bg-transparent text-sm text-slate-700 placeholder:text-slate-400 focus:outline-none dark:text-slate-100"
                   />
                 </div>
                 {isSearchFocused && search.trim() ? (
-                  <div className="absolute z-20 mt-1.5 w-full overflow-hidden rounded-xl border border-slate-200 bg-white shadow-[0_12px_34px_rgba(2,6,23,0.18)] dark:border-slate-700 dark:bg-slate-900">
+                  <div className="absolute z-20 mt-1.5 w-full overflow-hidden rounded-xl border border-slate-200 bg-white shadow-[0_12px_34px_rgba(2,6,23,0.18)] dark:border-[#a9927d]/35 dark:bg-[#171d23]">
                     {predictiveSuggestions.length ? (
                       <div className="max-h-72 overflow-y-auto">
                         {predictiveSuggestions.map((item) => (
@@ -1009,7 +987,7 @@ export default function MonitoreoInstituciones() {
                             key={`suggestion-${item.id}`}
                             type="button"
                             onClick={() => applySuggestionSearch(item)}
-                            className="flex w-full flex-col gap-1 border-b border-slate-100 px-3 py-2 text-left last:border-b-0 hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-slate-800/80"
+                            className="flex w-full flex-col gap-1 border-b border-slate-100 px-3 py-2 text-left last:border-b-0 hover:bg-slate-50 dark:border-[#a9927d]/20 dark:hover:bg-[#22333b]"
                           >
                             <span className="truncate text-sm font-semibold text-slate-800 dark:text-slate-100">{item.nombre_ie}</span>
                             <span className="truncate text-xs text-slate-500 dark:text-slate-400">
@@ -1024,17 +1002,48 @@ export default function MonitoreoInstituciones() {
                   </div>
                 ) : null}
               </div>
+              <Select id="filterNivel" label="Nivel Educativo" hideLabel compact value={levelFilter} onChange={(event) => setLevelFilter(event.target.value)} className="min-w-[126px]">
+                <option value="all">Nivel Educativo</option>
+                <option value="inicial_cuna_jardin">INICIAL CUNA JARDIN</option>
+                <option value="inicial_jardin">INICIAL JARDIN</option>
+                <option value="primaria">PRIMARIA</option>
+                <option value="secundaria">SECUNDARIA</option>
+                <option value="tecnico_productiva">TECNICO PRODUCTIVA</option>
+              </Select>
+              <Select id="filterModalidad" label="Modalidad" hideLabel compact value={modalityFilter} onChange={(event) => setModalityFilter(event.target.value)} className="min-w-[126px]">
+                <option value="all">Modalidad</option>
+                <option value="EBR">EBR</option>
+                <option value="EBE">EBE</option>
+                <option value="EBA">EBA</option>
+              </Select>
+              <Select id="filterEstado" label="Estado Operativo" hideLabel compact value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="min-w-[126px]">
+                <option value="all">Estado Operativo</option>
+                <option value="active">Activa</option>
+                <option value="inactive">Inactiva</option>
+              </Select>
+              <Select id="filterDistrito" label="Región / DRE" hideLabel compact value={districtFilter} onChange={(event) => setDistrictFilter(event.target.value)} className="min-w-[126px]">
+                <option value="all">Región/DRE</option>
+                {districtOptions.map((item) => (
+                  <option key={item} value={item}>
+                    {item}
+                  </option>
+                ))}
+              </Select>
+            </div>
+
+            <div className="mt-3 flex justify-end">
               <button
                 type="button"
                 onClick={clearFilters}
-                className="inline-flex h-10 items-center justify-center rounded-lg border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+                className="inline-flex h-9 items-center justify-center gap-2 rounded-lg px-4 text-sm font-semibold text-slate-600 transition hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-white/10"
               >
-                Limpiar filtros
+                <Filter size={14} />
+                Limpiar
               </button>
             </div>
           </div>
 
-          <div className="order-5 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xl dark:border-slate-800 dark:bg-slate-900/70">
+          <div className="order-5 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm dark:border-[#a9927d]/35 dark:bg-[#171d23]">
             {loading ? (
               <div className="p-3">
                 <SkeletonTable rows={7} columns={6} />
@@ -1042,19 +1051,29 @@ export default function MonitoreoInstituciones() {
             ) : filteredInstitutions.length === 0 ? (
               <p className="px-6 py-5 text-sm text-slate-500 dark:text-slate-400">No se encontraron IE con los filtros actuales.</p>
             ) : (
-              <div className="overflow-x-auto">
-                <table className="min-w-[1160px] w-full border-collapse text-sm">
+              <div className="w-full overflow-hidden">
+                <table className="w-full table-fixed border-collapse text-sm">
+                  <colgroup>
+                    <col className="w-[9%]" />
+                    <col className="w-[10%]" />
+                    <col className="w-[28%]" />
+                    <col className="w-[15%]" />
+                    <col className="w-[15%]" />
+                    <col className="w-[10%]" />
+                    <col className="w-[13%]" />
+                  </colgroup>
                   <thead>
-                    <tr className="border-b border-slate-200 bg-slate-50/70 dark:border-slate-800 dark:bg-slate-950/60">
-                      <th className="px-6 py-4 text-left text-[11px] font-bold uppercase tracking-wider text-slate-500">Código Modular</th>
-                      <th className="px-6 py-4 text-left text-[11px] font-bold uppercase tracking-wider text-slate-500">Nombre Institución</th>
-                      <th className="px-6 py-4 text-left text-[11px] font-bold uppercase tracking-wider text-slate-500">Nivel / Modalidad</th>
-                      <th className="px-6 py-4 text-left text-[11px] font-bold uppercase tracking-wider text-slate-500">Ubicación</th>
-                      <th className="px-6 py-4 text-left text-[11px] font-bold uppercase tracking-wider text-slate-500">Estado</th>
-                      <th className="px-6 py-4 text-right text-[11px] font-bold uppercase tracking-wider text-slate-500">Acciones</th>
+                    <tr className="border-b border-slate-200 bg-slate-100/70 dark:border-[#a9927d]/25 dark:bg-[#151c23]">
+                      <th className="px-4 py-3 text-left text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-[#d8c4b2]">Cód. Local</th>
+                      <th className="px-3 py-3 text-left text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-[#d8c4b2]">Cód. Modular</th>
+                      <th className="px-3 py-3 text-left text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-[#d8c4b2]">Nombre Institución</th>
+                      <th className="px-3 py-3 text-left text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-[#d8c4b2]">Nivel / Modalidad</th>
+                      <th className="px-3 py-3 text-left text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-[#d8c4b2]">Ubicación</th>
+                      <th className="px-3 py-3 text-center text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-[#d8c4b2]">Estado</th>
+                      <th className="px-3 py-3 text-right text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-[#d8c4b2]">Acciones</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                  <tbody className="divide-y divide-slate-100 dark:divide-[#a9927d]/20">
                     {paginatedInstitutions.map((item) => (
                       <tr
                         key={item.id}
@@ -1062,41 +1081,42 @@ export default function MonitoreoInstituciones() {
                           if (node) rowRefs.current.set(item.id, node);
                           else rowRefs.current.delete(item.id);
                         }}
-                        className={`transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/40 ${
+                        className={`transition-colors hover:bg-slate-50 dark:hover:bg-[#22333b]/70 ${
                           item.id === highlightedInstitutionId ? 'bg-cyan-50 dark:bg-cyan-900/20' : ''
                         }`}
                       >
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <span className="rounded bg-slate-100 px-2 py-1 font-mono text-sm font-semibold text-slate-700 dark:bg-slate-800 dark:text-slate-200">
-                            {item.cod_modular || '-'}
-                          </span>
+                        <td className="px-4 py-3 align-middle">
+                          <span className="block truncate font-mono text-xs font-semibold text-slate-700 dark:text-slate-200">{item.cod_local || '-'}</span>
                         </td>
-                        <td className="px-6 py-4">
-                          <div className="flex items-center gap-3">
-                            <div className="flex h-8 w-8 items-center justify-center rounded bg-cyan-100 text-cyan-700 dark:bg-cyan-500/20 dark:text-cyan-200">
+                        <td className="px-3 py-3 align-middle">
+                          <span className="block truncate font-mono text-xs font-semibold text-slate-700 dark:text-slate-200">{item.cod_modular || '-'}</span>
+                        </td>
+                        <td className="px-3 py-3 align-middle">
+                          <div className="flex min-w-0 items-center gap-2">
+                            <div className="hidden h-8 w-8 shrink-0 items-center justify-center rounded bg-cyan-100 text-cyan-700 dark:bg-cyan-500/20 dark:text-cyan-200 xl:flex">
                               <Building2 size={14} />
                             </div>
-                            <div>
-                              <p className="font-bold text-slate-900 dark:text-slate-100">{item.nombre_ie || '-'}</p>
-                              <p className="text-xs text-slate-500 dark:text-slate-400">{item.rei || 'Sin REI'}</p>
+                            <div className="min-w-0">
+                              <p className="truncate font-bold text-slate-900 dark:text-slate-100">{item.nombre_ie || '-'}</p>
+                              <p className="truncate text-xs text-slate-500 dark:text-slate-400">{item.rei || 'Sin REI'}</p>
                             </div>
                           </div>
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <div className="flex flex-col">
-                            <span className="text-sm text-slate-700 dark:text-slate-200">{formatLevelLabel(item.nivel)}</span>
+                        <td className="px-3 py-3 align-middle">
+                          <div className="flex min-w-0 flex-col">
+                            <span className="truncate text-sm text-slate-700 dark:text-slate-200">{formatLevelLabel(item.nivel)}</span>
                             <span className="text-[10px] font-bold uppercase tracking-tight text-slate-400">{item.modalidad || '-'}</span>
                           </div>
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <div className="flex items-center gap-1.5 text-sm text-slate-600 dark:text-slate-300">
-                            <MapPin size={13} />
-                            {item.distrito || '-'}
+                        <td className="px-3 py-3 align-middle">
+                          <div className="flex min-w-0 items-center gap-1.5 text-sm text-slate-600 dark:text-slate-300">
+                            <MapPin size={13} className="shrink-0" />
+                            <span className="truncate">{item.distrito || '-'}</span>
                           </div>
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap">
+                        <td className="px-3 py-3 text-center align-middle">
                           <span
-                            className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-bold ${
+                            className={`inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-[11px] font-bold ${
                               item.estado === 'inactive'
                                 ? 'bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-200'
                                 : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-200'
@@ -1106,28 +1126,25 @@ export default function MonitoreoInstituciones() {
                             {formatStatusLabel(item.estado)}
                           </span>
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-right">
+                        <td className="px-3 py-3 text-right align-middle">
                           <div className="flex justify-end gap-1">
-                            <button type="button" onClick={() => setDetailTarget(item)} className="p-2 text-slate-400 hover:text-cyan-700 dark:hover:text-cyan-200" title="Ver">
-                              <Eye size={15} />
+                            <button type="button" onClick={() => setDetailTarget(item)} className="inline-flex h-7 w-7 items-center justify-center rounded-md text-cyan-700 transition hover:bg-cyan-50 dark:text-cyan-200 dark:hover:bg-cyan-500/10" title="Ver">
+                              <Eye size={14} />
                             </button>
-                            <button type="button" onClick={() => handleEdit(item)} className="p-2 text-slate-400 hover:text-cyan-700 dark:hover:text-cyan-200" title="Editar">
-                              <Pencil size={15} />
+                            <button type="button" onClick={() => handleEdit(item)} className="inline-flex h-7 w-7 items-center justify-center rounded-md text-slate-500 transition hover:bg-slate-100 hover:text-slate-800 dark:text-slate-300 dark:hover:bg-white/10" title="Editar">
+                              <Pencil size={14} />
                             </button>
                             <button
                               type="button"
                               onClick={() => handleToggleStatus(item)}
                               disabled={isTogglingStatusId === item.id}
-                              className="p-2 text-slate-400 hover:text-amber-600 disabled:opacity-50 dark:hover:text-amber-300"
+                              className="inline-flex h-7 w-7 items-center justify-center rounded-md text-amber-600 transition hover:bg-amber-50 disabled:opacity-50 dark:text-amber-300 dark:hover:bg-amber-500/10"
                               title={item.estado === 'inactive' ? 'Activar' : 'Desactivar'}
                             >
-                              {isTogglingStatusId === item.id ? <Loader2 size={15} className="animate-spin" /> : <Power size={15} />}
+                              {isTogglingStatusId === item.id ? <Loader2 size={14} className="animate-spin" /> : <Power size={14} />}
                             </button>
-                            <button type="button" onClick={() => setDeleteTarget(item)} className="p-2 text-slate-400 hover:text-rose-600 dark:hover:text-rose-300" title="Inactivar">
-                              <Trash2 size={15} />
-                            </button>
-                            <button type="button" className="p-2 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200" title="Más opciones">
-                              <MoreVertical size={15} />
+                            <button type="button" onClick={() => setDeleteTarget(item)} className="inline-flex h-7 w-7 items-center justify-center rounded-md text-rose-600 transition hover:bg-rose-50 dark:text-rose-300 dark:hover:bg-rose-500/10" title="Inactivar">
+                              <Trash2 size={14} />
                             </button>
                           </div>
                         </td>
@@ -1138,30 +1155,45 @@ export default function MonitoreoInstituciones() {
               </div>
             )}
 
-            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 bg-slate-50 px-6 py-4 dark:border-slate-800 dark:bg-slate-950/80">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 bg-slate-100/70 px-5 py-4 dark:border-[#a9927d]/25 dark:bg-[#151c23]">
               <p className="text-sm text-slate-500 dark:text-slate-400">
                 Mostrando <span className="font-bold text-slate-900 dark:text-slate-100">{rangeStart}-{rangeEnd}</span> de{' '}
-                <span className="font-bold text-slate-900 dark:text-slate-100">{filteredInstitutions.length}</span> registros
+                <span className="font-bold text-slate-900 dark:text-slate-100">{filteredInstitutions.length}</span> instituciones
               </p>
               <div className="flex items-center gap-2">
                 <button
                   type="button"
                   onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
                   disabled={currentPage === 1}
-                  className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-100 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-slate-300 bg-white text-slate-600 transition hover:bg-slate-100 disabled:opacity-40 dark:border-[#a9927d]/35 dark:bg-[#171d23] dark:text-slate-200 dark:hover:bg-[#22333b]"
                 >
-                  Anterior
+                  ‹
                 </button>
-                <span className="rounded-lg border border-cyan-700 bg-cyan-700 px-3 py-1.5 text-xs font-bold text-white">
-                  {currentPage}
-                </span>
+                {paginationItems.map((page, index) =>
+                  page === 'ellipsis' ? (
+                    <span key={`ellipsis-${index}`} className="px-1 text-sm text-slate-500 dark:text-slate-400">...</span>
+                  ) : (
+                    <button
+                      key={page}
+                      type="button"
+                      onClick={() => setCurrentPage(page)}
+                      className={`inline-flex h-8 w-8 items-center justify-center rounded-md text-xs font-bold transition ${
+                        page === currentPage
+                          ? 'bg-cyan-700 text-white dark:bg-[#5e503f]'
+                          : 'border border-slate-300 bg-white text-slate-700 hover:bg-slate-100 dark:border-[#a9927d]/35 dark:bg-[#171d23] dark:text-slate-200 dark:hover:bg-[#22333b]'
+                      }`}
+                    >
+                      {page}
+                    </button>
+                  ),
+                )}
                 <button
                   type="button"
                   onClick={() => setCurrentPage((prev) => Math.min(totalPages, prev + 1))}
                   disabled={currentPage >= totalPages}
-                  className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-100 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-slate-300 bg-white text-slate-600 transition hover:bg-slate-100 disabled:opacity-40 dark:border-[#a9927d]/35 dark:bg-[#171d23] dark:text-slate-200 dark:hover:bg-[#22333b]"
                 >
-                  Siguiente
+                  ›
                 </button>
               </div>
             </div>

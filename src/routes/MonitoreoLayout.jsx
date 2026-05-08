@@ -21,6 +21,7 @@ import {
   TriangleAlert,
   Users,
   X,
+  History,
 } from 'lucide-react';
 import chatbotIcon from '../assets/chatbot-icon.png';
 import { SIDEBAR_SECTIONS } from '../data/fichaEscritura.js';
@@ -55,6 +56,7 @@ const LOGIN_EVENT_AT_KEY = 'monitoreoLoginEventAt';
 const NOTIFICATION_WELCOME_CONSUMED_KEY = 'monitoreoWelcomeConsumedForLogin';
 const AUTOSAVE_ALERT_KEY = 'monitoreoAutosaveAlert';
 const AUTOSAVE_ALERT_EVENT_NAME = 'monitoreo-autosave-alert-updated';
+const NOTIFICATION_WELCOME_AUTO_CLOSE_MS = 8000;
 const SESSION_LOGOUT_REASON_INACTIVITY = 'inactivity';
 const SESSION_IDLE_TIMEOUT_MS = 40 * 60 * 1000;
 const SESSION_ACTIVITY_WRITE_THROTTLE_MS = 10 * 1000;
@@ -413,6 +415,7 @@ const buildNotificationFeedItems = ({
   const pendingReports = toCount(context.pendingReports);
   const upcomingActivities = toCount(context.upcomingActivities);
   const draftCount = toCount(context.draftCount);
+  const pendingMonitoringRequests = toCount(context.pendingMonitoringRequests);
 
   if (notificationPrefs.systemAlerts && overdueMonitoring > 0) {
     items.push({
@@ -467,6 +470,20 @@ const buildNotificationFeedItems = ({
       description: 'Reportes aun no completados por especialistas.',
       actionLabel: 'Abrir reportes',
       actionPath: '/monitoreo/reportes',
+    });
+  }
+
+  if (notificationPrefs.systemAlerts && role === ROLE_ADMIN && pendingMonitoringRequests > 0) {
+    items.push({
+      id: 'pending-monitoring-requests',
+      priority: 4,
+      tone: 'warning',
+      count: pendingMonitoringRequests,
+      icon: ClipboardList,
+      title: `${withPlural(pendingMonitoringRequests, 'solicitud por revisar', 'solicitudes por revisar')}`,
+      description: 'Hay solicitudes nuevas o cambios pendientes antes de publicar en Monitoreos.',
+      actionLabel: 'Revisar solicitudes',
+      actionPath: '/monitoreo',
     });
   }
 
@@ -1157,6 +1174,7 @@ export default function MonitoreoLayout() {
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const [isNotificationsWelcomeOpen, setIsNotificationsWelcomeOpen] = useState(false);
+  const [notificationWelcomeRemainingMs, setNotificationWelcomeRemainingMs] = useState(NOTIFICATION_WELCOME_AUTO_CLOSE_MS);
   const [isNotificationPulseActive, setIsNotificationPulseActive] = useState(false);
   const [isAssistantOpen, setIsAssistantOpen] = useState(
     () => localStorage.getItem('monitoreoAssistantOpen') === 'true',
@@ -2565,6 +2583,22 @@ export default function MonitoreoLayout() {
   }, [notificationItems, location.pathname]);
 
   useEffect(() => {
+    if (!isNotificationsWelcomeOpen) return undefined;
+    const openedAt = Date.now();
+    setNotificationWelcomeRemainingMs(NOTIFICATION_WELCOME_AUTO_CLOSE_MS);
+
+    const intervalId = window.setInterval(() => {
+      const remaining = Math.max(0, NOTIFICATION_WELCOME_AUTO_CLOSE_MS - (Date.now() - openedAt));
+      setNotificationWelcomeRemainingMs(remaining);
+      if (remaining <= 0) {
+        setIsNotificationsWelcomeOpen(false);
+      }
+    }, 100);
+
+    return () => window.clearInterval(intervalId);
+  }, [isNotificationsWelcomeOpen]);
+
+  useEffect(() => {
     applyPreferences(theme, fontSize, density, highContrast, reduceMotion);
   }, [theme, fontSize, density, highContrast, reduceMotion]);
 
@@ -3493,16 +3527,21 @@ export default function MonitoreoLayout() {
       const eventsPromise = supabase
         .from('monitoring_events')
         .select('id,event_type,status,start_at,end_at,created_by,monitoring_event_responsibles(user_id)');
+      const requestsPromise =
+        userRole === ROLE_ADMIN
+          ? supabase.from('monitoring_requests').select('id,status,workflow_meta')
+          : Promise.resolve({ data: [], error: null });
 
-      const [templatesResult, instancesResult, eventsResult] = await Promise.all([
+      const [templatesResult, instancesResult, eventsResult, requestsResult] = await Promise.all([
         templatesPromise,
         instancesPromise,
         eventsPromise,
+        requestsPromise,
       ]);
 
       if (!active) return;
 
-      if (templatesResult.error || instancesResult.error || eventsResult.error) {
+      if (templatesResult.error || instancesResult.error || eventsResult.error || requestsResult.error) {
         setNavBadges({});
         setAssistantGreetingContext(null);
         return;
@@ -3511,6 +3550,7 @@ export default function MonitoreoLayout() {
       const templates = templatesResult.data || [];
       const instances = instancesResult.data || [];
       const events = eventsResult.data || [];
+      const requests = requestsResult.data || [];
       const totalTemplates = templates.length;
       const totalInstances = instances.length;
       const totalEvents = events.length;
@@ -3558,6 +3598,13 @@ export default function MonitoreoLayout() {
         if (!eventStart) return false;
         return eventStart >= startOfToday && eventStart <= sevenDayLimit;
       }).length;
+      const pendingMonitoringRequestsCount = requests.filter((request) => {
+        const status = String(request?.status || '').toLowerCase();
+        const meta = request?.workflow_meta && typeof request.workflow_meta === 'object'
+          ? request.workflow_meta
+          : {};
+        return status === 'pending' || Boolean(meta.hasPendingChanges || meta.pendingDraft);
+      }).length;
 
       if (userRole === ROLE_ADMIN) {
         setNavBadges({
@@ -3573,6 +3620,7 @@ export default function MonitoreoLayout() {
           dueSoonMonitoring: adminDueSoonMonitoring,
           upcomingActivities: adminUpcomingActivities,
           pendingReports: pendingReportsCount,
+          pendingMonitoringRequests: pendingMonitoringRequestsCount,
         });
         return;
       }
@@ -4402,104 +4450,89 @@ export default function MonitoreoLayout() {
         </div>
       ) : null}
       {isNotificationsWelcomeOpen ? (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/65 p-4 backdrop-blur-[2px]">
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm">
           <div
             role="dialog"
             aria-modal="true"
             aria-label="Aviso de notificaciones"
-            className="w-full max-w-2xl overflow-hidden rounded-2xl border border-cyan-500/35 bg-slate-950 text-slate-100 shadow-[0_30px_90px_-35px_rgba(0,0,0,0.95)]"
+            className="relative z-10 w-full max-w-md overflow-hidden rounded-2xl border border-white/10 bg-slate-900/85 text-slate-100 shadow-2xl backdrop-blur-2xl"
           >
-            <div className="flex items-center justify-between border-b border-cyan-500/30 bg-cyan-500/10 px-4 py-3">
-              <div className="flex items-center gap-2.5">
-                <span className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-cyan-400/55 bg-cyan-500/20 text-cyan-100">
-                  <Bell size={15} />
+            <div className="flex items-center justify-between border-b border-white/5 px-6 py-4">
+              <div className="flex items-center gap-3">
+                <span className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-cyan-500/20 text-cyan-300">
+                  <Bell size={20} fill="currentColor" />
                 </span>
                 <div>
-                  <p className="text-sm font-semibold text-cyan-100">Resumen de notificaciones</p>
-                  <p className="text-xs text-cyan-100/80">
-                    {notificationItems.length
-                      ? `${notificationItems.length} alerta${notificationItems.length === 1 ? '' : 's'} para revisar ahora`
-                      : 'Sin alertas activas'}
-                  </p>
+                  <p className="text-base font-semibold text-white">Resumen de Notificaciones</p>
+                  <p className="text-xs text-slate-400">Sincronizado recientemente</p>
                 </div>
               </div>
               <button
                 type="button"
                 onClick={() => setIsNotificationsWelcomeOpen(false)}
-                className="rounded-full border border-cyan-400/45 p-1 text-cyan-100 transition hover:border-cyan-300/70"
+                className="rounded-lg p-2 text-slate-400 transition hover:bg-white/5 hover:text-white"
                 aria-label="Cerrar aviso"
                 title="Cerrar"
               >
-                <X size={15} />
+                <X size={18} />
               </button>
             </div>
 
-            <div className="max-h-[68dvh] space-y-3 overflow-y-auto px-4 py-4">
+            <div className="max-h-[68dvh] space-y-6 overflow-y-auto px-6 py-7">
               {notificationItems.length ? (
                 <>
-                  <div className="rounded-xl border border-cyan-500/40 bg-cyan-500/12 px-3.5 py-3">
-                    <p className="text-sm font-semibold text-cyan-100">
-                      {notificationItems.filter((item) => item.tone === 'critical').length > 0
-                        ? `Prioriza ${notificationItems.filter((item) => item.tone === 'critical').length} alerta${notificationItems.filter((item) => item.tone === 'critical').length === 1 ? '' : 's'} urgente${notificationItems.filter((item) => item.tone === 'critical').length === 1 ? '' : 's'}.`
-                        : `Tienes ${notificationItems.length} alerta${notificationItems.length === 1 ? '' : 's'} para revisar.`}
-                    </p>
-                    <p className="mt-1 text-xs leading-5 text-cyan-100/80">
-                      Revisa este resumen para mantener el seguimiento al dia.
-                    </p>
-                  </div>
+                  {notificationItems.slice(0, 2).map((item) => {
+                    const Icon = item.icon || Bell;
+                    const isCritical = item.tone === 'critical';
+                    const iconClass = isCritical
+                      ? 'bg-rose-500/10 text-rose-500'
+                      : 'bg-cyan-500/10 text-cyan-300';
+                    return (
+                      <button
+                        key={`welcome-${item.id}`}
+                        type="button"
+                        onClick={() => {
+                          setIsNotificationsWelcomeOpen(false);
+                          navigate(item.actionPath);
+                        }}
+                        className="flex w-full items-start gap-4 rounded-xl text-left transition hover:bg-white/[0.03]"
+                      >
+                        <span className={`mt-1 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full ${iconClass}`}>
+                          <Icon size={19} />
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block text-sm font-bold text-white">{item.title}</span>
+                          <span className="mt-1 block text-sm leading-5 text-slate-400">{item.description}</span>
+                        </span>
+                      </button>
+                    );
+                  })}
 
-                  <div className="rounded-xl border border-slate-700/70 bg-slate-900/70 p-3">
-                    <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">
-                      Resumen interactivo
-                    </p>
-                    <ul className="mt-2 space-y-2">
-                      {notificationItems.map((item) => {
-                        const Icon = item.icon || Bell;
-                        return (
-                          <li
-                            key={`welcome-${item.id}`}
-                            className="flex items-center justify-between gap-2 rounded-lg border border-slate-700/60 bg-slate-900/70 px-2.5 py-2"
-                          >
-                            <div className="flex min-w-0 items-center gap-2">
-                              <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-slate-600/70 bg-slate-900 text-slate-200">
-                                <Icon size={12} />
-                              </span>
-                              <div className="min-w-0">
-                                <p className="truncate text-xs font-semibold text-slate-100">{item.title}</p>
-                                <p className="truncate text-[11px] text-slate-400">{item.description}</p>
-                              </div>
-                            </div>
-                            <button
-                              type="button"
-                              className="inline-flex shrink-0 rounded-md border border-cyan-400/55 bg-cyan-500/15 px-2.5 py-1 text-[11px] font-semibold text-cyan-100 transition hover:border-cyan-300/70 hover:bg-cyan-500/25"
-                              onClick={() => {
-                                setIsNotificationsWelcomeOpen(false);
-                                navigate(item.actionPath);
-                              }}
-                            >
-                              Revisar
-                            </button>
-                          </li>
-                        );
-                      })}
-                    </ul>
-                  </div>
-                  <div className="flex justify-end">
-                    <button
-                      type="button"
-                      onClick={() => setIsNotificationsWelcomeOpen(false)}
-                      className="inline-flex rounded-lg border border-slate-600/80 bg-slate-900/80 px-3 py-1.5 text-xs font-semibold text-slate-200 transition hover:border-slate-500/80"
-                    >
-                      Entendido
-                    </button>
+                  <div className="rounded-xl border border-white/5 bg-white/5 p-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="flex items-center gap-2 text-xs text-slate-300">
+                        <History size={16} />
+                        Ultima actualizacion
+                      </span>
+                      <span className="text-xs font-medium text-white">Hace 2 min</span>
+                    </div>
                   </div>
                 </>
               ) : (
-                <div className="rounded-xl border border-slate-800/70 bg-slate-900/60 px-4 py-5 text-center">
-                  <p className="text-sm font-semibold text-slate-100">Todo en orden</p>
+                <div className="rounded-xl border border-white/5 bg-white/5 px-4 py-5 text-center">
+                  <p className="text-sm font-semibold text-white">Todo en orden</p>
                   <p className="mt-1 text-xs text-slate-400">No hay alertas pendientes en este momento.</p>
                 </div>
               )}
+            </div>
+
+            <div className="h-1.5 w-full bg-white/10">
+              <div
+                className="h-full bg-cyan-500 shadow-[0_0_8px_rgba(6,182,212,0.5)] transition-[width] duration-100 ease-linear"
+                style={{
+                  width: `${Math.max(0, Math.min(100, (notificationWelcomeRemainingMs / NOTIFICATION_WELCOME_AUTO_CLOSE_MS) * 100))}%`,
+                }}
+              />
             </div>
           </div>
         </div>

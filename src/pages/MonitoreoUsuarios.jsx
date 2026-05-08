@@ -33,6 +33,7 @@ const emptyForm = {
   firstName: '',
   lastName: '',
   email: '',
+  userArea: '',
   role: 'especialista',
   status: 'active',
   docType: 'DNI',
@@ -47,6 +48,23 @@ const ROLE_OPTIONS = [
   { value: 'director', label: 'Director' },
   { value: 'admin', label: 'Administrador' },
 ];
+
+const USER_AREA_OPTIONS = [
+  { value: '', label: 'Sin area asignada' },
+  { value: 'ASGESE', label: 'ASGESE' },
+  { value: 'AGEBRE', label: 'AGEBRE' },
+  { value: 'APP', label: 'APP' },
+  { value: 'DIRECCION', label: 'DIRECCION' },
+  { value: 'COPROA', label: 'COPROA' },
+  { value: 'ADMINISTRACION', label: 'ADMINISTRACION' },
+  { value: 'RECURSOS HUMANOS', label: 'RECURSOS HUMANOS' },
+  { value: 'RRHH', label: 'RRHH' },
+];
+
+const getUserAreaLabel = (value) => {
+  const normalized = String(value || '').trim().toUpperCase();
+  return USER_AREA_OPTIONS.find((option) => option.value === normalized)?.label || normalized || 'Sin área';
+};
 
 const PASSWORD_LENGTH = 9;
 const USERS_CACHE_KEY = 'agebre:monitoreo:usuarios:v1';
@@ -67,6 +85,15 @@ const writeSessionCache = (key, items) => {
     window.sessionStorage.setItem(key, JSON.stringify({ savedAt: Date.now(), items }));
   } catch {
     // Cache best-effort: quota/privacy limits must not block the admin screen.
+  }
+};
+
+const removeSessionCache = (key) => {
+  if (typeof window === 'undefined') return;
+  try {
+    window.sessionStorage.removeItem(key);
+  } catch {
+    // Cache cleanup must not block user management.
   }
 };
 
@@ -340,6 +367,7 @@ export default function MonitoreoUsuarios() {
 
   const loadUsers = async ({ useCache = true } = {}) => {
     const cacheKey = `${USERS_CACHE_KEY}:${currentAuth?.id || currentAuth?.email || currentProfile?.id || 'default'}`;
+    if (!useCache) removeSessionCache(cacheKey);
     const cachedUsers = useCache ? readSessionCache(cacheKey) : null;
     if (cachedUsers) {
       setUsers(cachedUsers);
@@ -434,7 +462,9 @@ export default function MonitoreoUsuarios() {
     return users.filter((user) => {
       const fullName = `${user.first_name || ''} ${user.last_name || ''}`.toLowerCase();
       const email = (user.email || '').toLowerCase();
-      const matchesSearch = !search || fullName.includes(search.toLowerCase()) || email.includes(search.toLowerCase());
+      const area = String(user.user_area || '').toLowerCase();
+      const term = search.toLowerCase();
+      const matchesSearch = !search || fullName.includes(term) || email.includes(term) || area.includes(term);
       const matchesRole = roleFilter === 'all' || user.role === roleFilter;
       const matchesStatus = statusFilter === 'all' || user.status === statusFilter;
       return matchesSearch && matchesRole && matchesStatus;
@@ -468,6 +498,7 @@ export default function MonitoreoUsuarios() {
       nombres: user.first_name || '',
       apellidos: user.last_name || '',
       correo: user.email || '',
+      area: getUserAreaLabel(user.user_area),
       rol: getRoleLabel(user.role),
       estado:
         user.status === 'active' ? 'Activo' : user.status === 'pending' ? 'Pendiente' : 'Desactivado',
@@ -481,6 +512,7 @@ export default function MonitoreoUsuarios() {
         nombres: '',
         apellidos: '',
         correo: '',
+        area: '',
         rol: '',
         estado: '',
         documento: '',
@@ -582,6 +614,7 @@ export default function MonitoreoUsuarios() {
       first_name: form.firstName.trim(),
       last_name: form.lastName.trim(),
       full_name: buildFullName(form.firstName.trim(), form.lastName.trim()),
+      user_area: form.userArea,
       role: form.role,
       status: form.status,
       doc_type: form.docType,
@@ -644,11 +677,53 @@ export default function MonitoreoUsuarios() {
       }
 
       const successMessage = form.id ? 'Usuario actualizado con éxito' : 'Usuario creado con éxito';
+      let updatedUser = data?.data;
+
+      if (form.id) {
+        const normalizedArea = String(payload.user_area || '').trim().toUpperCase();
+        const { data: verifiedProfile, error: verifyError } = await supabase
+          .from('profiles')
+          .update({
+            user_area: normalizedArea || null,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', form.id)
+          .select('*')
+          .maybeSingle();
+
+        if (verifyError) {
+          const message =
+            verifyError.message ||
+            'La función respondió correctamente, pero no se pudo guardar el área del usuario.';
+          setError(message);
+          showToast(message, 'error');
+          return;
+        }
+
+        if (!verifiedProfile || String(verifiedProfile.user_area || '') !== normalizedArea) {
+          const message = 'No se pudo confirmar la asignación de área del usuario.';
+          setError(message);
+          showToast(message, 'error');
+          return;
+        }
+
+        updatedUser = verifiedProfile;
+      }
+
       setSuccess(form.id ? 'Usuario actualizado.' : 'Usuario creado correctamente.');
       if (!form.id) setTempPassword(form.password.trim());
       showToast(successMessage, 'success');
+      if (form.id && updatedUser?.id) {
+        setUsers((currentUsers) =>
+          currentUsers.map((user) =>
+            user.id === updatedUser.id || user.user_id === updatedUser.id
+              ? { ...user, ...updatedUser }
+              : user,
+          ),
+        );
+      }
       resetForm();
-      await loadUsers();
+      await loadUsers({ useCache: false });
     } finally {
       setIsSubmitting(false);
     }
@@ -660,6 +735,7 @@ export default function MonitoreoUsuarios() {
       firstName: user.first_name || '',
       lastName: user.last_name || '',
       email: user.email || '',
+      userArea: String(user.user_area || ''),
       role: user.role || 'user',
       status: user.status || 'active',
       docType: user.doc_type || 'DNI',
@@ -844,12 +920,13 @@ export default function MonitoreoUsuarios() {
     }
   };
 
-  const handleCopyAllDetails = async () => {
+  const handleCopyAllDetails = () => {
     if (!detailsTarget) return;
     const payload = [
       `Nombres: ${detailsTarget.first_name || ''}`,
       `Apellidos: ${detailsTarget.last_name || ''}`,
       `Correo: ${detailsTarget.email || ''}`,
+      `Área: ${getUserAreaLabel(detailsTarget.user_area)}`,
       `Tipo documento: ${detailsTarget.doc_type || ''}`,
       `Documento: ${detailsTarget.doc_number || ''}`,
       `Rol: ${getRoleLabel(detailsTarget.role)}`,
@@ -858,7 +935,20 @@ export default function MonitoreoUsuarios() {
       `Actualizado: ${detailsTarget.updated_at ? new Date(detailsTarget.updated_at).toLocaleString() : '-'}`,
       `UID: ${detailsTarget.id || ''}`,
     ].join('\n');
-    await copyField(payload, 'Ficha');
+    const blob = new Blob([payload], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    const safeName = `${detailsTarget.first_name || 'usuario'}-${detailsTarget.last_name || 'detalle'}`
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/(^-|-$)/g, '');
+    link.href = url;
+    link.download = `ficha-${safeName || 'usuario'}.txt`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    showToast('Ficha descargada', 'success');
   };
 
   const handleRevealCredential = async () => {
@@ -954,11 +1044,11 @@ export default function MonitoreoUsuarios() {
         </Card>
       ) : (
         <>
-          <div className="rounded-[28px] border border-slate-200 bg-slate-50 p-5 shadow-[0_8px_26px_rgba(15,23,42,0.08)] dark:border-slate-800 dark:bg-slate-950/70">
-            <div className="flex flex-col gap-8">
+          <div className="rounded-[24px] border border-slate-200 bg-slate-50 p-5 shadow-[0_8px_26px_rgba(15,23,42,0.08)] dark:border-slate-800 dark:bg-slate-950/70">
+            <div className="flex flex-col gap-5">
               <div className="flex flex-wrap items-end justify-between gap-4">
                 <div className="space-y-1">
-                  <h1 className="text-4xl font-extrabold tracking-tight text-slate-900 dark:text-slate-100">
+                  <h1 className="text-3xl font-extrabold tracking-tight text-slate-900 dark:text-slate-100">
                     Gestión de Equipo
                   </h1>
                   <p className="text-sm text-slate-600 dark:text-slate-400">
@@ -980,55 +1070,54 @@ export default function MonitoreoUsuarios() {
                     className="inline-flex items-center gap-2 rounded-lg bg-cyan-700 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-cyan-800"
                   >
                     <UserPlus size={16} />
-                    {isFormExpanded ? 'Ocultar Registro' : 'Agregar Miembro'}
+                    {isFormExpanded ? 'Ocultar Registro' : 'Crear Nuevo Usuario'}
                     {isFormExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
                   </button>
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 gap-2.5 md:grid-cols-4">
-                <div className="flex min-h-[74px] items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 dark:border-slate-800 dark:bg-slate-900/70">
-                  <div className="rounded-full bg-cyan-100 p-2.5 text-cyan-700 dark:bg-cyan-500/15 dark:text-cyan-300">
+              <div className="grid grid-cols-1 gap-5 md:grid-cols-4">
+                <div className="flex min-h-[80px] items-center gap-4 rounded-xl border border-slate-200/70 bg-white px-5 py-4 shadow-sm dark:border-slate-800 dark:bg-slate-900/70">
+                  <div className="rounded-lg bg-cyan-100 p-3 text-cyan-700 dark:bg-cyan-500/15 dark:text-cyan-300">
                     <Shield size={15} />
                   </div>
                   <div>
                     <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">Total usuarios</p>
-                    <p className="text-[1.65rem] font-bold leading-none text-slate-900 dark:text-slate-100">{totalUsers}</p>
+                    <p className="text-2xl font-bold leading-none text-slate-900 dark:text-slate-100">{totalUsers}</p>
                   </div>
                 </div>
-                <div className="flex min-h-[74px] items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 dark:border-slate-800 dark:bg-slate-900/70">
-                  <div className="rounded-full bg-emerald-100 p-2.5 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300">
+                <div className="flex min-h-[80px] items-center gap-4 rounded-xl border border-slate-200/70 bg-white px-5 py-4 shadow-sm dark:border-slate-800 dark:bg-slate-900/70">
+                  <div className="rounded-lg bg-emerald-100 p-3 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300">
                     <UserCheck size={15} />
                   </div>
                   <div>
                     <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">Activos</p>
-                    <p className="text-[1.65rem] font-bold leading-none text-slate-900 dark:text-slate-100">{activeUsers}</p>
+                    <p className="text-2xl font-bold leading-none text-slate-900 dark:text-slate-100">{activeUsers}</p>
                   </div>
                 </div>
-                <div className="flex min-h-[74px] items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 dark:border-slate-800 dark:bg-slate-900/70">
-                  <div className="rounded-full bg-amber-100 p-2.5 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300">
+                <div className="flex min-h-[80px] items-center gap-4 rounded-xl border border-slate-200/70 bg-white px-5 py-4 shadow-sm dark:border-slate-800 dark:bg-slate-900/70">
+                  <div className="rounded-lg bg-amber-100 p-3 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300">
                     <AlertTriangle size={15} />
                   </div>
                   <div>
                     <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">Pendientes</p>
-                    <p className="text-[1.65rem] font-bold leading-none text-slate-900 dark:text-slate-100">{pendingUsers}</p>
+                    <p className="text-2xl font-bold leading-none text-slate-900 dark:text-slate-100">{pendingUsers}</p>
                   </div>
                 </div>
-                <div className="flex min-h-[74px] items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 dark:border-slate-800 dark:bg-slate-900/70">
-                  <div className="rounded-full bg-rose-100 p-2.5 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300">
+                <div className="flex min-h-[80px] items-center gap-4 rounded-xl border border-slate-200/70 bg-white px-5 py-4 shadow-sm dark:border-slate-800 dark:bg-slate-900/70">
+                  <div className="rounded-lg bg-rose-100 p-3 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300">
                     <UserX size={15} />
                   </div>
                   <div>
                     <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">Inactivos</p>
-                    <p className="text-[1.65rem] font-bold leading-none text-slate-900 dark:text-slate-100">{inactiveUsers}</p>
+                    <p className="text-2xl font-bold leading-none text-slate-900 dark:text-slate-100">{inactiveUsers}</p>
                   </div>
                 </div>
               </div>
 
-              <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900/70">
-                <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="rounded-xl border border-slate-200/70 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900/70">
+                <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-4">
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-sm font-semibold text-slate-700 dark:text-slate-300">Filtros:</span>
                     <button
                       type="button"
                       onClick={() => setRoleFilter('all')}
@@ -1065,8 +1154,8 @@ export default function MonitoreoUsuarios() {
                         id="search"
                         value={search}
                         onChange={(event) => setSearch(event.target.value)}
-                        placeholder="Buscar usuarios, roles o estados..."
-                        className="h-10 w-[280px] rounded-lg border border-slate-300 bg-slate-50 pl-9 pr-3 text-sm text-slate-700 outline-none transition focus:border-cyan-400 focus:ring-2 focus:ring-cyan-500/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
+                        placeholder="Filtrar por nombre o email..."
+                        className="h-9 w-[310px] rounded-lg border border-slate-300 bg-white pl-9 pr-3 text-sm text-slate-700 outline-none transition focus:border-cyan-400 focus:ring-2 focus:ring-cyan-500/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
                       />
                     </div>
                     <Select id="statusFilter" label="" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
@@ -1126,6 +1215,18 @@ export default function MonitoreoUsuarios() {
                     <fieldset disabled={isSubmitting} className="grid gap-4 md:grid-cols-2 disabled:opacity-80">
                       <Input id="firstName" label="Nombres" value={form.firstName} onChange={(event) => setForm((prev) => ({ ...prev, firstName: event.target.value }))} placeholder="Nombres" />
                       <Input id="lastName" label="Apellidos" value={form.lastName} onChange={(event) => setForm((prev) => ({ ...prev, lastName: event.target.value }))} placeholder="Apellidos" />
+                      <Select
+                        id="userArea"
+                        label="Área usuaria"
+                        value={form.userArea}
+                        onChange={(event) => setForm((prev) => ({ ...prev, userArea: event.target.value }))}
+                      >
+                        {USER_AREA_OPTIONS.map((option) => (
+                          <option key={option.value || 'empty-area'} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </Select>
                       <Select
                         id="role"
                         label="Rol"
@@ -1249,15 +1350,24 @@ export default function MonitoreoUsuarios() {
                 ) : filteredUsers.length === 0 ? (
                   <p className="px-6 py-6 text-sm text-slate-500 dark:text-slate-400">No se encontraron usuarios.</p>
                 ) : (
-                  <div className="overflow-x-auto">
-                    <table className="w-full min-w-[980px] border-collapse">
+                  <div className="w-full overflow-hidden">
+                    <table className="w-full table-fixed border-collapse">
+                      <colgroup>
+                        <col className="w-[30%]" />
+                        <col className="w-[14%]" />
+                        <col className="w-[13%]" />
+                        <col className="w-[16%]" />
+                        <col className="w-[10%]" />
+                        <col className="w-[17%]" />
+                      </colgroup>
                       <thead>
                         <tr className="border-b border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-950/80">
-                          <th className="px-5 py-3 text-left text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Usuario</th>
-                          <th className="px-5 py-3 text-left text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Rol</th>
-                          <th className="px-5 py-3 text-left text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Última conexión</th>
-                          <th className="px-5 py-3 text-left text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Estado</th>
-                          <th className="px-5 py-3 text-right text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Acciones</th>
+                          <th className="px-4 py-3 text-left text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">Usuario</th>
+                          <th className="px-3 py-3 text-left text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">Área</th>
+                          <th className="px-3 py-3 text-left text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">Rol</th>
+                          <th className="px-3 py-3 text-left text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">Última conexión</th>
+                          <th className="px-3 py-3 text-left text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">Estado</th>
+                          <th className="px-3 py-3 text-right text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">Acciones</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
@@ -1270,69 +1380,76 @@ export default function MonitoreoUsuarios() {
                           const initials = `${user.first_name?.[0] || ''}${user.last_name?.[0] || ''}`.toUpperCase() || 'U';
                           return (
                             <tr key={rowId} className="transition-colors hover:bg-slate-50/90 dark:hover:bg-slate-800/30">
-                              <td className="px-5 py-3">
-                                <div className="flex items-center gap-3">
-                                  <div className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-200 text-xs font-bold text-slate-600 dark:bg-slate-700 dark:text-slate-200">
+                              <td className="min-w-0 px-4 py-3">
+                                <div className="flex min-w-0 items-center gap-3">
+                                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-cyan-100 text-xs font-bold text-cyan-700 dark:bg-slate-700 dark:text-slate-200">
                                     {initials}
                                   </div>
                                   <div className="min-w-0">
-                                    <p className="truncate text-sm font-semibold text-slate-900 dark:text-slate-100">{fullName || 'Sin nombre'}</p>
-                                    <p className="truncate text-xs text-slate-500 dark:text-slate-400">{user.email || 'Sin correo'}</p>
+                                    <p className="truncate text-[13px] font-semibold text-slate-900 dark:text-slate-100">{fullName || 'Sin nombre'}</p>
+                                    <p className="truncate text-[11px] text-slate-500 dark:text-slate-400">{user.email || 'Sin correo'}</p>
                                   </div>
                                 </div>
                               </td>
-                              <td className="px-5 py-3">
-                                <span className="inline-flex items-center rounded-full bg-cyan-50 px-2.5 py-1 text-xs font-semibold text-cyan-700 dark:bg-cyan-500/15 dark:text-cyan-200">
-                                  {getRoleLabel(user.role)}
+                              <td className="px-3 py-3">
+                                <span className="block truncate text-[12px] font-semibold uppercase text-slate-700 dark:text-slate-200">
+                                  {getUserAreaLabel(user.user_area)}
                                 </span>
                               </td>
-                              <td className="px-5 py-3 text-sm text-slate-600 dark:text-slate-300">{getLastConnectionLabel(user)}</td>
-                              <td className="px-5 py-3">
+                              <td className="px-3 py-3">
+                                <span className="inline-flex max-w-full items-center rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-700 dark:bg-slate-800 dark:text-slate-200">
+                                  <span className="truncate">
+                                  {getRoleLabel(user.role)}
+                                  </span>
+                                </span>
+                              </td>
+                              <td className="truncate px-3 py-3 text-[12px] text-slate-600 dark:text-slate-300">{getLastConnectionLabel(user)}</td>
+                              <td className="px-3 py-3">
                                 <span className={statusMeta.className}>{statusMeta.label}</span>
                               </td>
-                              <td className="px-5 py-3">
-                                <div className="flex justify-end gap-2">
+                              <td className="px-3 py-3">
+                                <div className="flex justify-end gap-1">
                                   <button
                                     type="button"
                                     onClick={() => openDetailsModal(user)}
-                                    className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-slate-500 transition hover:bg-cyan-50 hover:text-cyan-700 dark:text-slate-300 dark:hover:bg-cyan-500/10 dark:hover:text-cyan-200"
+                                    className="inline-flex h-7 w-7 items-center justify-center rounded-full text-slate-500 transition hover:bg-cyan-50 hover:text-cyan-700 dark:text-slate-300 dark:hover:bg-cyan-500/10 dark:hover:text-cyan-200"
                                     title="Ver detalles"
                                   >
-                                    <Eye size={14} />
+                                    <Eye size={13} />
                                   </button>
                                   <button
                                     type="button"
                                     onClick={() => handleEdit(user)}
-                                    className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-slate-500 transition hover:bg-slate-100 hover:text-slate-800 dark:text-slate-300 dark:hover:bg-slate-700 dark:hover:text-slate-100"
+                                    className="inline-flex h-7 w-7 items-center justify-center rounded-full text-slate-500 transition hover:bg-slate-100 hover:text-slate-800 dark:text-slate-300 dark:hover:bg-slate-700 dark:hover:text-slate-100"
                                     title="Editar usuario"
                                   >
-                                    <Pencil size={14} />
+                                    <Pencil size={13} />
                                   </button>
                                   {user.status === 'active' ? (
                                     <button
                                       type="button"
                                       onClick={() => setDisableTarget({ ...user, id: rowId })}
                                       disabled={isProtectedAdmin}
-                                      className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-amber-600 transition hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-40 dark:text-amber-300 dark:hover:bg-amber-500/10"
+                                      className="inline-flex h-7 w-7 items-center justify-center rounded-full text-amber-600 transition hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-40 dark:text-amber-300 dark:hover:bg-amber-500/10"
                                       title={isProtectedAdmin ? 'No puedes desactivar al último administrador activo' : 'Desactivar usuario'}
                                     >
-                                      <UserX size={14} />
+                                      <UserX size={13} />
                                     </button>
                                   ) : (
                                     <button
                                       type="button"
                                       onClick={() => handleActivate(user)}
-                                      className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-emerald-600 transition hover:bg-emerald-50 dark:text-emerald-300 dark:hover:bg-emerald-500/10"
+                                      className="inline-flex h-7 w-7 items-center justify-center rounded-full text-emerald-600 transition hover:bg-emerald-50 dark:text-emerald-300 dark:hover:bg-emerald-500/10"
                                       title="Activar usuario"
                                     >
-                                      <UserCheck size={14} />
+                                      <UserCheck size={13} />
                                     </button>
                                   )}
                                   <button
                                     type="button"
                                     onClick={() => openDeleteModal(user)}
                                     disabled={isOwnAccount || isProtectedAdmin}
-                                    className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-rose-600 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-40 dark:text-rose-300 dark:hover:bg-rose-500/10"
+                                    className="inline-flex h-7 w-7 items-center justify-center rounded-full text-rose-600 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-40 dark:text-rose-300 dark:hover:bg-rose-500/10"
                                     title={
                                       isOwnAccount
                                         ? 'No puedes eliminar tu propia cuenta'
@@ -1341,7 +1458,7 @@ export default function MonitoreoUsuarios() {
                                           : 'Eliminar usuario'
                                     }
                                   >
-                                    <Trash2 size={14} />
+                                    <Trash2 size={13} />
                                   </button>
                                 </div>
                               </td>
@@ -1389,155 +1506,103 @@ export default function MonitoreoUsuarios() {
             loading={isSubmitting}
           />
 
-          {detailsTarget ? (
-            <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/75 p-0 backdrop-blur-md md:items-center md:p-6" onClick={closeDetailsModal}>
-              <div className="max-h-[84vh] w-full overflow-y-auto rounded-t-2xl border border-slate-600/80 bg-slate-900 p-4 pb-24 shadow-[0_30px_80px_rgba(2,6,23,0.85)] md:max-h-[88vh] md:max-w-4xl md:rounded-2xl md:p-8" onClick={(event) => event.stopPropagation()}>
-                <div className="sticky top-0 z-10 -mx-1 mb-2 flex items-center justify-between gap-3 border-b border-slate-800/70 bg-slate-900/95 px-1 pb-4 backdrop-blur">
-                  <p className="text-xl font-semibold text-slate-100">Detalle de usuario</p>
-                  <button type="button" onClick={closeDetailsModal} className="rounded-full border border-slate-700/60 px-3 py-1.5 text-xs text-slate-300">Cerrar</button>
-                </div>
+          {detailsTarget ? (() => {
+            const fullName = `${detailsTarget.first_name || ''} ${detailsTarget.last_name || ''}`.trim() || 'Usuario sin nombre';
+            const initials = `${detailsTarget.first_name?.[0] || ''}${detailsTarget.last_name?.[0] || ''}`.toUpperCase() || 'US';
+            const isActive = detailsTarget.status === 'active';
+            const fields = [
+              ['Nombres', detailsTarget.first_name],
+              ['Apellidos', detailsTarget.last_name],
+              ['Correo Electrónico', detailsTarget.email, true],
+              ['Área', getUserAreaLabel(detailsTarget.user_area)],
+              ['Rol', getRoleLabel(detailsTarget.role)],
+              ['Tipo documento', detailsTarget.doc_type],
+              ['Documento', detailsTarget.doc_number],
+              ['Última conexión', getLastConnectionLabel(detailsTarget)],
+              ['Actualizado', detailsTarget.updated_at ? new Date(detailsTarget.updated_at).toLocaleString() : '-'],
+            ];
 
-                <div className="mt-4 grid gap-5 md:hidden">
-                  <div className="overflow-hidden rounded-xl border border-slate-800/70 bg-slate-900/55">
-                    {[
-                      ['Nombres', detailsTarget.first_name],
-                      ['Apellidos', detailsTarget.last_name],
-                      ['Correo', detailsTarget.email],
-                      ['Documento', `${detailsTarget.doc_type || '-'} ${detailsTarget.doc_number || '-'}`],
-                      ['Rol', getRoleLabel(detailsTarget.role)],
-                      ['Estado', detailsTarget.status === 'active' ? 'Activo' : 'Desactivado'],
-                      ['Creado', detailsTarget.created_at ? new Date(detailsTarget.created_at).toLocaleString() : '-'],
-                      ['Actualizado', detailsTarget.updated_at ? new Date(detailsTarget.updated_at).toLocaleString() : '-'],
-                      ['UID', detailsTarget.id],
-                    ].map(([label, value], index, collection) => (
-                      <div
-                        key={label}
-                        className={`grid grid-cols-[96px_1fr] px-3 py-3 text-xs ${
-                          index < collection.length - 1 ? 'border-b border-slate-800/70' : ''
-                        }`}
-                      >
-                        <p className="text-[10px] uppercase tracking-[0.12em] text-slate-500">{label}</p>
-                        <p className="truncate text-slate-100">{value || '-'}</p>
+            return (
+              <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-950/35 px-4 py-16 backdrop-blur-md md:items-center md:py-6" onClick={closeDetailsModal}>
+                <div
+                  className="w-full max-w-4xl overflow-hidden rounded-xl border border-slate-300 bg-white shadow-[0_24px_70px_rgba(15,23,42,0.22)] dark:border-[#a9927d]/45 dark:bg-[#171d23]"
+                  onClick={(event) => event.stopPropagation()}
+                >
+                  <div className="flex items-center justify-between border-b border-slate-200 bg-white px-5 py-3 dark:border-[#a9927d]/35 dark:bg-[#151c23]">
+                    <div className="flex items-center gap-3">
+                      <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-cyan-100 text-cyan-700 dark:bg-cyan-400/15 dark:text-cyan-200">
+                        <Shield size={17} />
                       </div>
-                    ))}
+                      <h2 className="text-lg font-semibold text-slate-950 dark:text-slate-100">Detalle de Usuario</h2>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={closeDetailsModal}
+                      aria-label="Cerrar detalle de usuario"
+                      className="flex h-9 w-9 items-center justify-center rounded-full text-slate-500 transition hover:bg-slate-100 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-white/10 dark:hover:text-white"
+                    >
+                      ×
+                    </button>
                   </div>
-                </div>
 
-                <div className="mt-6 hidden gap-5 md:grid">
-                  <div className="rounded-xl border border-slate-800/70 bg-slate-950/40 p-4 md:p-5">
-                    <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">Datos personales</p>
-                    <div className="mt-3 grid gap-3 md:grid-cols-2">
-                      {[
-                        ['Nombres', detailsTarget.first_name],
-                        ['Apellidos', detailsTarget.last_name],
-                        ['Correo', detailsTarget.email],
-                        ['Tipo documento', detailsTarget.doc_type],
-                        ['Documento', detailsTarget.doc_number],
-                      ].map(([label, value]) => (
-                        <button key={label} type="button" onClick={() => copyField(value, label)} className="flex min-h-14 items-center justify-between rounded-xl border border-slate-800/70 bg-slate-900/60 px-4 py-3 text-left transition hover:border-slate-600/70">
-                          <span className="text-xs uppercase tracking-wide text-slate-400">{label}</span>
-                          <span className="ml-4 truncate text-base text-slate-100">{value || '-'}</span>
-                        </button>
-                      ))}
+                  <div className="grid gap-5 px-5 py-5 md:grid-cols-[220px_1fr]">
+                    <div className="flex items-center gap-4 rounded-lg border border-slate-200 bg-slate-50 p-4 dark:border-[#a9927d]/35 dark:bg-[#22333b]/60 md:flex-col md:items-start">
+                      <div className="relative flex h-16 w-16 shrink-0 items-center justify-center rounded-full border-4 border-white bg-cyan-100 text-lg font-bold text-cyan-800 dark:border-[#171d23] dark:bg-[#22333b] dark:text-cyan-100">
+                        {initials}
+                        <span className={`absolute bottom-0 right-0 h-4 w-4 rounded-full border-2 border-white dark:border-[#171d23] ${isActive ? 'bg-emerald-500' : 'bg-rose-500'}`} />
+                      </div>
+                      <div className="min-w-0">
+                        <h3 className="line-clamp-2 text-lg font-semibold leading-tight text-slate-950 dark:text-slate-50">{fullName}</h3>
+                        <span className={`mt-2 inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold ${isActive ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-400/15 dark:text-emerald-200' : 'bg-rose-100 text-rose-700 dark:bg-rose-400/15 dark:text-rose-200'}`}>
+                          {isActive ? 'Activo' : 'Desactivado'}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="space-y-3">
+                      <div className="flex items-center gap-2">
+                        <UserCheck size={14} className="text-slate-500 dark:text-[#a9927d]" />
+                        <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500 dark:text-[#d8c4b2]">Datos personales</span>
+                        <div className="h-px flex-1 bg-slate-200 dark:bg-[#a9927d]/35" />
+                      </div>
+
+                      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                        {fields.map(([label, value, full]) => (
+                          <button
+                            key={label}
+                            type="button"
+                            onClick={() => copyField(value, label)}
+                            className={`${full ? 'sm:col-span-2 lg:col-span-3' : ''} min-w-0 rounded-lg border border-slate-300 bg-slate-50 px-3 py-2.5 text-left transition hover:border-cyan-500 hover:bg-white dark:border-[#a9927d]/35 dark:bg-[#22333b]/80 dark:hover:border-[#bfa58d] dark:hover:bg-[#22333b]`}
+                          >
+                            <span className="block text-[11px] font-semibold text-slate-500 dark:text-[#d8c4b2]">{label}</span>
+                            <span className="mt-1 block truncate text-sm font-medium text-slate-950 dark:text-slate-100">{value || '-'}</span>
+                          </button>
+                        ))}
+                      </div>
                     </div>
                   </div>
 
-                  <div className="rounded-xl border border-slate-800/70 bg-slate-950/40 p-4 md:p-5">
-                    <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">Acceso y estado</p>
-                    <div className="mt-3 grid gap-3 md:grid-cols-2">
-                      {[
-                        ['Rol', getRoleLabel(detailsTarget.role)],
-                        ['Estado', detailsTarget.status === 'active' ? 'Activo' : 'Desactivado'],
-                      ].map(([label, value]) => (
-                        <button key={label} type="button" onClick={() => copyField(value, label)} className="flex min-h-14 items-center justify-between rounded-xl border border-slate-800/70 bg-slate-900/60 px-4 py-3 text-left transition hover:border-slate-600/70">
-                          <span className="text-xs uppercase tracking-wide text-slate-400">{label}</span>
-                          <span className="ml-4 truncate text-base text-slate-100">{value || '-'}</span>
-                        </button>
-                      ))}
-                    </div>
+                  <div className="flex justify-end gap-3 border-t border-slate-200 bg-slate-50 px-5 py-3 dark:border-[#a9927d]/35 dark:bg-[#151c23]">
+                    <button
+                      type="button"
+                      onClick={handleCopyAllDetails}
+                      className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-5 py-2 text-sm font-medium text-slate-700 transition hover:bg-white dark:border-[#a9927d]/45 dark:text-slate-200 dark:hover:bg-white/10"
+                    >
+                      <Download size={16} />
+                      Descargar Ficha
+                    </button>
+                    <button
+                      type="button"
+                      onClick={closeDetailsModal}
+                      className="rounded-lg bg-cyan-700 px-5 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-cyan-600 dark:bg-[#426b69] dark:hover:bg-[#4f7d7a]"
+                    >
+                      Cerrar
+                    </button>
                   </div>
-
-                  <div className="rounded-xl border border-slate-800/70 bg-slate-950/40 p-4 md:p-5">
-                    <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">Auditoria</p>
-                    <div className="mt-3 grid gap-3 md:grid-cols-2">
-                      {[
-                        ['Creado', detailsTarget.created_at ? new Date(detailsTarget.created_at).toLocaleString() : '-'],
-                        ['Actualizado', detailsTarget.updated_at ? new Date(detailsTarget.updated_at).toLocaleString() : '-'],
-                        ['UID', detailsTarget.id],
-                      ].map(([label, value]) => (
-                        <button key={label} type="button" onClick={() => copyField(value, label)} className="flex min-h-12 items-center justify-between rounded-xl border border-slate-800/70 bg-slate-900/60 px-4 py-2.5 text-left transition hover:border-slate-600/70">
-                          <span className="text-xs uppercase tracking-wide text-slate-400">{label}</span>
-                          <span className="ml-4 truncate text-sm text-slate-300">{value || '-'}</span>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="mt-5 rounded-xl border border-slate-800/70 bg-slate-950/40 p-4 md:p-5">
-                  <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">Contraseña</p>
-                  <div className="mt-2 flex items-center justify-between gap-3">
-                    <span className="rounded-full border border-slate-700/70 bg-slate-900/70 px-4 py-2 text-sm font-semibold text-slate-200">
-                      {detailsTarget?.temp_credential ? (revealedSecret || '•••••••••') : 'No disponible'}
-                    </span>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (revealedSecret) {
-                            setRevealedSecret('');
-                            return;
-                          }
-                          openVerifyForReveal(detailsTarget?.temp_credential);
-                        }}
-                        disabled={!detailsTarget?.temp_credential}
-                        title={!detailsTarget?.temp_credential ? 'No disponible. Usa Restablecer contraseña.' : 'Ver contraseña temporal'}
-                        className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-slate-700/60 px-3 py-2 text-xs text-slate-200 transition hover:border-slate-500 disabled:cursor-not-allowed disabled:opacity-40"
-                      >
-                        {revealedSecret ? <EyeOff size={13} /> : <Eye size={13} />}
-                        {revealedSecret ? 'Ocultar' : 'Ver'}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => openVerifyForCopy(detailsTarget?.temp_credential)}
-                        disabled={!detailsTarget?.temp_credential}
-                        title={!detailsTarget?.temp_credential ? 'No disponible. Usa Restablecer contraseña.' : 'Copiar contraseña temporal'}
-                        className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-cyan-500/35 px-3 py-2 text-xs text-cyan-200 transition hover:border-cyan-400/60 disabled:cursor-not-allowed disabled:opacity-40"
-                      >
-                        <Copy size={13} />
-                        Copiar
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleResetPassword(detailsTarget)}
-                        disabled={passwordActionId === detailsTarget?.id}
-                        className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-fuchsia-500/35 px-3 py-2 text-xs font-semibold text-fuchsia-200 transition hover:border-fuchsia-400/60 disabled:cursor-not-allowed disabled:opacity-40"
-                      >
-                        {passwordActionId === detailsTarget?.id ? (
-                          <Loader2 size={13} className="animate-spin" />
-                        ) : (
-                          <RefreshCw size={13} />
-                        )}
-                        Restablecer
-                      </button>
-                    </div>
-                  </div>
-                  {!detailsTarget?.temp_credential ? (
-                    <p className="mt-2 text-xs text-slate-400">
-                      No disponible. Usa "Restablecer" para generar una nueva contraseña temporal.
-                    </p>
-                  ) : null}
-                </div>
-
-                <div className="mt-5 flex justify-end">
-                  <button type="button" onClick={handleCopyAllDetails} className="inline-flex items-center gap-2 rounded-xl border border-slate-700/60 px-4 py-2.5 text-xs font-semibold text-slate-200 transition hover:border-slate-500">
-                    <Copy size={14} />
-                    Copiar todo
-                  </button>
                 </div>
               </div>
-            </div>
-          ) : null}
+            );
+          })() : null}
 
           <ConfirmModal
             open={isVerifyOpen}

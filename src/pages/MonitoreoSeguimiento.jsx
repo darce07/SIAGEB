@@ -43,6 +43,7 @@ const EVENT_TYPE_OPTIONS = ['monitoring', 'activity', 'ugel_date'];
 const SPECIALIST_ROLES = ['user', 'especialista'];
 const OBJECTIVE_TEXT_CANDIDATES = ['objective_text', 'text', 'description', 'label', 'objective'];
 const OBJECTIVE_ORDER_CANDIDATES = ['order_index', 'order', 'position', null];
+const EVENTS_PER_PAGE = 4;
 const LEVEL_VARIANTS = {
   initial: ['initial', 'inicial'],
   primary: ['primary', 'primaria'],
@@ -439,6 +440,7 @@ export default function MonitoreoSeguimiento() {
   const [modalityFilter, setModalityFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
   const [showDrafts, setShowDrafts] = useState(false);
+  const [eventsPage, setEventsPage] = useState(1);
   const [isCalendarHighContrast, setIsCalendarHighContrast] = useState(false);
   const [selectedDayKey, setSelectedDayKey] = useState(() => normalizeDay(new Date()).toISOString());
   const [isDayModalOpen, setIsDayModalOpen] = useState(false);
@@ -1221,6 +1223,18 @@ export default function MonitoreoSeguimiento() {
     [visibleEvents],
   );
   const stitchDisplayEvents = useMemo(() => orderedVisibleEvents, [orderedVisibleEvents]);
+  const stitchTotalPages = Math.max(1, Math.ceil(stitchDisplayEvents.length / EVENTS_PER_PAGE));
+  const stitchPageStartIndex = (eventsPage - 1) * EVENTS_PER_PAGE;
+  const stitchPaginatedEvents = useMemo(
+    () => stitchDisplayEvents.slice(stitchPageStartIndex, stitchPageStartIndex + EVENTS_PER_PAGE),
+    [stitchDisplayEvents, stitchPageStartIndex],
+  );
+  const stitchPageRangeStart = stitchDisplayEvents.length ? stitchPageStartIndex + 1 : 0;
+  const stitchPageRangeEnd = Math.min(stitchPageStartIndex + EVENTS_PER_PAGE, stitchDisplayEvents.length);
+  const stitchPageNumbers = useMemo(
+    () => Array.from({ length: stitchTotalPages }, (_, index) => index + 1),
+    [stitchTotalPages],
+  );
   const stitchStatusCounts = useMemo(() => {
     const summary = { total: 0, active: 0, scheduled: 0, closed: 0 };
     nonStatusFilteredEvents.forEach((event) => {
@@ -1233,6 +1247,14 @@ export default function MonitoreoSeguimiento() {
     });
     return summary;
   }, [nonStatusFilteredEvents]);
+
+  useEffect(() => {
+    setEventsPage(1);
+  }, [scopeFilter, levelFilter, modalityFilter, statusFilter, showDrafts]);
+
+  useEffect(() => {
+    setEventsPage((page) => Math.min(Math.max(page, 1), stitchTotalPages));
+  }, [stitchTotalPages]);
 
   const resetFilters = () => {
     setScopeFilter('all');
@@ -1425,7 +1447,7 @@ export default function MonitoreoSeguimiento() {
             </aside>
 
             <section className="flex-1 bg-slate-100 p-6 dark:bg-slate-950">
-              <div className="mx-auto flex max-w-[960px] flex-col gap-6">
+              <div className="mx-auto flex h-full max-w-[960px] flex-col gap-6 lg:min-h-[592px]">
                 <div className="flex items-end justify-between gap-3">
                   <div>
                     <h1 className="text-3xl font-bold text-slate-900 dark:text-slate-100">Eventos de Monitoreo</h1>
@@ -1435,79 +1457,125 @@ export default function MonitoreoSeguimiento() {
                 </div>
 
                 {stitchDisplayEvents.length ? (
-                  stitchDisplayEvents.map((event) => {
-                    const status = statusFromEvent(event);
-                    const objectives = (event.monitoring_event_objectives || []).slice().sort((a, b) => (a.order_index ?? a.order ?? 0) - (b.order_index ?? b.order ?? 0));
-                    const completed = objectives.filter((item) => item.completed).length;
-                    const progressPercent = objectives.length ? Math.round((completed / objectives.length) * 100) : 0;
-                    const eventCover = resolveMonitoringCover(event);
-                    const progressClass = status === 'closed' ? 'bg-rose-600' : status === 'scheduled' ? 'bg-sky-600' : 'bg-cyan-700';
-                    const statusClass =
-                      status === 'closed'
-                        ? 'bg-rose-100 text-rose-700'
-                        : status === 'scheduled'
-                          ? 'bg-sky-100 text-sky-700'
-                          : status === 'hidden'
-                            ? 'bg-slate-200 text-slate-700'
-                            : 'bg-cyan-100 text-cyan-700';
-                    const dateLabel = toSafeDate(event.end_at) ? toSafeDate(event.end_at).toLocaleDateString('es-PE', { day: '2-digit', month: 'short', year: 'numeric' }) : 'Sin fecha';
-                    const responsibles = (event.monitoring_event_responsibles || []).slice(0, 2);
-                    return (
-                      <article key={`stitch-event-${event.id}`} className="overflow-hidden rounded-xl border border-slate-300 bg-white shadow-sm transition hover:shadow-md dark:border-slate-700 dark:bg-slate-900">
-                        <div className="flex flex-col md:flex-row">
-                          <div
-                            className="h-36 w-full bg-slate-200 dark:bg-slate-800 md:h-auto md:w-52"
-                            style={{
-                              backgroundImage: eventCover.url ? `url(${eventCover.url})` : 'none',
-                              backgroundSize: 'cover',
-                              backgroundPosition: eventCover.objectPosition,
-                            }}
-                          />
-                          <div className="flex-1 p-3">
-                            <div className="flex items-start justify-between gap-3">
-                              <div>
-                                <div className="mb-0.5 flex items-center gap-2">
-                                  <span className={`rounded px-2 py-0.5 text-xs font-bold uppercase tracking-wider ${statusClass}`}>{statusLabel(status)}</span>
-                                  <span className="text-xs text-slate-500 dark:text-slate-400">{dateLabel}</span>
+                  <>
+                    <div className="grid gap-3 lg:h-[508px] lg:grid-rows-4">
+                      {stitchPaginatedEvents.map((event) => {
+                        const status = statusFromEvent(event);
+                        const objectives = (event.monitoring_event_objectives || []).slice().sort((a, b) => (a.order_index ?? a.order ?? 0) - (b.order_index ?? b.order ?? 0));
+                        const completed = objectives.filter((item) => item.completed).length;
+                        const progressPercent = objectives.length ? Math.round((completed / objectives.length) * 100) : 0;
+                        const eventCover = resolveMonitoringCover(event);
+                        const progressClass = status === 'closed' ? 'bg-rose-600' : status === 'scheduled' ? 'bg-sky-600' : 'bg-cyan-700';
+                        const statusClass =
+                          status === 'closed'
+                            ? 'bg-rose-100 text-rose-700'
+                            : status === 'scheduled'
+                              ? 'bg-sky-100 text-sky-700'
+                              : status === 'hidden'
+                                ? 'bg-slate-200 text-slate-700'
+                                : 'bg-cyan-100 text-cyan-700';
+                        const dateLabel = toSafeDate(event.end_at) ? toSafeDate(event.end_at).toLocaleDateString('es-PE', { day: '2-digit', month: 'short', year: 'numeric' }) : 'Sin fecha';
+                        const responsibles = (event.monitoring_event_responsibles || []).slice(0, 2);
+                        return (
+                          <article key={`stitch-event-${event.id}`} className="h-full overflow-hidden rounded-xl border border-slate-300 bg-white shadow-sm transition hover:shadow-md dark:border-slate-700 dark:bg-slate-900">
+                            <div className="flex h-full flex-col md:flex-row">
+                              <div
+                                className="h-36 w-full bg-slate-200 dark:bg-slate-800 md:h-auto md:w-52"
+                                style={{
+                                  backgroundImage: eventCover.url ? `url(${eventCover.url})` : 'none',
+                                  backgroundSize: 'cover',
+                                  backgroundPosition: eventCover.objectPosition,
+                                }}
+                              />
+                              <div className="flex min-w-0 flex-1 flex-col p-3">
+                                <div className="flex items-start justify-between gap-3">
+                                  <div className="min-w-0">
+                                    <div className="mb-0.5 flex items-center gap-2">
+                                      <span className={`rounded px-2 py-0.5 text-xs font-bold uppercase tracking-wider ${statusClass}`}>{statusLabel(status)}</span>
+                                      <span className="text-xs text-slate-500 dark:text-slate-400">{dateLabel}</span>
+                                    </div>
+                                    <h3 className="line-clamp-2 text-lg font-semibold leading-snug text-slate-900 dark:text-slate-100">{truncateLabel(event.title, 95)}</h3>
+                                  </div>
+                                  <div className="flex shrink-0 -space-x-2">
+                                    {responsibles.map((responsible) => {
+                                      const profile = usersById.get(responsible.user_id);
+                                      const fullName = profile?.full_name || `${profile?.first_name || ''} ${profile?.last_name || ''}`.trim() || 'Responsable';
+                                      const initials = fullName.split(' ').filter(Boolean).slice(0, 2).map((part) => part[0]).join('').toUpperCase();
+                                      return (<span key={`stitch-resp-${event.id}-${responsible.id}`} className="inline-flex h-7 w-7 items-center justify-center rounded-full border-2 border-white bg-slate-200 text-[10px] font-bold text-slate-700 dark:border-slate-900 dark:bg-slate-700 dark:text-slate-200" title={fullName}>{initials || 'R'}</span>);
+                                    })}
+                                  </div>
                                 </div>
-                                <h3 className="text-lg font-semibold leading-snug text-slate-900 dark:text-slate-100">{truncateLabel(event.title, 95)}</h3>
-                              </div>
-                              <div className="flex -space-x-2">
-                                {responsibles.map((responsible) => {
-                                  const profile = usersById.get(responsible.user_id);
-                                  const fullName = profile?.full_name || `${profile?.first_name || ''} ${profile?.last_name || ''}`.trim() || 'Responsable';
-                                  const initials = fullName.split(' ').filter(Boolean).slice(0, 2).map((part) => part[0]).join('').toUpperCase();
-                                  return (<span key={`stitch-resp-${event.id}-${responsible.id}`} className="inline-flex h-7 w-7 items-center justify-center rounded-full border-2 border-white bg-slate-200 text-[10px] font-bold text-slate-700 dark:border-slate-900 dark:bg-slate-700 dark:text-slate-200" title={fullName}>{initials || 'R'}</span>);
-                                })}
+
+                                <div className="mt-auto grid grid-cols-1 gap-2.5 md:grid-cols-2">
+                                  <div>
+                                    <p className="text-xs font-medium uppercase tracking-wide text-slate-700 dark:text-slate-300">Checklist de Objetivos</p>
+                                    <ul className="mt-1.5 space-y-1">
+                                      {objectives.slice(0, 1).map((objective) => (
+                                        <li key={`stitch-obj-${event.id}-${objective.id}`} className="flex items-start gap-2 text-xs text-slate-700 dark:text-slate-300">
+                                          <input type="checkbox" checked={Boolean(objective.completed)} onChange={() => toggleObjective(objective)} disabled={!isAdmin} className="mt-0.5 h-4 w-4 rounded border-slate-300" />
+                                          <span className={`line-clamp-1 ${objective.completed ? 'line-through text-slate-400 dark:text-slate-500' : ''}`}>{getObjectiveText(objective)}</span>
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  </div>
+
+                                  <div className="flex flex-col justify-between">
+                                    <div className="h-2 w-full overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700"><div className={`h-full ${progressClass}`} style={{ width: `${progressPercent}%` }} /></div>
+                                    <div className="mt-2.5 flex justify-end gap-2">
+                                      {isAdmin ? (<button type="button" onClick={() => openEditModal(event)} className="rounded-lg border border-cyan-700 px-3 py-1.5 text-xs font-bold text-cyan-700 transition hover:bg-cyan-50">Modificar</button>) : null}
+                                      <button type="button" onClick={() => { setSelectedEventId(event.id); setIsDayModalOpen(true); }} className="rounded-lg bg-cyan-700 px-3 py-1.5 text-xs font-bold text-white transition hover:brightness-110">Ver Detalles</button>
+                                    </div>
+                                  </div>
+                                </div>
                               </div>
                             </div>
-
-                            <div className="mt-2.5 grid grid-cols-1 gap-2.5 md:grid-cols-2">
-                              <div>
-                                <p className="text-xs font-medium uppercase tracking-wide text-slate-700 dark:text-slate-300">Checklist de Objetivos</p>
-                                <ul className="mt-1.5 space-y-1">
-                                  {objectives.slice(0, 3).map((objective) => (
-                                    <li key={`stitch-obj-${event.id}-${objective.id}`} className="flex items-start gap-2 text-xs text-slate-700 dark:text-slate-300">
-                                      <input type="checkbox" checked={Boolean(objective.completed)} onChange={() => toggleObjective(objective)} disabled={!isAdmin} className="mt-0.5 h-4 w-4 rounded border-slate-300" />
-                                      <span className={objective.completed ? 'line-through text-slate-400 dark:text-slate-500' : ''}>{getObjectiveText(objective)}</span>
-                                    </li>
-                                  ))}
-                                </ul>
-                              </div>
-
-                              <div className="flex flex-col justify-between">
-                                <div className="h-2 w-full overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700"><div className={`h-full ${progressClass}`} style={{ width: `${progressPercent}%` }} /></div>
-                                <div className="mt-2.5 flex justify-end gap-2">
-                                  {isAdmin ? (<button type="button" onClick={() => openEditModal(event)} className="rounded-lg border border-cyan-700 px-3 py-1.5 text-xs font-bold text-cyan-700 transition hover:bg-cyan-50">Modificar</button>) : null}
-                                  <button type="button" onClick={() => { setSelectedEventId(event.id); setIsDayModalOpen(true); }} className="rounded-lg bg-cyan-700 px-3 py-1.5 text-xs font-bold text-white transition hover:brightness-110">Ver Detalles</button>
-                                </div>
-                              </div>
-                            </div>
-                          </div>
+                          </article>
+                        );
+                      })}
+                    </div>
+                    <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
+                      <span>
+                        Mostrando {stitchPageRangeStart}-{stitchPageRangeEnd} de {stitchDisplayEvents.length} eventos
+                      </span>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setEventsPage((page) => Math.max(1, page - 1))}
+                          disabled={eventsPage <= 1}
+                          className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-300 font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-45 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+                          aria-label="Pagina anterior"
+                        >
+                          <ChevronLeft size={16} />
+                        </button>
+                        <div className="flex items-center gap-1">
+                          {stitchPageNumbers.map((pageNumber) => (
+                            <button
+                              key={`seguimiento-page-${pageNumber}`}
+                              type="button"
+                              onClick={() => setEventsPage(pageNumber)}
+                              aria-current={eventsPage === pageNumber ? 'page' : undefined}
+                              className={`h-9 min-w-9 rounded-lg border px-3 text-sm font-bold transition ${
+                                eventsPage === pageNumber
+                                  ? 'border-cyan-600 bg-cyan-700 text-white shadow-sm dark:border-[#a9927d] dark:bg-[#5e503f]'
+                                  : 'border-slate-300 text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800'
+                              }`}
+                            >
+                              {pageNumber}
+                            </button>
+                          ))}
                         </div>
-                      </article>
-                    );
-                  })
+                        <button
+                          type="button"
+                          onClick={() => setEventsPage((page) => Math.min(stitchTotalPages, page + 1))}
+                          disabled={eventsPage >= stitchTotalPages}
+                          className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-300 font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-45 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+                          aria-label="Pagina siguiente"
+                        >
+                          <ChevronRight size={16} />
+                        </button>
+                      </div>
+                    </div>
+                  </>
                 ) : (
                   <div className="rounded-xl border border-slate-200 bg-white p-4 text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
                     {statusFilter !== 'all'

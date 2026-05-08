@@ -1,11 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useSearchParams } from 'react-router-dom';
 import {
   AlertTriangle,
+  BookOpen,
+  CalendarDays,
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
   CircleSlash,
+  FileText,
+  Gavel,
+  HelpCircle,
+  Lock,
+  PenLine,
   Plus,
   Save,
   Search,
@@ -74,6 +82,8 @@ const TYPE_OPTIONS = [
   { value: 'focalizado', label: 'Focalizado' },
   { value: 'no_focalizado', label: 'No focalizado' },
 ];
+
+const RESPONSIBLE_AREA_OPTIONS = ['ASGESE', 'AGEBRE', 'APP', 'DIRECCION', 'COPROA', 'RRHH'];
 
 const LEVEL_OPTIONS_BY_MODALITY = {
   EBR: [
@@ -492,6 +502,9 @@ const resolveDisplayStatus = (request) => {
   return request.status || 'pending';
 };
 
+const canConfigureRequestStructure = (request) =>
+  Boolean(request && (request.status === 'approved' || request.status === 'published'));
+
 const formatDateRange = (startDate, endDate) => {
   const start = asDate(startDate);
   const end = asDate(endDate);
@@ -865,6 +878,212 @@ function SingleSelectPills({ label, options, selectedValue, onChange }) {
   );
 }
 
+const parseDateTimeValue = (value) => {
+  const text = String(value || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(text)) return null;
+  const parsed = new Date(text);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+};
+
+const toDateTimeInputValue = (date) => {
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) return '';
+  const yyyy = date.getFullYear();
+  const mm = `${date.getMonth() + 1}`.padStart(2, '0');
+  const dd = `${date.getDate()}`.padStart(2, '0');
+  const hh = `${date.getHours()}`.padStart(2, '0');
+  const mi = `${date.getMinutes()}`.padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}T${hh}:${mi}`;
+};
+
+const formatDateTimeDisplay = (value) => {
+  const parsed = parseDateTimeValue(value);
+  if (!parsed) return 'aaaa-mm-ddT--:--';
+  return new Intl.DateTimeFormat('es-PE', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(parsed);
+};
+
+function DateTimePicker({ label, value, onChange, error, align = 'left' }) {
+  const wrapperRef = useRef(null);
+  const selectedDate = parseDateTimeValue(value);
+  const [open, setOpen] = useState(false);
+  const [visibleMonth, setVisibleMonth] = useState(() => {
+    const base = selectedDate || new Date();
+    return new Date(base.getFullYear(), base.getMonth(), 1);
+  });
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const handlePointerDown = (event) => {
+      if (wrapperRef.current?.contains(event.target)) return;
+      setOpen(false);
+    };
+    document.addEventListener('mousedown', handlePointerDown);
+    document.addEventListener('touchstart', handlePointerDown);
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown);
+      document.removeEventListener('touchstart', handlePointerDown);
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const base = selectedDate || new Date();
+    setVisibleMonth(new Date(base.getFullYear(), base.getMonth(), 1));
+  }, [open]);
+
+  const selectedHours = selectedDate ? `${selectedDate.getHours()}`.padStart(2, '0') : '08';
+  const selectedMinutes = selectedDate ? `${selectedDate.getMinutes()}`.padStart(2, '0') : '00';
+  const firstDay = new Date(visibleMonth.getFullYear(), visibleMonth.getMonth(), 1);
+  const monthStartOffset = firstDay.getDay();
+  const daysInMonth = new Date(visibleMonth.getFullYear(), visibleMonth.getMonth() + 1, 0).getDate();
+  const calendarDays = Array.from({ length: 42 }, (_, index) => {
+    const day = index - monthStartOffset + 1;
+    return new Date(visibleMonth.getFullYear(), visibleMonth.getMonth(), day);
+  });
+  const monthLabel = new Intl.DateTimeFormat('es-PE', {
+    month: 'long',
+    year: 'numeric',
+  }).format(visibleMonth);
+
+  const commitDate = (nextDate, hour = selectedHours, minute = selectedMinutes) => {
+    const merged = new Date(nextDate);
+    merged.setHours(Number(hour), Number(minute), 0, 0);
+    onChange(toDateTimeInputValue(merged));
+  };
+
+  const commitTime = (hour, minute) => {
+    const base = selectedDate || new Date();
+    commitDate(base, hour, minute);
+  };
+
+  return (
+    <div ref={wrapperRef} className="relative">
+      <span className="mb-2 block text-[11px] font-bold uppercase tracking-wide text-slate-500">{label}</span>
+      <button
+        type="button"
+        onClick={() => setOpen((current) => !current)}
+        className="flex h-10 w-full items-center justify-between rounded-lg border border-slate-300 bg-white px-4 text-left text-sm text-slate-900 outline-none transition hover:border-cyan-700 focus:border-cyan-700 focus:ring-2 focus:ring-cyan-700/20"
+      >
+        <span className={selectedDate ? 'text-slate-900' : 'text-slate-500'}>{formatDateTimeDisplay(value)}</span>
+        <CalendarDays size={16} className="text-slate-500" />
+      </button>
+      {error ? <span className="mt-1 block text-xs text-rose-600">{error}</span> : null}
+
+      {open ? (
+        <div className={`absolute z-40 mt-2 w-[min(360px,calc(100vw-48px))] rounded-xl border border-slate-200 bg-white p-3 shadow-[0_18px_50px_rgba(15,23,42,0.18)] ${align === 'right' ? 'right-0' : 'left-0'}`}>
+          <div className="flex items-center justify-between gap-2 border-b border-slate-100 pb-3">
+            <button
+              type="button"
+              onClick={() =>
+                setVisibleMonth((current) => new Date(current.getFullYear(), current.getMonth() - 1, 1))
+              }
+              className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100"
+              aria-label="Mes anterior"
+            >
+              <ChevronLeft size={16} />
+            </button>
+            <p className="text-sm font-bold capitalize text-slate-900">{monthLabel}</p>
+            <button
+              type="button"
+              onClick={() =>
+                setVisibleMonth((current) => new Date(current.getFullYear(), current.getMonth() + 1, 1))
+              }
+              className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100"
+              aria-label="Mes siguiente"
+            >
+              <ChevronRight size={16} />
+            </button>
+          </div>
+
+          <div className="mt-3 grid grid-cols-7 gap-1 text-center text-[11px] font-bold uppercase text-slate-400">
+            {['Do', 'Lu', 'Ma', 'Mi', 'Ju', 'Vi', 'Sa'].map((day) => (
+              <span key={day}>{day}</span>
+            ))}
+          </div>
+          <div className="mt-1 grid grid-cols-7 gap-1">
+            {calendarDays.map((day) => {
+              const inMonth = day.getMonth() === visibleMonth.getMonth();
+              const isSelected =
+                selectedDate &&
+                day.getFullYear() === selectedDate.getFullYear() &&
+                day.getMonth() === selectedDate.getMonth() &&
+                day.getDate() === selectedDate.getDate();
+              const today = new Date();
+              const isToday =
+                day.getFullYear() === today.getFullYear() &&
+                day.getMonth() === today.getMonth() &&
+                day.getDate() === today.getDate();
+              return (
+                <button
+                  key={day.toISOString()}
+                  type="button"
+                  onClick={() => commitDate(day)}
+                  className={`flex h-8 items-center justify-center rounded-lg text-xs font-semibold transition ${
+                    isSelected
+                      ? 'bg-cyan-600 text-white shadow-sm'
+                      : isToday
+                        ? 'bg-cyan-50 text-cyan-700'
+                        : inMonth
+                          ? 'text-slate-700 hover:bg-slate-100'
+                          : 'text-slate-300 hover:bg-slate-50'
+                  }`}
+                >
+                  {day.getDate()}
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="mt-3 grid grid-cols-[1fr_auto_1fr] items-end gap-2 rounded-lg bg-slate-50 p-3">
+            <label className="block">
+              <span className="mb-1 block text-[10px] font-bold uppercase tracking-wide text-slate-500">Hora</span>
+              <select
+                value={selectedHours}
+                onChange={(event) => commitTime(event.target.value, selectedMinutes)}
+                className="h-9 w-full rounded-lg border border-slate-200 bg-white px-2 text-sm font-semibold text-slate-800 focus:border-cyan-700 focus:ring-cyan-700/20"
+              >
+                {Array.from({ length: 24 }, (_, index) => `${index}`.padStart(2, '0')).map((hour) => (
+                  <option key={hour} value={hour}>{hour}</option>
+                ))}
+              </select>
+            </label>
+            <span className="pb-2 text-sm font-bold text-slate-400">:</span>
+            <label className="block">
+              <span className="mb-1 block text-[10px] font-bold uppercase tracking-wide text-slate-500">Min</span>
+              <select
+                value={selectedMinutes}
+                onChange={(event) => commitTime(selectedHours, event.target.value)}
+                className="h-9 w-full rounded-lg border border-slate-200 bg-white px-2 text-sm font-semibold text-slate-800 focus:border-cyan-700 focus:ring-cyan-700/20"
+              >
+                {Array.from({ length: 12 }, (_, index) => `${index * 5}`.padStart(2, '0')).map((minute) => (
+                  <option key={minute} value={minute}>{minute}</option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          <div className="mt-3 flex items-center justify-between">
+            <button type="button" onClick={() => onChange('')} className="text-xs font-bold text-slate-500 hover:text-rose-600">
+              Borrar
+            </button>
+            <button type="button" onClick={() => commitDate(new Date())} className="text-xs font-bold text-cyan-700 hover:text-cyan-800">
+              Hoy
+            </button>
+            <button type="button" onClick={() => setOpen(false)} className="rounded-lg bg-cyan-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-cyan-700">
+              Listo
+            </button>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function StageDisabled({ title, description }) {
   return (
     <Card className="border-dashed border-slate-700/70 bg-slate-900/35 p-5">
@@ -893,6 +1112,9 @@ export default function MonitoreoGestionMonitoreos({ embedded = false, initialCr
   const [requestErrors, setRequestErrors] = useState({});
   const [listSearch, setListSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historySearch, setHistorySearch] = useState('');
+  const [historyStatusFilter, setHistoryStatusFilter] = useState('all');
   const [pageSize, setPageSize] = useState('8');
   const [currentPage, setCurrentPage] = useState(1);
 
@@ -1016,6 +1238,10 @@ export default function MonitoreoGestionMonitoreos({ embedded = false, initialCr
     if (!selectedRequest) return 0;
     return countRequestStructure(selectedRequest).questions;
   }, [selectedRequest]);
+  const canConfigureStructure = canConfigureRequestStructure(selectedRequest);
+  const structureBlockedReason = selectedRequest
+    ? 'La solicitud debe estar aprobada por un administrador antes de configurar fichas, secciones y preguntas.'
+    : 'Crea o selecciona una solicitud valida para habilitar fichas.';
   const publishBlockedReason = useMemo(() => {
     if (!selectedRequest) return 'Selecciona una solicitud para publicar.';
     if (!isAdmin) return 'Solo un administrador puede publicar monitoreos.';
@@ -1236,6 +1462,25 @@ export default function MonitoreoGestionMonitoreos({ embedded = false, initialCr
   const safePage = Math.min(currentPage, totalPages);
   const pageStart = (safePage - 1) * pageSizeNumber;
   const visibleRequests = filteredRequests.slice(pageStart, pageStart + pageSizeNumber);
+  const historyRequests = useMemo(() => {
+    const term = normalizeText(historySearch);
+    return requests
+      .filter((item) => {
+        const displayStatus = resolveDisplayStatus(item);
+        const itemIsPendingQueue = displayStatus === 'pending' || hasPendingChanges(item);
+        const matchesStatus =
+          historyStatusFilter === 'all' ||
+          (historyStatusFilter === 'pending' ? itemIsPendingQueue : displayStatus === historyStatusFilter);
+        if (!matchesStatus) return false;
+        if (!term) return true;
+
+        const searchable = [item.name, item.code, item.detail, getStatusLabel(displayStatus), item.createdBy]
+          .map((value) => normalizeText(value))
+          .join(' ');
+        return searchable.includes(term);
+      })
+      .sort((left, right) => new Date(right.updatedAt || 0).getTime() - new Date(left.updatedAt || 0).getTime());
+  }, [historySearch, historyStatusFilter, requests]);
 
   useEffect(() => {
     setCurrentPage(1);
@@ -1606,10 +1851,18 @@ export default function MonitoreoGestionMonitoreos({ embedded = false, initialCr
       ...normalizedDraft,
       ...(current.status === 'rejected' && !isAdmin ? { status: 'pending' } : {}),
     }));
+    const nonAdminEditingPublishedFlow =
+      !isAdmin &&
+      selectedRequest &&
+      (selectedRequest.status === 'approved' ||
+        selectedRequest.status === 'published' ||
+        hasPendingChanges(selectedRequest));
     setNotice({
       tone: 'success',
       message: !isAdmin
-        ? 'Guardado automatico: continua desde donde lo dejaste.'
+        ? nonAdminEditingPublishedFlow
+          ? 'Solicitud enviada al administrador con cambios pendientes de revision.'
+          : 'Solicitud creada o actualizada para revision administrativa.'
         : 'Cambios de solicitud guardados.',
     });
   };
@@ -1850,6 +2103,15 @@ export default function MonitoreoGestionMonitoreos({ embedded = false, initialCr
     setNotice({ tone: 'neutral', message: 'Lista de instituciones reiniciada.' });
   };
 
+  const guardStructureEditing = () => {
+    if (canConfigureRequestStructure(selectedRequest)) return true;
+    setNotice({
+      tone: 'warning',
+      message: 'La solicitud debe estar aprobada por un administrador antes de configurar fichas, secciones y preguntas.',
+    });
+    return false;
+  };
+
   const handleConfirmDelete = async () => {
     if (!deleteTarget) return;
     const deletingId = deleteTarget.id;
@@ -1887,6 +2149,7 @@ export default function MonitoreoGestionMonitoreos({ embedded = false, initialCr
 
   const handleAddSheet = () => {
     if (!selectedRequestId) return;
+    if (!guardStructureEditing()) return;
     if (!sheetDraft.title.trim() || !sheetDraft.code.trim()) {
       setNotice({ tone: 'warning', message: 'Completa titulo y codigo de la ficha.' });
       return;
@@ -1903,6 +2166,7 @@ export default function MonitoreoGestionMonitoreos({ embedded = false, initialCr
   };
 
   const handleDeleteSheet = (sheetId) => {
+    if (!guardStructureEditing()) return;
     updateSelectedRequest((current) => ({
       ...current,
       sheets: (current.sheets || []).filter((item) => item.id !== sheetId),
@@ -1915,6 +2179,7 @@ export default function MonitoreoGestionMonitoreos({ embedded = false, initialCr
 
   const handleToggleSheetField = (group, fieldId) => {
     if (!selectedSheetId) return;
+    if (!guardStructureEditing()) return;
 
     updateSelectedRequest((current) => ({
       ...current,
@@ -1954,6 +2219,7 @@ export default function MonitoreoGestionMonitoreos({ embedded = false, initialCr
 
   const handleAddDynamicField = () => {
     if (!selectedSheetId) return;
+    if (!guardStructureEditing()) return;
     if (!dynamicFieldDraft.name.trim()) {
       setNotice({ tone: 'warning', message: 'Ingresa el nombre del campo personalizado.' });
       return;
@@ -1978,6 +2244,7 @@ export default function MonitoreoGestionMonitoreos({ embedded = false, initialCr
   };
 
   const handleDeleteDynamicField = (fieldId) => {
+    if (!guardStructureEditing()) return;
     updateSelectedRequest((current) => ({
       ...current,
       sheets: (current.sheets || []).map((sheet) =>
@@ -1993,6 +2260,7 @@ export default function MonitoreoGestionMonitoreos({ embedded = false, initialCr
 
   const handleAddSection = () => {
     if (!selectedSheetId) return;
+    if (!guardStructureEditing()) return;
     if (!sectionName.trim()) {
       setNotice({ tone: 'warning', message: 'Ingresa el nombre de la seccion.' });
       return;
@@ -2013,6 +2281,7 @@ export default function MonitoreoGestionMonitoreos({ embedded = false, initialCr
   };
 
   const handleDeleteSection = (sectionId) => {
+    if (!guardStructureEditing()) return;
     updateSelectedRequest((current) => ({
       ...current,
       sheets: (current.sheets || []).map((sheet) => {
@@ -2072,6 +2341,7 @@ export default function MonitoreoGestionMonitoreos({ embedded = false, initialCr
 
   const saveQuestion = (keepOpen) => {
     if (!selectedSheetId || !selectedSectionId) return;
+    if (!guardStructureEditing()) return;
 
     if (!sanitizeQuestionText(questionDraft.text)) {
       setNotice({ tone: 'warning', message: 'Ingresa el enunciado de la pregunta.' });
@@ -2121,6 +2391,7 @@ export default function MonitoreoGestionMonitoreos({ embedded = false, initialCr
 
   const handleDeleteQuestion = (questionId, sectionId = selectedSectionId) => {
     if (!selectedSheetId || !sectionId) return;
+    if (!guardStructureEditing()) return;
 
     updateSelectedRequest((current) => ({
       ...current,
@@ -2143,6 +2414,7 @@ export default function MonitoreoGestionMonitoreos({ embedded = false, initialCr
 
   const moveQuestionBetweenSections = ({ questionId, sourceSectionId, targetSectionId, targetQuestionId = '' }) => {
     if (!selectedSheetId || !questionId || !sourceSectionId || !targetSectionId) return;
+    if (!guardStructureEditing()) return;
     if (sourceSectionId === targetSectionId && targetQuestionId === questionId) return;
 
     updateSelectedRequest((current) => ({
@@ -2421,6 +2693,624 @@ export default function MonitoreoGestionMonitoreos({ embedded = false, initialCr
     { value: 'stage6', label: 'Etapa 6: Preguntas' },
   ];
 
+  const selectedResponsibleAreas = useMemo(
+    () =>
+      String(requestDraft.cddArea || '')
+        .split(',')
+        .map((value) => value.trim().toUpperCase())
+        .filter(Boolean),
+    [requestDraft.cddArea],
+  );
+  const selectedResponsibleAreaSet = useMemo(
+    () => new Set(selectedResponsibleAreas),
+    [selectedResponsibleAreas],
+  );
+  const toggleResponsibleArea = (area) => {
+    setRequestDraft((prev) => {
+      const current = String(prev.cddArea || '')
+        .split(',')
+        .map((value) => value.trim().toUpperCase())
+        .filter(Boolean);
+      const next = current.includes(area)
+        ? current.filter((value) => value !== area)
+        : [...current, area];
+      return {
+        ...prev,
+        cddArea: next.join(', '),
+      };
+    });
+    setRequestErrors((prev) => {
+      const nextErrors = { ...prev };
+      delete nextErrors.cddArea;
+      return nextErrors;
+    });
+  };
+  const pendingRequestCount = requests.filter(
+    (request) => request.status === 'pending' || hasPendingChanges(request),
+  ).length;
+  const publishedRequestCount = requests.filter((request) => request.status === 'published').length;
+  const pausedRequestCount = requests.filter((request) =>
+    ['pending', 'approved', 'rejected'].includes(String(request.status || '')),
+  ).length;
+  const recentRequests = filteredRequests.slice(0, 3);
+  const stageStatusLabel = selectedRequest
+    ? selectedRequest.status === 'pending'
+      ? 'En revision'
+      : getStatusLabel(resolveDisplayStatus(selectedRequest))
+    : 'Borrador';
+  const stageOneBadgeLabel = selectedRequest ? 'Completado' : 'Borrador';
+  const selectedMonitorsText = selectedMonitorBadges.length
+    ? selectedMonitorBadges.map((monitor) => monitor.name).join(', ')
+    : 'Escriba para buscar y agregar...';
+
+  const renderStitchStageIcon = (tone, Icon) => {
+    const toneClass =
+      tone === 'cyan'
+        ? 'bg-cyan-600 text-white shadow-cyan-100'
+        : tone === 'amber'
+          ? 'bg-amber-500 text-white shadow-amber-100'
+          : 'bg-slate-200 text-slate-500 shadow-slate-100';
+    return (
+      <div className={`relative z-10 flex h-10 w-10 shrink-0 items-center justify-center rounded-full shadow-md ${toneClass}`}>
+        <Icon size={18} />
+      </div>
+    );
+  };
+
+  const renderStitchConnector = () => (
+    <div className="absolute left-[19px] top-10 h-[calc(100%+24px)] w-px bg-slate-200" />
+  );
+
+  return (
+    <div className="stitch-monitoring-builder min-h-screen bg-[#f6fafe] px-4 py-4 text-[#171c1f] md:px-6 xl:px-10">
+      <div className="grid gap-6 xl:grid-cols-[370px_minmax(0,1fr)]">
+        <aside className="space-y-6">
+          <div className="overflow-hidden rounded-xl border border-slate-100 bg-white shadow-[0_4px_12px_rgba(15,23,42,0.04)]">
+            <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50 px-4 py-3">
+              <h2 className="text-sm font-semibold text-slate-900">Solicitudes Recientes</h2>
+              <span className="rounded-full bg-cyan-100 px-2 py-1 text-[11px] font-bold text-cyan-700">
+                {pendingRequestCount} Pendientes
+              </span>
+            </div>
+            <div className="border-b border-slate-100 p-4">
+              <button
+                type="button"
+                onClick={resetToCreateMode}
+                className="flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-cyan-600 px-4 text-sm font-bold text-white shadow-md shadow-cyan-100 transition hover:bg-cyan-700 active:scale-[0.98]"
+              >
+                <Plus size={16} />
+                Nueva Solicitud
+              </button>
+            </div>
+            <div className="space-y-1 p-2">
+              {recentRequests.length ? (
+                recentRequests.map((request) => {
+                  const displayStatus = resolveDisplayStatus(request);
+                  const selected = request.id === selectedRequestId;
+                  const borderClass =
+                    displayStatus === 'pending' || hasPendingChanges(request)
+                      ? 'border-amber-500'
+                      : displayStatus === 'published'
+                        ? 'border-cyan-500'
+                        : 'border-slate-300';
+                  const statusClass =
+                    displayStatus === 'pending' || hasPendingChanges(request)
+                      ? 'text-amber-600'
+                      : displayStatus === 'published'
+                        ? 'text-cyan-600'
+                        : 'text-slate-600';
+                  return (
+                    <button
+                      key={request.id}
+                      type="button"
+                      onClick={() => setSelectedRequestId(request.id)}
+                      className={`w-full rounded-lg border-l-4 bg-white p-4 text-left transition hover:bg-slate-50 ${borderClass} ${
+                        selected ? 'ring-1 ring-cyan-200' : ''
+                      }`}
+                    >
+                      <div className="mb-1 flex items-center justify-between gap-2">
+                        <span className={`text-[11px] font-bold uppercase ${statusClass}`}>
+                          {hasPendingChanges(request) ? 'Pendiente revision' : getStatusLabel(displayStatus)}
+                        </span>
+                        <span className="text-[10px] text-slate-400">
+                          {request.updatedAt ? new Intl.DateTimeFormat('es-PE', { day: '2-digit', month: 'short' }).format(new Date(request.updatedAt)) : ''}
+                        </span>
+                      </div>
+                      <p className="truncate text-sm font-bold text-slate-800">{request.name || 'Solicitud sin nombre'}</p>
+                      <p className="mt-1 truncate text-xs text-slate-500">{request.detail || request.code}</p>
+                    </button>
+                  );
+                })
+              ) : (
+                <p className="px-4 py-5 text-sm text-slate-500">No hay solicitudes recientes.</p>
+              )}
+            </div>
+            <div className="border-t border-slate-100 p-4 text-center">
+              <button
+                type="button"
+                onClick={() => setHistoryOpen(true)}
+                className="text-xs font-bold text-cyan-600 hover:underline"
+              >
+                Ver todo el historial
+              </button>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div className="rounded-xl border border-slate-100 bg-white p-4 shadow-sm">
+              <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Publicados</p>
+              <p className="mt-1 text-2xl font-bold text-cyan-600">{publishedRequestCount}</p>
+            </div>
+            <div className="rounded-xl border border-slate-100 bg-white p-4 shadow-sm">
+              <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">En pausa</p>
+              <p className="mt-1 text-2xl font-bold text-amber-600">{String(pausedRequestCount).padStart(2, '0')}</p>
+            </div>
+          </div>
+        </aside>
+
+        <main className="min-w-0 space-y-5">
+          <section className="overflow-hidden rounded-xl border border-slate-100 bg-white shadow-[0_4px_12px_rgba(0,0,0,0.04)]">
+            <div className="space-y-6 p-6">
+              <section className="relative">
+                <div className="flex gap-4">
+                  {renderStitchStageIcon('cyan', PenLine)}
+                  <div className="min-w-0 flex-1 rounded-xl border border-cyan-100 bg-slate-50 p-5 shadow-sm">
+                    <div className="mb-4 flex items-start justify-between gap-3">
+                      <h2 className="text-sm font-bold text-cyan-800">Etapa 1: Definicion de Solicitud</h2>
+                      <span className="rounded bg-cyan-200 px-2 py-0.5 text-[10px] font-bold uppercase text-cyan-800">
+                        {stageOneBadgeLabel}
+                      </span>
+                    </div>
+
+                    <div className="grid gap-4 lg:grid-cols-2">
+                      <label className="block">
+                        <span className="mb-2 block text-[11px] font-bold uppercase tracking-wide text-slate-500">Nombre del monitoreo</span>
+                        <input
+                          value={requestDraft.name}
+                          onChange={(event) => setRequestDraft((prev) => ({ ...prev, name: event.target.value }))}
+                          className="h-10 w-full rounded-lg border border-slate-300 bg-white px-4 text-sm text-slate-900 outline-none transition focus:border-cyan-700 focus:ring-2 focus:ring-cyan-700/20"
+                          placeholder="Monitoreo de Infraestructura 2024"
+                        />
+                        {requestErrors.name ? <span className="mt-1 block text-xs text-rose-600">{requestErrors.name}</span> : null}
+                      </label>
+
+                      <label className="flex items-end gap-3 pb-2">
+                        <input
+                          type="checkbox"
+                          checked={requestDraft.cdd === 'si'}
+                          onChange={(event) =>
+                            setRequestDraft((prev) => ({
+                              ...prev,
+                              cdd: event.target.checked ? 'si' : 'no',
+                            }))
+                          }
+                          className="h-5 w-5 rounded border-slate-400 text-cyan-700 focus:ring-cyan-700"
+                        />
+                        <span className="text-sm font-medium text-slate-600">Compromiso de Desempeno (CdD)</span>
+                      </label>
+
+                      <div className="lg:col-span-2">
+                        <span className="mb-2 block text-[11px] font-bold uppercase tracking-wide text-slate-500">Areas Responsables</span>
+                        <div className="flex flex-wrap gap-4 rounded-lg border border-slate-300 bg-white p-3">
+                          {RESPONSIBLE_AREA_OPTIONS.map((area) => (
+                            <label key={area} className="flex cursor-pointer items-center gap-2">
+                              <input
+                                type="checkbox"
+                                checked={selectedResponsibleAreaSet.has(area)}
+                                onChange={() => toggleResponsibleArea(area)}
+                                className="h-4 w-4 rounded border-slate-400 text-cyan-700 focus:ring-cyan-700"
+                              />
+                              <span className="text-xs font-medium text-slate-600">{area}</span>
+                            </label>
+                          ))}
+                        </div>
+                        {requestErrors.cddArea ? <span className="mt-1 block text-xs text-rose-600">{requestErrors.cddArea}</span> : null}
+                      </div>
+
+                      <label className="lg:col-span-2">
+                        <span className="mb-2 block text-[11px] font-bold uppercase tracking-wide text-slate-500">
+                          Detalle <span className="text-[10px] font-normal italic lowercase text-slate-400">(opcional)</span>
+                        </span>
+                        <input
+                          value={requestDraft.detail}
+                          onChange={(event) => setRequestDraft((prev) => ({ ...prev, detail: event.target.value }))}
+                          className="h-9 w-full rounded-lg border border-slate-300 bg-white px-4 text-sm text-slate-900 outline-none transition focus:border-cyan-700 focus:ring-2 focus:ring-cyan-700/20"
+                          placeholder="Breve descripcion o notas adicionales..."
+                        />
+                        {requestErrors.detail ? <span className="mt-1 block text-xs text-rose-600">{requestErrors.detail}</span> : null}
+                      </label>
+
+                      <DateTimePicker
+                        label="Fecha de Inicio"
+                        value={requestDraft.startDate}
+                        onChange={(nextValue) => setRequestDraft((prev) => ({ ...prev, startDate: nextValue }))}
+                        error={requestErrors.startDate}
+                      />
+
+                      <DateTimePicker
+                        label="Fecha de Cierre"
+                        value={requestDraft.endDate}
+                        onChange={(nextValue) => setRequestDraft((prev) => ({ ...prev, endDate: nextValue }))}
+                        error={requestErrors.endDate}
+                        align="right"
+                      />
+
+                      <div className="lg:col-span-2">
+                        <span className="mb-2 block text-[11px] font-bold uppercase tracking-wide text-slate-500">Monitores con Acceso</span>
+                        <div className="flex min-h-[42px] flex-wrap items-center gap-2 rounded-lg border border-slate-300 bg-white p-2 transition hover:border-cyan-700">
+                          {selectedMonitorBadges.map((monitor) => (
+                            <span key={monitor.id} className="flex items-center gap-1 rounded-md bg-[#dae2fd] px-2 py-1 text-xs font-medium text-[#131b2e]">
+                              {monitor.name}
+                            </span>
+                          ))}
+                          <input
+                            value={monitorSearch}
+                            onChange={(event) => setMonitorSearch(event.target.value)}
+                            placeholder={selectedMonitorsText}
+                            className="min-w-[170px] flex-1 border-none bg-transparent p-0 text-sm text-slate-700 outline-none focus:ring-0"
+                          />
+                          {isAdmin ? (
+                            <button type="button" className="rounded-full p-1 text-cyan-700 hover:bg-cyan-100">
+                              <Plus size={16} />
+                            </button>
+                          ) : null}
+                        </div>
+                        {isAdmin && monitorSearch && filteredMonitorRows.length ? (
+                          <div className="mt-2 max-h-40 overflow-auto rounded-lg border border-slate-200 bg-white p-1 shadow-sm">
+                            {filteredMonitorRows.slice(0, 6).map((monitor) => (
+                              <button
+                                key={monitor.id}
+                                type="button"
+                                onClick={() => handleToggleMonitorAssignment(monitor.id)}
+                                className="flex w-full items-center justify-between rounded-md px-3 py-2 text-left text-xs text-slate-700 hover:bg-cyan-50"
+                              >
+                                <span>{monitor.name}</span>
+                                <span className="text-slate-400">{monitor.email}</span>
+                              </button>
+                            ))}
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                {renderStitchConnector()}
+              </section>
+
+              <section className="relative">
+                <div className="flex gap-4">
+                  {renderStitchStageIcon('amber', Gavel)}
+                  <div className="min-w-0 flex-1 rounded-xl border border-amber-200 bg-amber-50 p-5 shadow-sm">
+                    <div className="mb-5 flex items-start justify-between gap-3">
+                      <div>
+                        <h2 className="text-sm font-bold text-amber-800">Etapa 2: Control de Publicacion</h2>
+                        <p className="mt-1 text-xs text-amber-700">El monitoreo debe ser aprobado para habilitar la edicion de instrumentos.</p>
+                      </div>
+                      <span className="rounded bg-amber-200 px-2 py-0.5 text-[10px] font-bold uppercase text-amber-800">
+                        {stageStatusLabel}
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-3">
+                      <button type="button" onClick={selectedRequest ? handleSaveRequest : handleCreateRequest} className="flex h-10 items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 text-sm font-bold text-slate-700 hover:bg-slate-50">
+                        <Save size={14} />
+                        {isAdmin ? (selectedRequest ? 'Guardar Borrador' : 'Crear solicitud') : 'Crear solicitud'}
+                      </button>
+                      {isAdmin ? <div className="mx-1 h-6 w-px bg-amber-200" /> : null}
+                      {isAdmin ? (
+                        <>
+                          <button type="button" onClick={handleRejectRequest} className="flex h-10 items-center gap-2 rounded-lg border border-red-100 bg-red-50 px-4 text-sm font-bold text-red-700 hover:bg-red-100">
+                            <CircleSlash size={14} />
+                            Rechazar
+                          </button>
+                          <button type="button" onClick={handleApproveRequest} className="flex h-10 items-center gap-2 rounded-lg bg-green-600 px-6 text-sm font-bold text-white shadow-lg shadow-green-100 hover:bg-green-700">
+                            <CheckCircle2 size={14} />
+                            Aprobar
+                          </button>
+                          <button type="button" onClick={handlePublishRequest} disabled={!canPublishRequest} className="flex h-10 items-center gap-2 rounded-lg bg-cyan-600 px-5 text-sm font-bold text-white shadow-lg shadow-cyan-100 hover:bg-cyan-700 disabled:cursor-not-allowed disabled:opacity-50">
+                            Publicar
+                          </button>
+                        </>
+                      ) : null}
+                    </div>
+                    {isAdmin && !canPublishRequest ? <p className="mt-3 text-xs text-amber-700">{publishBlockedReason}</p> : null}
+                    {isAdmin ? (
+                      <textarea
+                        value={reviewComment}
+                        onChange={(event) => setReviewComment(event.target.value)}
+                        className="mt-4 min-h-20 w-full rounded-lg border border-amber-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20"
+                        placeholder="Observacion administrativa para rechazar o solicitar ajustes..."
+                      />
+                    ) : null}
+                    {renderNotice()}
+                  </div>
+                </div>
+                {renderStitchConnector()}
+              </section>
+
+              <div className={!canConfigureStructure ? 'space-y-6 opacity-60 grayscale' : 'space-y-6'}>
+                <section className="relative">
+                  <div className="flex gap-4">
+                    {renderStitchStageIcon(canConfigureStructure ? 'cyan' : 'locked', FileText)}
+                    <div className="min-w-0 flex-1 rounded-xl border border-slate-100 bg-white p-5 shadow-sm">
+                      <div className="flex items-center justify-between">
+                        <h2 className={`text-sm font-bold ${canConfigureStructure ? 'text-slate-800' : 'text-slate-400'}`}>Etapa 3: Estructura de Fichas</h2>
+                        {!canConfigureStructure ? <Lock size={16} className="text-slate-400" /> : null}
+                      </div>
+                      {canConfigureStructure ? (
+                        <div className="mt-4 space-y-3">
+                          <div className="grid gap-3 md:grid-cols-3">
+                            <input value={sheetDraft.title} onChange={(event) => setSheetDraft((prev) => ({ ...prev, title: event.target.value }))} placeholder="Titulo de ficha" className="h-10 rounded-lg border border-slate-300 px-3 text-sm" />
+                            <input value={sheetDraft.code} onChange={(event) => setSheetDraft((prev) => ({ ...prev, code: event.target.value }))} placeholder="Codigo" className="h-10 rounded-lg border border-slate-300 px-3 text-sm" />
+                            <input value={sheetDraft.subtitle} onChange={(event) => setSheetDraft((prev) => ({ ...prev, subtitle: event.target.value }))} placeholder="Subtitulo" className="h-10 rounded-lg border border-slate-300 px-3 text-sm" />
+                          </div>
+                          <button type="button" onClick={handleAddSheet} className="h-9 rounded-lg bg-cyan-600 px-4 text-sm font-bold text-white hover:bg-cyan-700">Agregar ficha</button>
+                          {sheetSummaries.length ? (
+                            <div className="grid gap-2 md:grid-cols-2">
+                              {sheetSummaries.map((sheet) => (
+                                <button key={sheet.id} type="button" onClick={() => setSelectedSheetId(sheet.id)} className={`rounded-lg border px-3 py-2 text-left text-sm ${selectedSheetId === sheet.id ? 'border-cyan-500 bg-cyan-50' : 'border-slate-200 bg-white'}`}>
+                                  <span className="font-semibold text-slate-800">{sheet.title}</span>
+                                  <span className="ml-2 text-xs text-slate-500">{sheet.sectionCount} secciones | {sheet.questionCount} preguntas</span>
+                                </button>
+                              ))}
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+                  {renderStitchConnector()}
+                </section>
+
+                <section className="relative">
+                  <div className="flex gap-4">
+                    {renderStitchStageIcon(canConfigureStructure ? 'cyan' : 'locked', BookOpen)}
+                    <div className="min-w-0 flex-1 rounded-xl border border-slate-100 bg-white p-5 shadow-sm">
+                      <div className="flex items-center justify-between">
+                        <h2 className={`text-sm font-bold ${canConfigureStructure ? 'text-slate-800' : 'text-slate-400'}`}>Etapa 4: Configuracion de Encabezados</h2>
+                        {!canConfigureStructure ? <Lock size={16} className="text-slate-400" /> : null}
+                      </div>
+                      {canConfigureStructure && selectedSheet ? (
+                        <div className="mt-4 grid gap-3 md:grid-cols-2">
+                          {[['Campos de encabezado', HEADER_FIELD_OPTIONS, 'header'], ['Campos de cierre', CLOSING_FIELD_OPTIONS, 'closing']].map(([title, fields, group]) => (
+                            <div key={title} className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                              <p className="mb-2 text-xs font-bold uppercase text-slate-500">{title}</p>
+                              <div className="grid gap-1">
+                                {fields.slice(0, 8).map((field) => (
+                                  <label key={field.id} className="flex items-center gap-2 text-xs text-slate-700">
+                                    <input type="checkbox" checked={Boolean(selectedSheet[`${group}Fields`]?.[field.id])} onChange={() => handleToggleSheetField(group, field.id)} className="rounded text-cyan-700" />
+                                    {field.label}
+                                  </label>
+                                ))}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+                  {renderStitchConnector()}
+                </section>
+
+                <section className="relative">
+                  <div className="flex gap-4">
+                    {renderStitchStageIcon(canConfigureStructure ? 'cyan' : 'locked', HelpCircle)}
+                    <div className="min-w-0 flex-1 rounded-xl border border-slate-100 bg-white p-5 shadow-sm">
+                      <div className="flex items-center justify-between">
+                        <h2 className={`text-sm font-bold ${canConfigureStructure ? 'text-slate-800' : 'text-slate-400'}`}>Etapa 5 & 6: Secciones y Banco de Preguntas</h2>
+                        {!canConfigureStructure ? <Lock size={16} className="text-slate-400" /> : null}
+                      </div>
+                      {canConfigureStructure && selectedSheet ? (
+                        <div className="mt-4 space-y-4">
+                          <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto]">
+                            <input value={sectionName} onChange={(event) => setSectionName(event.target.value)} placeholder="Nombre de seccion" className="h-10 rounded-lg border border-slate-300 px-3 text-sm" />
+                            <button type="button" onClick={handleAddSection} className="h-10 rounded-lg bg-cyan-600 px-4 text-sm font-bold text-white">Agregar seccion</button>
+                          </div>
+                          {selectedSheet.sections?.length ? (
+                            <select value={selectedSectionId} onChange={(event) => setSelectedSectionId(event.target.value)} className="h-10 w-full rounded-lg border border-slate-300 px-3 text-sm">
+                              {selectedSheet.sections.map((section) => (
+                                <option key={section.id} value={section.id}>{section.name}</option>
+                              ))}
+                            </select>
+                          ) : null}
+                          {selectedSection ? (
+                            <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                              <textarea value={questionDraft.text} onChange={(event) => setQuestionDraft((prev) => ({ ...prev, text: event.target.value }))} placeholder="Enunciado de la pregunta" className="min-h-20 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+                              <div className="mt-3 flex flex-wrap gap-2">
+                                <select value={questionDraft.type} onChange={(event) => handleQuestionTypeChange(event.target.value)} className="h-9 rounded-lg border border-slate-300 px-3 text-sm">
+                                  <option value="">Tipo de respuesta</option>
+                                  {QUESTION_TYPE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                                </select>
+                                <button type="button" onClick={() => saveQuestion(false)} className="h-9 rounded-lg bg-cyan-600 px-4 text-sm font-bold text-white">Guardar pregunta</button>
+                              </div>
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+                </section>
+              </div>
+            </div>
+          </section>
+
+          <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl bg-cyan-950 p-5 text-white">
+            <div className="flex items-center gap-4">
+              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-cyan-800/50 text-cyan-300">
+                <HelpCircle size={20} />
+              </div>
+              <div>
+                <p className="text-sm font-bold">Necesitas ayuda con la configuracion?</p>
+                <p className="text-xs text-cyan-300">Consulta la guia tecnica de monitoreos 2024</p>
+              </div>
+            </div>
+            <button type="button" className="h-10 rounded-lg bg-cyan-500 px-4 text-xs font-bold text-white hover:bg-cyan-400">
+              Abrir Documentacion
+            </button>
+          </div>
+        </main>
+      </div>
+
+      {historyOpen ? createPortal(
+        <div
+          className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-950/55 px-4 pb-6 pt-20 backdrop-blur-sm sm:pt-24"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Historial de solicitudes"
+          onClick={() => setHistoryOpen(false)}
+        >
+          <div
+            className="relative flex max-h-[min(760px,calc(100vh-112px))] w-[min(960px,calc(100vw-28px))] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_24px_80px_rgba(15,23,42,0.32)] dark:border-slate-700/70 dark:bg-slate-900/95"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-3 border-b border-slate-100 bg-slate-50 px-5 py-4 dark:border-slate-700/70 dark:bg-slate-800/80">
+              <div>
+                <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-cyan-700 dark:text-cyan-300">Historial</p>
+                <h2 className="mt-1 text-lg font-bold text-slate-900 dark:text-slate-100">Solicitudes de monitoreo</h2>
+                <p className="text-sm text-slate-500 dark:text-slate-300">Busca, filtra y selecciona una solicitud para continuar editando.</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setHistoryOpen(false)}
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-slate-500 transition hover:bg-slate-200/70 hover:text-slate-800 dark:text-slate-300 dark:hover:bg-slate-700/70 dark:hover:text-slate-100"
+                aria-label="Cerrar historial"
+              >
+                <XCircle size={18} />
+              </button>
+            </div>
+
+            <div className="grid gap-3 border-b border-slate-100 px-5 py-3 dark:border-slate-700/70 lg:grid-cols-[minmax(0,1fr)_240px_auto]">
+              <label className="relative block">
+                <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input
+                  value={historySearch}
+                  onChange={(event) => setHistorySearch(event.target.value)}
+                  placeholder="Buscar por nombre, codigo, detalle o creador..."
+                  className="h-10 w-full rounded-lg border border-slate-200 bg-white pl-9 pr-3 text-sm text-slate-800 outline-none focus:border-cyan-600 focus:ring-2 focus:ring-cyan-600/15"
+                />
+              </label>
+              <select
+                value={historyStatusFilter}
+                onChange={(event) => setHistoryStatusFilter(event.target.value)}
+                className="h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 outline-none focus:border-cyan-600 focus:ring-2 focus:ring-cyan-600/15"
+              >
+                <option value="all">Todos los estados</option>
+                {REQUEST_STATUSES.map((status) => (
+                  <option key={status.value} value={status.value}>
+                    {status.label}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={() => {
+                  resetToCreateMode();
+                  setHistoryOpen(false);
+                }}
+                className="flex h-10 items-center justify-center gap-2 rounded-lg bg-cyan-600 px-4 text-sm font-bold text-white shadow-sm shadow-cyan-100 transition hover:bg-cyan-700"
+              >
+                <Plus size={15} />
+                Nueva
+              </button>
+            </div>
+
+            <div className="min-h-0 flex-1 overflow-y-auto p-3">
+              {historyRequests.length ? (
+                <div className="grid gap-2">
+                  {historyRequests.map((request) => {
+                    const displayStatus = resolveDisplayStatus(request);
+                    const pending = hasPendingChanges(request) || displayStatus === 'pending';
+                    const selected = selectedRequestId === request.id;
+                    const toneClass =
+                      displayStatus === 'published'
+                        ? 'border-cyan-100 bg-cyan-50 text-cyan-700 dark:border-emerald-300/45 dark:bg-[#1f3b35] dark:text-[#bff3d4]'
+                        : pending
+                          ? 'border-amber-100 bg-amber-50 text-amber-700 dark:border-amber-300/45 dark:bg-[#4a3a1d] dark:text-[#ffe2a3]'
+                          : displayStatus === 'rejected' || displayStatus === 'expired'
+                            ? 'border-rose-100 bg-rose-50 text-rose-700 dark:border-rose-300/45 dark:bg-[#4a2530] dark:text-[#ffd1dc]'
+                            : 'border-slate-100 bg-slate-50 text-slate-600 dark:border-slate-500/55 dark:bg-[#2f3942] dark:text-slate-100';
+                    return (
+                      <button
+                        key={request.id}
+                        type="button"
+                        onClick={() => {
+                          setSelectedRequestId(request.id);
+                          setHistoryOpen(false);
+                          setNotice({ tone: 'neutral', message: '' });
+                          if (isMobileLayout) {
+                            setMobilePanel('editor');
+                            setMobileStage('stage1');
+                          }
+                        }}
+                        className={`grid gap-3 rounded-xl border px-4 py-3 text-left transition hover:border-cyan-200 hover:bg-cyan-50/40 dark:hover:border-[#a9927d]/70 dark:hover:bg-[#1a2129] md:grid-cols-[minmax(0,1fr)_160px_130px] md:items-center ${
+                          selected
+                            ? 'border-cyan-300 bg-cyan-50/70 dark:border-[#bfa78f]/80 dark:bg-[#2a3f47]'
+                            : 'border-slate-100 bg-white dark:border-[#a9927d]/40 dark:bg-[#151c23]'
+                        }`}
+                      >
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <p className="truncate text-sm font-bold text-slate-900 dark:text-slate-100">{request.name || 'Solicitud sin nombre'}</p>
+                            <span className={`rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase ${toneClass}`}>
+                              {hasPendingChanges(request) ? 'Cambios pendientes' : getStatusLabel(displayStatus)}
+                            </span>
+                          </div>
+                          <p className="mt-1 truncate text-xs text-slate-500 dark:text-slate-300">{request.detail || 'Sin detalle registrado'}</p>
+                          <p className="mt-1 text-[11px] font-semibold text-slate-400 dark:text-slate-400">{request.code}</p>
+                        </div>
+                        <div className="text-xs text-slate-500 dark:text-slate-300">
+                          <p className="font-bold uppercase tracking-wide text-slate-400 dark:text-slate-400">Rango</p>
+                          <p className="mt-1">{formatDateRange(request.startDate, request.endDate)}</p>
+                        </div>
+                        <div className="text-xs text-slate-500 dark:text-slate-300 md:text-right">
+                          <p className="font-bold uppercase tracking-wide text-slate-400 dark:text-slate-400">Actualizado</p>
+                          <p className="mt-1">
+                            {request.updatedAt
+                              ? new Intl.DateTimeFormat('es-PE', {
+                                  day: '2-digit',
+                                  month: 'short',
+                                  hour: '2-digit',
+                                  minute: '2-digit',
+                                }).format(new Date(request.updatedAt))
+                              : '-'}
+                          </p>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-10 text-center dark:border-[#a9927d]/40 dark:bg-[#151c23]">
+                  <p className="text-sm font-semibold text-slate-700 dark:text-slate-100">No se encontraron solicitudes.</p>
+                  <p className="mt-1 text-xs text-slate-500 dark:text-slate-300">Ajusta la busqueda o cambia el filtro de estado.</p>
+                </div>
+              )}
+            </div>
+
+            <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 bg-slate-50 px-5 py-3 text-xs text-slate-500 dark:border-slate-700/70 dark:bg-slate-800/80 dark:text-slate-300">
+              <span>
+                Mostrando {historyRequests.length} de {requests.length} solicitudes
+              </span>
+              <span>Selecciona una fila para cargarla en el constructor.</span>
+            </div>
+          </div>
+        </div>,
+        document.body
+      ) : null}
+
+      <ConfirmModal
+        open={Boolean(deleteTarget)}
+        tone="danger"
+        title="Eliminar solicitud"
+        description="Esta accion eliminara la solicitud y todas sus fichas, secciones y preguntas."
+        details={deleteTarget?.name || ''}
+        confirmText="Si, eliminar"
+        cancelText="Cancelar"
+        onCancel={() => setDeleteTarget(null)}
+        onConfirm={handleConfirmDelete}
+      />
+    </div>
+  );
+
   return (
     <div className="flex w-full min-w-0 max-w-full max-w-[100vw] touch-pan-y flex-col gap-4 overflow-x-hidden">
       <div className="border-b border-slate-800/70 pb-4">
@@ -2607,7 +3497,11 @@ export default function MonitoreoGestionMonitoreos({ embedded = false, initialCr
                 onChange={(event) => setMobileStage(event.target.value)}
               >
                 {mobileStageOptions.map((option) => (
-                  <option key={option.value} value={option.value}>
+                  <option
+                    key={option.value}
+                    value={option.value}
+                    disabled={!canConfigureStructure && !['stage1', 'stage2'].includes(option.value)}
+                  >
                     {option.label}
                   </option>
                 ))}
@@ -3083,9 +3977,11 @@ export default function MonitoreoGestionMonitoreos({ embedded = false, initialCr
                     <Save size={13} />
                     Guardar cambios
                   </button>
-                  <button type="button" onClick={handleReapplyInstitutions} className="ds-btn ds-btn-secondary">
-                    Reaplicar filtros IE
-                  </button>
+                  {isAdmin ? (
+                    <button type="button" onClick={handleReapplyInstitutions} className="ds-btn ds-btn-secondary">
+                      Reaplicar filtros IE
+                    </button>
+                  ) : null}
                   {isAdmin ? (
                     <>
                       <button type="button" onClick={handleApproveRequest} className="ds-btn ds-btn-primary">
@@ -3136,7 +4032,7 @@ export default function MonitoreoGestionMonitoreos({ embedded = false, initialCr
           </Card>
           ) : null}
 
-          {showStage('stage3') ? (selectedRequest ? (
+          {showStage('stage3') ? (canConfigureStructure ? (
             <Card className="min-w-0 space-y-4">
               <SectionHeader
                 eyebrow="Etapa 3"
@@ -3201,11 +4097,16 @@ export default function MonitoreoGestionMonitoreos({ embedded = false, initialCr
           ) : (
             <StageDisabled
               title="Etapa 3 - Fichas"
-              description="Primero crea o selecciona una solicitud valida para habilitar fichas."
+              description={structureBlockedReason}
             />
           )) : null}
 
-          {showStage('stage4') ? (selectedSheet ? (
+          {showStage('stage4') ? (!canConfigureStructure ? (
+            <StageDisabled
+              title="Etapa 4 - Encabezado y cierre"
+              description={structureBlockedReason}
+            />
+          ) : selectedSheet ? (
             <Card className="min-w-0 space-y-4">
               <SectionHeader
                 eyebrow="Etapa 4"
@@ -3260,7 +4161,12 @@ export default function MonitoreoGestionMonitoreos({ embedded = false, initialCr
             />
           )) : null}
 
-          {showStage('stage5') ? (selectedSheet ? (
+          {showStage('stage5') ? (!canConfigureStructure ? (
+            <StageDisabled
+              title="Etapa 5 - Secciones"
+              description={structureBlockedReason}
+            />
+          ) : selectedSheet ? (
             <Card className="min-w-0 space-y-4">
               <SectionHeader
                 eyebrow="Etapa 5"
@@ -3322,7 +4228,12 @@ export default function MonitoreoGestionMonitoreos({ embedded = false, initialCr
             />
           )) : null}
 
-          {showStage('stage6') ? (selectedSection ? (
+          {showStage('stage6') ? (!canConfigureStructure ? (
+            <StageDisabled
+              title="Etapa 6 - Preguntas"
+              description={structureBlockedReason}
+            />
+          ) : selectedSection ? (
             <Card className="min-w-0 space-y-4">
               <SectionHeader
                 eyebrow="Etapa 6"
