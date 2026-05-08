@@ -2,18 +2,21 @@
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import {
   ArrowUpDown,
+  BarChart3,
   Download,
   Eye,
   FileText,
   Loader2,
+  MoreVertical,
+  Package,
   Search,
+  Star,
   Trash2,
 } from 'lucide-react';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import Card from '../components/ui/Card.jsx';
 import ConfirmModal from '../components/ui/ConfirmModal.jsx';
-import SectionHeader from '../components/ui/SectionHeader.jsx';
 import { supabase } from '../lib/supabase.js';
 
 const AUTH_KEY = 'monitoreoAuth';
@@ -138,6 +141,14 @@ const REPORT_STATE_META = {
 };
 
 const pluralize = (count, singular, plural) => (count === 1 ? singular : plural);
+
+const getTemplateScope = (template) =>
+  template?.levelsConfig?.scope || template?.levels_config?.scope || {};
+
+const isCddTemplate = (template) =>
+  String(getTemplateScope(template)?.cdd || '').trim().toLowerCase() === 'si';
+
+const getCddArea = (template) => String(getTemplateScope(template)?.cddArea || '').trim();
 
 const hasContent = (value) => {
   if (value === null || value === undefined) return false;
@@ -748,6 +759,8 @@ export default function MonitoreoReportes() {
   const [isLoading, setIsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [typeFilter, setTypeFilter] = useState('all');
+  const [yearFilter, setYearFilter] = useState('all');
   const [sortBy, setSortBy] = useState('recent');
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -848,6 +861,7 @@ export default function MonitoreoReportes() {
       const updatedAtTs = new Date(instance.updated_at || instance.created_at || 0).getTime() || 0;
       const dueAtTs =
         new Date(template?.availability?.endAt || 0).getTime() || Number.MAX_SAFE_INTEGER;
+      const isCdd = isCddTemplate(template);
 
       return {
         id: instance.id,
@@ -873,6 +887,9 @@ export default function MonitoreoReportes() {
         dueAtTs,
         instance,
         hasReport: true,
+        isCdd,
+        cddArea: getCddArea(template),
+        year: new Date(template?.availability?.startAt || instance.created_at || instance.updated_at || Date.now()).getFullYear(),
       };
     });
 
@@ -910,6 +927,9 @@ export default function MonitoreoReportes() {
           dueAtTs,
           instance: null,
           hasReport: false,
+          isCdd: isCddTemplate(template),
+          cddArea: getCddArea(template),
+          year: new Date(template?.availability?.startAt || updatedAt || Date.now()).getFullYear(),
         };
       });
 
@@ -940,6 +960,9 @@ export default function MonitoreoReportes() {
 
     const rows = reportRows.filter((row) => {
       if (statusFilter !== 'all' && row.state !== statusFilter) return false;
+      if (typeFilter === 'cdd' && !row.isCdd) return false;
+      if (typeFilter === 'standard' && row.isCdd) return false;
+      if (yearFilter !== 'all' && String(row.year || '') !== String(yearFilter)) return false;
       if (!normalizedSearch) return true;
 
       const haystack = `${row.templateTitle} ${row.sheetTitle || ''} ${row.displayName || ''} ${row.institution || ''} ${row.responseQuestion || ''} ${row.responsePreview || ''}`.toLowerCase();
@@ -957,12 +980,12 @@ export default function MonitoreoReportes() {
     });
 
     return rows;
-  }, [reportRows, searchTerm, sortBy, statusFilter]);
+  }, [reportRows, searchTerm, sortBy, statusFilter, typeFilter, yearFilter]);
 
-  const visibleReportCount = useMemo(
-    () => filteredRows.filter((row) => row.hasReport).length,
-    [filteredRows],
-  );
+  const yearOptions = useMemo(() => {
+    const years = Array.from(new Set(reportRows.map((row) => row.year).filter(Boolean)));
+    return years.sort((left, right) => right - left);
+  }, [reportRows]);
   const isDetailView = Boolean(detailTemplateId);
 
   const groupedReports = useMemo(() => {
@@ -974,12 +997,16 @@ export default function MonitoreoReportes() {
         groupsMap.set(groupKey, {
           groupKey,
           templateId: row.templateId,
+          template: row.template,
           templateTitle: row.templateTitle,
           rangeLabel: row.rangeLabel,
           latestUpdatedTs: row.updatedAtTs,
           nearestDueTs: row.dueAtTs,
           reports: [],
           reportCount: 0,
+          isCdd: row.isCdd,
+          cddArea: row.cddArea,
+          year: row.year,
         });
       }
 
@@ -1067,6 +1094,8 @@ export default function MonitoreoReportes() {
     () => (detailGroup ? detailGroup.sheetGroups.flatMap((sheetGroup) => sheetGroup.reports).filter((row) => row.hasReport) : []),
     [detailGroup],
   );
+  const cddReportGroups = useMemo(() => groupedReports.filter((group) => group.isCdd), [groupedReports]);
+  const standardReportGroups = useMemo(() => groupedReports.filter((group) => !group.isCdd), [groupedReports]);
 
   const stateFilters = [
     { value: 'all', label: 'Todos' },
@@ -1199,75 +1228,86 @@ export default function MonitoreoReportes() {
 
   return (
     <div className="flex flex-col gap-6">
-      <Card className="flex flex-col gap-5">
-        <SectionHeader title="Reportes" size="page" />
-        <p className="text-sm text-slate-400">
-          Consulta y gestiona los resultados de monitoreos institucionales.
-        </p>
-
-        <div className="rounded-2xl border border-slate-800/70 bg-slate-900/45 px-4 py-4">
-          <p className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Filtros</p>
-
-          <div className="mt-3 flex flex-wrap items-center gap-2">
-            <span className="inline-flex h-7 items-center gap-1.5 rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-2.5 text-[11px] text-cyan-100">
-              <span className="font-semibold">{summary.total}</span>
-              <span>Total</span>
-            </span>
-            <span className="inline-flex h-7 items-center gap-1.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-2.5 text-[11px] text-emerald-100">
-              <span className="font-semibold">{summary.in_progress}</span>
-              <span>En progreso</span>
-            </span>
-            <span className="inline-flex h-7 items-center gap-1.5 rounded-lg border border-indigo-500/30 bg-indigo-500/10 px-2.5 text-[11px] text-indigo-100">
-              <span className="font-semibold">{summary.completed}</span>
-              <span>Completados</span>
-            </span>
-            <span className="inline-flex h-7 items-center gap-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 px-2.5 text-[11px] text-amber-100">
-              <span className="font-semibold">{summary.expired}</span>
-              <span>Vencidos</span>
-            </span>
-            <span className="inline-flex h-7 items-center gap-1.5 rounded-lg border border-slate-600/70 bg-slate-800/60 px-2.5 text-[11px] text-slate-200">
-              <span className="font-semibold">{summary.draft}</span>
-              <span>Borradores</span>
-            </span>
+      <Card className="flex flex-col gap-6">
+        <div className="flex flex-wrap items-end justify-between gap-4">
+          <div>
+            <h1 className="text-3xl font-extrabold tracking-tight text-slate-900 dark:text-slate-100">Reportes</h1>
+            <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
+              CdD usa una ficha única para meta y avance; otros monitoreos agrupan fichas por usuario.
+            </p>
           </div>
+          <label className="flex h-11 min-w-[280px] items-center gap-2 rounded-full border border-slate-300 bg-slate-50 px-4 dark:border-[#a9927d]/35 dark:bg-[#22333b]">
+            <Search size={18} className="text-slate-400" />
+            <input
+              value={searchTerm}
+              onChange={(event) => setSearchTerm(event.target.value)}
+              placeholder="Buscar monitoreos..."
+              className="w-full bg-transparent text-sm text-slate-700 placeholder:text-slate-400 focus:outline-none dark:text-slate-100"
+            />
+          </label>
+        </div>
 
-          <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,1fr)_190px_220px_auto] lg:items-end">
-            <label className="flex flex-col gap-1.5">
-              <span className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Buscar</span>
-              <div className="flex items-center gap-2 rounded-xl border border-slate-700/70 bg-slate-900/60 px-3 py-2">
-                <Search size={14} className="text-slate-500" />
-                <input
-                  value={searchTerm}
-                  onChange={(event) => setSearchTerm(event.target.value)}
-                      placeholder="Monitoreo, IE o referencia..."
-                  className="w-full bg-transparent text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none"
-                />
+        <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-slate-200 bg-white p-5 shadow-sm dark:border-[#a9927d]/35 dark:bg-[#171d23]">
+          <div className="flex flex-wrap items-end gap-6">
+            <div className="flex flex-col gap-1.5">
+              <span className="text-xs font-semibold text-slate-500 dark:text-[#d8c4b2]">Tipo de Monitoreo</span>
+              <div className="flex rounded-lg bg-slate-100 p-1 dark:bg-[#22333b]">
+                {[
+                  ['all', 'Todos'],
+                  ['cdd', 'CdD'],
+                  ['standard', 'Otros'],
+                ].map(([value, label]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => setTypeFilter(value)}
+                    className={`rounded-md px-4 py-1.5 text-xs font-bold transition ${
+                      typeFilter === value
+                        ? 'bg-white text-cyan-700 shadow-sm dark:bg-[#5e503f] dark:text-white'
+                        : 'text-slate-600 hover:text-cyan-700 dark:text-slate-300'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
               </div>
-            </label>
+            </div>
 
             <label className="flex flex-col gap-1.5">
-              <span className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Estado</span>
+              <span className="text-xs font-semibold text-slate-500 dark:text-[#d8c4b2]">Año Académico</span>
               <select
-                value={statusFilter}
-                onChange={(event) => setStatusFilter(event.target.value)}
-                className="h-[38px] rounded-xl border border-slate-700/70 bg-slate-900/60 px-3 text-sm text-slate-100 focus:border-cyan-400 focus:outline-none focus:ring-2 focus:ring-cyan-500/30"
+                value={yearFilter}
+                onChange={(event) => setYearFilter(event.target.value)}
+                className="h-10 rounded-lg border border-slate-300 bg-slate-50 px-3 text-sm text-slate-700 focus:border-cyan-500 focus:outline-none dark:border-[#a9927d]/35 dark:bg-[#22333b] dark:text-slate-100"
               >
-                {stateFilters.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
+                <option value="all">Todos</option>
+                {yearOptions.map((year) => (
+                  <option key={year} value={year}>{year}</option>
                 ))}
               </select>
             </label>
 
             <label className="flex flex-col gap-1.5">
-              <span className="text-[11px] uppercase tracking-[0.2em] text-slate-500">Ordenar</span>
-              <div className="flex items-center gap-2 rounded-xl border border-slate-700/70 bg-slate-900/60 px-3">
-                <ArrowUpDown size={13} className="text-slate-500" />
+              <span className="text-xs font-semibold text-slate-500 dark:text-[#d8c4b2]">Estado</span>
+              <select
+                value={statusFilter}
+                onChange={(event) => setStatusFilter(event.target.value)}
+                className="h-10 rounded-lg border border-slate-300 bg-slate-50 px-3 text-sm text-slate-700 focus:border-cyan-500 focus:outline-none dark:border-[#a9927d]/35 dark:bg-[#22333b] dark:text-slate-100"
+              >
+                {stateFilters.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </select>
+            </label>
+
+            <label className="flex flex-col gap-1.5">
+              <span className="text-xs font-semibold text-slate-500 dark:text-[#d8c4b2]">Ordenar</span>
+              <div className="flex h-10 items-center gap-2 rounded-lg border border-slate-300 bg-slate-50 px-3 dark:border-[#a9927d]/35 dark:bg-[#22333b]">
+                <ArrowUpDown size={14} className="text-slate-400" />
                 <select
                   value={sortBy}
                   onChange={(event) => setSortBy(event.target.value)}
-                  className="h-[38px] w-full bg-transparent text-sm text-slate-100 focus:outline-none"
+                  className="h-full bg-transparent text-sm text-slate-700 focus:outline-none dark:text-slate-100"
                 >
                   <option value="recent">Más recientes</option>
                   <option value="due">Próximo vencimiento</option>
@@ -1275,14 +1315,8 @@ export default function MonitoreoReportes() {
                 </select>
               </div>
             </label>
-
-            <div className="rounded-xl border border-slate-700/60 bg-slate-900/45 px-3 py-2 text-xs text-slate-300">
-              Mostrando: <span className="font-semibold text-slate-100">{visibleReportCount}</span>{' '}
-              {pluralize(visibleReportCount, 'reporte', 'reportes')} en{' '}
-              <span className="font-semibold text-slate-100">{groupedReports.length}</span>{' '}
-              {pluralize(groupedReports.length, 'monitoreo', 'monitoreos')}
-            </div>
           </div>
+
         </div>
 
         {isLoading ? (
@@ -1301,36 +1335,162 @@ export default function MonitoreoReportes() {
             No hay resultados con esos filtros.
           </div>
         ) : !isDetailView ? (
-          <div className="space-y-4">
-            {groupedReports.map((group) => {
-              const groupMeta = REPORT_STATE_META[group.groupState] || REPORT_STATE_META.active;
-              return (
-                <article key={group.groupKey} className="rounded-2xl border border-slate-800/70 bg-slate-900/45 px-4 py-4">
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="truncate text-base font-semibold text-slate-100">{truncateLabel(group.templateTitle, 84)}</p>
-                      <p className="mt-1 text-xs text-slate-400">
-                        {group.rangeLabel} · {group.reportCount} {pluralize(group.reportCount, 'reporte', 'reportes')}
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${groupMeta.className}`}>
-                        {groupMeta.label}
-                      </span>
-                      {group.templateId ? (
-                        <button
-                          type="button"
-                          onClick={() => navigate(`/monitoreo/reportes/${group.templateId}`)}
-                          className="inline-flex items-center gap-2 rounded-full border border-cyan-500/35 bg-cyan-500/10 px-3 py-1.5 text-xs font-semibold text-cyan-100 transition hover:border-cyan-400/65"
-                        >
-                          Ver reportes
-                        </button>
-                      ) : null}
-                    </div>
+          <div className="space-y-8">
+            <section className="space-y-4">
+              <div className="flex flex-wrap items-center gap-2">
+                <Star size={20} className="text-cyan-600 dark:text-cyan-200" />
+                <h2 className="text-xl font-bold text-slate-900 dark:text-slate-100">Compromisos de Desempeño (CdD)</h2>
+                <span className="rounded bg-cyan-100 px-2 py-1 text-[10px] font-black uppercase tracking-wider text-cyan-800 dark:bg-cyan-400/15 dark:text-cyan-100">
+                  Dashboard Sync Active
+                </span>
+              </div>
+
+              {cddReportGroups.length ? (
+                <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
+                  {cddReportGroups.map((group) => {
+                    const primaryRow = group.reports.find((row) => row.hasReport) || group.reports[0];
+                    const progressLabel =
+                      group.groupState === 'completed'
+                        ? 'Completado 100%'
+                        : group.groupState === 'expired'
+                          ? 'Retrasado'
+                          : group.reportCount
+                            ? 'En progreso'
+                            : 'Sin ficha';
+                    return (
+                      <article key={group.groupKey} className="relative flex min-h-[250px] flex-col gap-4 overflow-hidden rounded-xl border border-cyan-300/70 bg-white p-5 shadow-[0_12px_28px_-14px_rgba(6,182,212,0.45)] transition hover:shadow-[0_18px_36px_-16px_rgba(6,182,212,0.5)] dark:border-cyan-400/35 dark:bg-[#171d23]">
+                        <div className="absolute -right-12 -top-12 h-24 w-24 rounded-bl-full bg-cyan-100/80 dark:bg-cyan-400/10" />
+                        <div className="relative flex items-start justify-between gap-3">
+                          <div className="rounded-lg bg-cyan-100 p-2 text-cyan-700 dark:bg-cyan-400/15 dark:text-cyan-100">
+                            <BarChart3 size={22} />
+                          </div>
+                          <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold uppercase ${
+                            group.groupState === 'expired'
+                              ? 'bg-rose-100 text-rose-700 dark:bg-rose-400/15 dark:text-rose-200'
+                              : group.groupState === 'completed'
+                                ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-400/15 dark:text-emerald-200'
+                                : 'bg-indigo-100 text-indigo-700 dark:bg-indigo-400/15 dark:text-indigo-200'
+                          }`}>
+                            {progressLabel}
+                          </span>
+                        </div>
+                        <div className="relative min-w-0">
+                          <h3 className="line-clamp-2 text-lg font-bold text-slate-900 dark:text-slate-100">{group.templateTitle}</h3>
+                          <p className="mt-2 line-clamp-2 text-sm text-slate-600 dark:text-slate-400">
+                            Área CdD: {group.cddArea || 'Sin área'} · ficha única para avance progresivo.
+                          </p>
+                        </div>
+                        <div className="grid grid-cols-2 gap-3 border-y border-slate-100 py-3 dark:border-[#a9927d]/20">
+                          <div>
+                            <p className="text-[10px] font-bold uppercase text-slate-400">Última carga</p>
+                            <p className="text-sm font-semibold text-slate-700 dark:text-slate-200">{primaryRow?.updatedDateLabel || 'Sin registro'}</p>
+                          </div>
+                          <div>
+                            <p className="text-[10px] font-bold uppercase text-slate-400">Ficha</p>
+                            <p className="text-sm font-semibold text-slate-700 dark:text-slate-200">{group.reportCount ? '1 ficha CdD' : 'Pendiente'}</p>
+                          </div>
+                        </div>
+                        <div className="mt-auto flex gap-2">
+                          <button
+                            type="button"
+                            onClick={() => (group.reportCount ? navigate(`/monitoreo/reportes/${group.templateId}`) : handleCreateReport(group.template, { reuseExisting: true }))}
+                            className="flex-1 rounded-lg bg-cyan-700 py-2 text-sm font-bold text-white transition hover:bg-cyan-800 dark:bg-[#426b69] dark:hover:bg-[#4f7d7a]"
+                          >
+                            Ver Reportes
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => primaryRow?.instance ? openPdf(primaryRow.template, primaryRow.instance) : handleCreateReport(group.template, { reuseExisting: true })}
+                            className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-slate-300 text-slate-600 transition hover:bg-slate-50 dark:border-[#a9927d]/35 dark:text-slate-200 dark:hover:bg-white/10"
+                            title={primaryRow?.instance ? 'Descargar PDF' : 'Crear ficha'}
+                          >
+                            <Download size={17} />
+                          </button>
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="rounded-xl border border-dashed border-slate-300 bg-white px-5 py-6 text-sm text-slate-500 dark:border-[#a9927d]/35 dark:bg-[#171d23] dark:text-slate-400">
+                  No hay monitoreos CdD con los filtros actuales.
+                </div>
+              )}
+            </section>
+
+            <section className="space-y-4">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <Package size={20} className="text-slate-400" />
+                  <h2 className="text-xl font-bold text-slate-900 dark:text-slate-100">Otros Monitoreos</h2>
+                </div>
+                <button type="button" className="text-sm font-semibold text-cyan-700 hover:underline dark:text-cyan-200">Ver Histórico</button>
+              </div>
+
+              <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm dark:border-[#a9927d]/35 dark:bg-[#171d23]">
+                <table className="w-full table-fixed border-collapse text-left">
+                  <colgroup>
+                    <col className="w-[42%]" />
+                    <col className="w-[14%]" />
+                    <col className="w-[18%]" />
+                    <col className="w-[14%]" />
+                    <col className="w-[12%]" />
+                  </colgroup>
+                  <thead>
+                    <tr className="border-b border-slate-200 bg-slate-50 dark:border-[#a9927d]/25 dark:bg-[#151c23]">
+                      <th className="px-5 py-3 text-[11px] font-bold uppercase tracking-widest text-slate-500 dark:text-[#d8c4b2]">Programa de Monitoreo</th>
+                      <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-widest text-slate-500 dark:text-[#d8c4b2]">Estado</th>
+                      <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-widest text-slate-500 dark:text-[#d8c4b2]">Periodo</th>
+                      <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-widest text-slate-500 dark:text-[#d8c4b2]">Archivos</th>
+                      <th className="px-4 py-3 text-right text-[11px] font-bold uppercase tracking-widest text-slate-500 dark:text-[#d8c4b2]">Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-[#a9927d]/20">
+                    {standardReportGroups.length ? standardReportGroups.map((group) => {
+                      const groupMeta = REPORT_STATE_META[group.groupState] || REPORT_STATE_META.active;
+                      return (
+                        <tr key={group.groupKey} className="transition hover:bg-slate-50 dark:hover:bg-[#22333b]/70">
+                          <td className="px-5 py-4">
+                            <p className="truncate text-sm font-bold text-slate-900 dark:text-slate-100">{group.templateTitle}</p>
+                            <p className="truncate text-xs text-slate-400">Código: {String(group.templateId || group.groupKey).slice(0, 13).toUpperCase()}</p>
+                          </td>
+                          <td className="px-4 py-4">
+                            <span className="inline-flex rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-bold uppercase text-slate-600 dark:bg-[#22333b] dark:text-slate-200">
+                              {groupMeta.label}
+                            </span>
+                          </td>
+                          <td className="px-4 py-4 text-sm text-slate-600 dark:text-slate-300">{group.rangeLabel}</td>
+                          <td className="px-4 py-4 text-sm font-semibold text-slate-600 dark:text-slate-300">
+                            {group.reportCount} {pluralize(group.reportCount, 'ficha', 'fichas')}
+                          </td>
+                          <td className="px-4 py-4 text-right">
+                            <button type="button" onClick={() => navigate(`/monitoreo/reportes/${group.templateId}`)} className="inline-flex h-8 w-8 items-center justify-center rounded-md text-cyan-700 transition hover:bg-cyan-50 dark:text-cyan-200 dark:hover:bg-cyan-500/10" title="Ver reportes">
+                              <Eye size={16} />
+                            </button>
+                            <button type="button" className="inline-flex h-8 w-8 items-center justify-center rounded-md text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-white/10 dark:hover:text-slate-200" title="Más opciones">
+                              <MoreVertical size={16} />
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    }) : (
+                      <tr>
+                        <td colSpan={5} className="px-5 py-6 text-sm text-slate-500 dark:text-slate-400">No hay otros monitoreos con los filtros actuales.</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+                <div className="flex items-center justify-between border-t border-slate-200 bg-slate-50 px-5 py-3 dark:border-[#a9927d]/25 dark:bg-[#151c23]">
+                  <span className="text-xs text-slate-500 dark:text-slate-400">
+                    Mostrando {standardReportGroups.length} de {groupedReports.length} monitoreos estándar
+                  </span>
+                  <div className="flex gap-2">
+                    <button type="button" className="rounded border border-slate-300 px-3 py-1 text-xs font-bold text-slate-400 dark:border-[#a9927d]/35">Anterior</button>
+                    <button type="button" className="rounded border border-slate-300 px-3 py-1 text-xs font-bold text-slate-700 hover:bg-white dark:border-[#a9927d]/35 dark:text-slate-200 dark:hover:bg-white/10">Siguiente</button>
                   </div>
-                </article>
-              );
-            })}
+                </div>
+              </div>
+            </section>
           </div>
         ) : !detailGroup ? (
           <div className="rounded-2xl border border-slate-800/70 bg-slate-900/50 px-4 py-5 text-sm text-slate-400">

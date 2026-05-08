@@ -3,7 +3,6 @@ import {
   AlertTriangle,
   ArrowDownRight,
   ArrowUpRight,
-  CalendarDays,
   CheckCircle2,
   TrendingUp,
 } from 'lucide-react';
@@ -701,17 +700,6 @@ export default function MonitoreoInicio() {
               <h2 className={`text-[1.65rem] font-extrabold tracking-tight leading-tight ${isLightTheme ? 'text-slate-900' : 'text-[#eef4fb]'}`}>Dashboard de Monitoreo</h2>
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                className={`inline-flex h-9 items-center gap-2 rounded-lg border px-3.5 text-sm font-semibold transition ${
-                  isLightTheme
-                    ? 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
-                    : 'border-[#2c4a62] bg-[#111922] text-[#d7e5f3] hover:bg-[#18232f]'
-                }`}
-              >
-                <CalendarDays size={16} />
-                Exportar Datos
-              </button>
               <button
                 type="button"
                 onClick={() => setAppliedFilters({ ...pendingFilters })}
