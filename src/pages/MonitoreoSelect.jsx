@@ -47,7 +47,7 @@ const resolveTemplateDisplayStatus = (template) => {
       status,
       statusType: 'draft',
       statusText: status === 'active' ? 'Borrador activo' : 'Borrador',
-      sortRank: 1,
+      sortRank: 3,
     };
   }
 
@@ -56,9 +56,9 @@ const resolveTemplateDisplayStatus = (template) => {
     return { status, statusType: 'active', statusText: statusLabel(status), sortRank: 0 };
   }
   if (status === 'closed') {
-    return { status, statusType: 'closed', statusText: statusLabel(status), sortRank: 3 };
+    return { status, statusType: 'closed', statusText: statusLabel(status), sortRank: 2 };
   }
-  return { status, statusType: 'scheduled', statusText: statusLabel(status), sortRank: 2 };
+  return { status, statusType: 'scheduled', statusText: statusLabel(status), sortRank: 1 };
 };
 
 const compareTemplatesForDisplay = (left, right) => {
@@ -463,7 +463,7 @@ export default function MonitoreoSelect() {
       { id: 'all', label: 'Total', count: dashboardMetrics.total },
       { id: 'active', label: 'Activos', count: dashboardMetrics.active },
       { id: 'scheduled', label: 'Programados', count: dashboardMetrics.scheduled },
-      { id: 'closed', label: 'Cerrados', count: dashboardMetrics.closed },
+      { id: 'closed', label: 'Vencidos', count: dashboardMetrics.closed },
     ];
     if (isAdmin) tabs.push({ id: 'draft', label: 'Borradores', count: dashboardMetrics.drafts });
     return tabs;
@@ -491,9 +491,7 @@ export default function MonitoreoSelect() {
         if (sortMode === 'questions') {
           return countQuestions(right.sections) - countQuestions(left.sections);
         }
-        const leftCreated = new Date(left.created_at || left.createdAt || left.updated_at || 0).getTime();
-        const rightCreated = new Date(right.created_at || right.createdAt || right.updated_at || 0).getTime();
-        return rightCreated - leftCreated;
+        return compareTemplatesForDisplay(left, right);
       });
   }, [searchTerm, sortMode, statusFilter, visibleTemplates]);
 
@@ -1011,7 +1009,7 @@ export default function MonitoreoSelect() {
             </span>
           </div>
           <p className={`text-[11px] uppercase tracking-[0.14em] ${isLightTheme ? 'text-slate-500' : 'text-slate-400'}`}>
-            Cerrados
+            Vencidos
           </p>
           <p className={`mt-1 text-[1.65rem] font-semibold leading-none ${isLightTheme ? 'text-slate-900' : 'text-slate-100'}`}>
             {dashboardMetrics.closed}
@@ -1138,21 +1136,17 @@ export default function MonitoreoSelect() {
             const deadline = getDeadlineBadge(template?.availability?.endAt);
 
             const primaryActionLabel = isActive
-              ? 'Usar plantilla'
+              ? 'Registrar ficha'
               : status === 'closed'
-                ? 'Ver resultados'
+                ? 'Vencido'
                 : 'Programado';
             const primaryActionVariant = isActive
               ? 'primary'
               : status === 'closed'
-                ? 'neutral'
+                ? 'blocked'
                 : 'muted';
-            const primaryActionDisabled = !isActive && status !== 'closed';
-            const onPrimaryAction = isActive
-              ? () => handleUseTemplate(template)
-              : status === 'closed'
-                ? () => navigate('/monitoreo/reportes')
-                : undefined;
+            const primaryActionDisabled = !isActive;
+            const onPrimaryAction = isActive ? () => handleUseTemplate(template) : undefined;
 
             const onEdit = isAdmin ? () => navigate(`/monitoreo/plantillas/${template.id}`) : undefined;
             const onDuplicate = isAdmin ? () => handleDuplicate(template) : undefined;

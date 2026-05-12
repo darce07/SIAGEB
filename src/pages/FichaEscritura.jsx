@@ -1,5 +1,16 @@
 import { useCallback, useContext, useEffect, useMemo, useReducer, useRef, useState } from 'react';
-import { CheckCircle2, RefreshCw, Save } from 'lucide-react';
+import {
+  ArrowLeft,
+  Check,
+  CheckCircle2,
+  Clock,
+  History,
+  Info,
+  RefreshCw,
+  RotateCcw,
+  Save,
+  TrendingUp,
+} from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
 import Card from '../components/ui/Card.jsx';
 import ConfirmModal from '../components/ui/ConfirmModal.jsx';
@@ -488,6 +499,125 @@ const formatInstitutionLevel = (value) => {
   return '-';
 };
 
+const getTemplateScope = (template) =>
+  template?.levelsConfig?.scope || template?.levels_config?.scope || {};
+
+const isCddTemplate = (template) =>
+  String(getTemplateScope(template)?.cdd || '').trim().toLowerCase() === 'si';
+
+const getCddArea = (template) => String(getTemplateScope(template)?.cddArea || '').trim();
+
+const normalizeMetricKey = (value) =>
+  String(value || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+
+const parseMetricNumber = (value) => {
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'object') {
+    return parseMetricNumber(
+      value.value ?? value.answer ?? value.valor ?? value.score ?? value.level ?? value.meta ?? value.avance,
+    );
+  }
+  const normalized = String(value).replace(',', '.').replace(/[^\d.-]/g, '');
+  if (!normalized) return null;
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const isCddMetaKey = (value) => {
+  const normalized = normalizeMetricKey(value);
+  return normalized.includes('meta') || normalized.includes('objetivo');
+};
+
+const isCddAdvanceKey = (value) => {
+  const normalized = normalizeMetricKey(value);
+  return (
+    normalized.includes('avance') ||
+    normalized.includes('logrado') ||
+    normalized.includes('real') ||
+    normalized.includes('cumplimiento')
+  );
+};
+
+const findMetricValueInObject = (source, matcher) => {
+  if (!source || typeof source !== 'object') return null;
+  for (const [key, value] of Object.entries(source)) {
+    if (matcher(key)) {
+      const parsed = parseMetricNumber(value);
+      if (parsed !== null) return parsed;
+    }
+    if (value && typeof value === 'object') {
+      const nested = findMetricValueInObject(value, matcher);
+      if (nested !== null) return nested;
+    }
+  }
+  return null;
+};
+
+const getCddMetricQuestionIds = (sections) => {
+  const result = { meta: '', avance: '' };
+  (sections || []).forEach((section) => {
+    (section?.questions || []).forEach((question) => {
+      const label = `${question?.id || ''} ${question?.text || ''}`;
+      if (!result.meta && isCddMetaKey(label)) result.meta = question.id;
+      if (!result.avance && isCddAdvanceKey(label)) result.avance = question.id;
+    });
+  });
+  return result;
+};
+
+const getCddStatusMeta = (progress) => {
+  if (progress >= 100) {
+    return {
+      key: 'completed',
+      label: 'Completado',
+      badgeClass: 'border-emerald-300 bg-emerald-100 text-emerald-900 shadow-sm dark:border-emerald-300/70 dark:bg-emerald-300 dark:text-emerald-950',
+      dotClass: 'bg-emerald-600 dark:bg-emerald-900',
+    };
+  }
+  if (progress > 0) {
+    return {
+      key: 'in_progress',
+      label: 'En proceso',
+      badgeClass: 'border-amber-300 bg-amber-100 text-amber-950 shadow-sm dark:border-amber-200/80 dark:bg-amber-300 dark:text-amber-950',
+      dotClass: 'bg-amber-600 dark:bg-amber-900',
+    };
+  }
+  return {
+    key: 'pending',
+    label: 'Pendiente',
+    badgeClass: 'border-rose-300 bg-rose-100 text-rose-900 shadow-sm dark:border-rose-300/80 dark:bg-rose-300 dark:text-rose-950',
+    dotClass: 'bg-rose-600 dark:bg-rose-900',
+  };
+};
+
+const formatCddDateTime = (value) => {
+  if (!value) return 'Sin registro';
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return String(value);
+  return new Intl.DateTimeFormat('es-PE', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(parsed);
+};
+
+const formatCddDate = (value) => {
+  if (!value) return 'Sin registro';
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return String(value);
+  return new Intl.DateTimeFormat('es-PE', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  }).format(parsed);
+};
+
 export default function FichaEscritura() {
   const { activeSection, setActiveSection } = useContext(SidebarContext);
   const location = useLocation();
@@ -847,6 +977,72 @@ export default function FichaEscritura() {
     return Math.round((completed / total) * 100);
   }, [formNavItems]);
 
+  const isCddMonitoreo = useMemo(() => isCddTemplate(selectedTemplate), [selectedTemplate]);
+
+  const cddMetricQuestionIds = useMemo(
+    () => getCddMetricQuestionIds(templateSections),
+    [templateSections],
+  );
+
+  const authDisplayName = useMemo(() => {
+    try {
+      const auth = JSON.parse(localStorage.getItem('monitoreoAuth'));
+      return String(auth?.name || auth?.fullName || auth?.email || auth?.docNumber || '').trim();
+    } catch {
+      return '';
+    }
+  }, []);
+
+  const cddMetricFallbacks = useMemo(() => {
+    const data = serializeState(state);
+    let meta = findMetricValueInObject(data, isCddMetaKey);
+    let avance = findMetricValueInObject(data, isCddAdvanceKey);
+    if (meta === null && cddMetricQuestionIds.meta) {
+      meta = parseMetricNumber(state.questions?.[cddMetricQuestionIds.meta]);
+    }
+    if (avance === null && cddMetricQuestionIds.avance) {
+      avance = parseMetricNumber(state.questions?.[cddMetricQuestionIds.avance]);
+    }
+    return {
+      meta: meta !== null && meta > 0 ? meta : 100,
+      avance: avance !== null && avance >= 0 ? avance : 0,
+    };
+  }, [cddMetricQuestionIds, state]);
+
+  const cddMetaValue = String(state.dynamicFields?.cddMeta ?? cddMetricFallbacks.meta ?? 100);
+  const cddAvanceValue = String(state.dynamicFields?.cddAvance ?? cddMetricFallbacks.avance ?? 0);
+  const cddMetaNumber = parseMetricNumber(cddMetaValue) || 0;
+  const cddAvanceNumber = parseMetricNumber(cddAvanceValue) || 0;
+  const cddProgress = cddMetaNumber > 0
+    ? Math.max(0, Math.min(100, (cddAvanceNumber / cddMetaNumber) * 100))
+    : 0;
+  const cddProgressLabel = `${Number(cddProgress.toFixed(1)).toLocaleString('es-PE')}%`;
+  const cddStatusMeta = getCddStatusMeta(cddProgress);
+  const cddResponsableValue =
+    state.dynamicFields?.cddResponsable ||
+    state.header?.director ||
+    state.header?.docente ||
+    authDisplayName ||
+    'Responsable no registrado';
+  const cddFechaValue =
+    state.dynamicFields?.cddFechaActualizacion ||
+    state.cierre?.fecha ||
+    new Date().toISOString().slice(0, 10);
+  const cddObservacionValue = state.dynamicFields?.cddObservacion || state.general?.observacion || '';
+
+  const updateCddMetric = useCallback((field, value) => {
+    const dynamicField = field === 'meta' ? 'cddMeta' : 'cddAvance';
+    dispatch({ type: 'UPDATE_DYNAMIC_FIELD', field: dynamicField, value });
+    const questionId = cddMetricQuestionIds[field];
+    if (questionId) {
+      dispatch({
+        type: 'UPDATE_QUESTION',
+        id: questionId,
+        payload: { answer: value },
+      });
+    }
+  }, [cddMetricQuestionIds]);
+
   const scrollToSection = useCallback((sectionId) => {
     const element = document.getElementById(sectionId);
     if (!element) return;
@@ -1156,7 +1352,18 @@ export default function FichaEscritura() {
     const errors = {};
     const headerErrors = {};
 
-    if (isBuilderTemplate) {
+    if (isCddMonitoreo) {
+      if (cddMetaNumber <= 0) {
+        setToast('La meta debe ser mayor que 0.');
+        setIsSaving(false);
+        return;
+      }
+      if (cddAvanceNumber < 0) {
+        setToast('El avance no puede ser negativo.');
+        setIsSaving(false);
+        return;
+      }
+    } else if (isBuilderTemplate) {
       activeHeaderFieldIds.forEach((fieldId) => {
         const binding = BUILDER_HEADER_BINDINGS[fieldId];
         if (binding?.area === 'header') {
@@ -1189,33 +1396,37 @@ export default function FichaEscritura() {
       if (!state.header.area) headerErrors.area = 'Requerido';
     }
 
-    if (Object.keys(headerErrors).length > 0) errors.header = headerErrors;
+    if (!isCddMonitoreo && Object.keys(headerErrors).length > 0) errors.header = headerErrors;
 
     const questionErrors = {};
-    allQuestions.forEach((question) => {
-      const data = state.questions[question.id] || {};
-      const kind = resolveQuestionKind(question);
-      const required = question.required !== false;
-      if (!required) return;
+    if (!isCddMonitoreo) {
+      allQuestions.forEach((question) => {
+        const data = state.questions[question.id] || {};
+        const kind = resolveQuestionKind(question);
+        const required = question.required !== false;
+        if (!required) return;
 
-      if (!data.answer && kind !== 'yes_no_levels') {
-        questionErrors[question.id] = 'Respuesta requerida.';
-        return;
-      }
+        if (!data.answer && kind !== 'yes_no_levels') {
+          questionErrors[question.id] = 'Respuesta requerida.';
+          return;
+        }
 
-      if (!data.answer && kind === 'yes_no_levels') {
-        questionErrors[question.id] = 'Selecciona Si o No.';
-        return;
-      }
+        if (!data.answer && kind === 'yes_no_levels') {
+          questionErrors[question.id] = 'Selecciona Si o No.';
+          return;
+        }
 
-      if (kind === 'yes_no_levels' && data.answer === 'SI' && (data.level === null || data.level === undefined || data.level === '')) {
-        questionErrors[question.id] = 'Selecciona un nivel de logro.';
-      }
-    });
-    if (Object.keys(questionErrors).length > 0) errors.questions = questionErrors;
+        if (kind === 'yes_no_levels' && data.answer === 'SI' && (data.level === null || data.level === undefined || data.level === '')) {
+          questionErrors[question.id] = 'Selecciona un nivel de logro.';
+        }
+      });
+      if (Object.keys(questionErrors).length > 0) errors.questions = questionErrors;
+    }
 
     const cierreErrors = {};
-    if (isBuilderTemplate) {
+    if (isCddMonitoreo) {
+      // Las fichas CdD se validan por KPI, no por el formulario operativo tradicional.
+    } else if (isBuilderTemplate) {
       activeClosingFieldIds.forEach((fieldId) => {
         const binding = BUILDER_CLOSING_BINDINGS[fieldId];
         if (binding?.area === 'general') {
@@ -1235,16 +1446,18 @@ export default function FichaEscritura() {
       if (!state.cierre.lugar) cierreErrors.lugar = 'Requerido';
       if (!state.cierre.fecha) cierreErrors.fecha = 'Requerido';
     }
-    if (Object.keys(cierreErrors).length > 0) errors.cierre = cierreErrors;
+    if (!isCddMonitoreo && Object.keys(cierreErrors).length > 0) errors.cierre = cierreErrors;
 
     const firmasErrors = {};
-    if (!isBuilderTemplate || activeClosingFieldIds.includes('dni_monitored')) {
-      if (!state.firmas.docente.dni) firmasErrors.docenteDni = 'Requerido';
+    if (!isCddMonitoreo) {
+      if (!isBuilderTemplate || activeClosingFieldIds.includes('dni_monitored')) {
+        if (!state.firmas.docente.dni) firmasErrors.docenteDni = 'Requerido';
+      }
+      if (!isBuilderTemplate || activeClosingFieldIds.includes('dni_monitor')) {
+        if (!state.firmas.monitor.dni) firmasErrors.monitorDni = 'Requerido';
+      }
+      if (Object.keys(firmasErrors).length > 0) errors.firmas = firmasErrors;
     }
-    if (!isBuilderTemplate || activeClosingFieldIds.includes('dni_monitor')) {
-      if (!state.firmas.monitor.dni) firmasErrors.monitorDni = 'Requerido';
-    }
-    if (Object.keys(firmasErrors).length > 0) errors.firmas = firmasErrors;
 
     const hasValidationErrors = Object.keys(errors).length > 0;
     dispatch({ type: 'SET_ERRORS', payload: errors });
@@ -1281,7 +1494,7 @@ export default function FichaEscritura() {
         await upsertInstance({
           ...instanceToSave,
           updated_at: now,
-          status: instanceToSave.status || 'in_progress',
+          status: isCddMonitoreo ? cddStatusMeta.key : instanceToSave.status || 'in_progress',
           data: serializeStateWithSheet(state, selectedSheetId),
         });
       } catch (error) {
@@ -1524,6 +1737,270 @@ export default function FichaEscritura() {
             {returnContext.label}
           </Link>
         </Card>
+      </div>
+    );
+  }
+
+  if (isCddMonitoreo) {
+    const detailItems = [
+      ['Estado', cddStatusMeta.label],
+      ['Responsable', cddResponsableValue],
+      ['Area', getCddArea(selectedTemplate) || state.header?.area || 'No definida'],
+      ['Codigo', state.meta?.sessionId || 'Sin codigo'],
+      ['Ficha', selectedSheetLabel || 'Indicador CdD'],
+    ];
+    const auditItems = [
+      ['Creado', formatCddDate(activeInstance?.created_at)],
+      ['Guardado', formatCddDate(state.meta?.lastSavedAt || activeInstance?.updated_at)],
+    ];
+    const historyItems = [
+      {
+        title: `Avance actualizado a ${cddAvanceNumber || 0}`,
+        detail: `${formatCddDate(cddFechaValue)} · ${cddResponsableValue}`,
+        active: true,
+      },
+      {
+        title: `Meta registrada en ${cddMetaNumber || 0}`,
+        detail: formatCddDate(activeInstance?.created_at || cddFechaValue),
+      },
+      {
+        title: 'Ficha creada',
+        detail: `${formatCddDate(activeInstance?.created_at)} · Administracion Central`,
+      },
+    ];
+
+    return (
+      <div className="relative flex flex-col gap-6 pb-[calc(8.5rem+env(safe-area-inset-bottom,0px))] text-slate-900 dark:text-slate-100">
+        <section className="rounded-[28px] border border-slate-200/80 bg-[#f6fafe] p-5 shadow-sm dark:border-[#a9927d]/35 dark:bg-[#22333b] sm:p-6 lg:p-8">
+          <div className="mb-7 flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
+            <div className="min-w-0">
+              <Link
+                to={returnContext.path}
+                className="mb-4 inline-flex items-center gap-2 text-sm font-semibold text-cyan-700 transition hover:text-cyan-600 dark:text-cyan-200 dark:hover:text-cyan-100"
+              >
+                <ArrowLeft size={16} />
+                Volver a fichas CdD
+              </Link>
+              <div className="flex flex-wrap items-center gap-3">
+                <h1 className="max-w-4xl text-xl font-extrabold leading-snug tracking-tight text-slate-950 dark:text-slate-50 lg:text-3xl">
+                  {formTitle}
+                </h1>
+                <span className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-bold uppercase tracking-[0.08em] ${cddStatusMeta.badgeClass}`}>
+                  <span className={`h-1.5 w-1.5 rounded-full ${cddStatusMeta.dotClass}`} />
+                  {cddStatusMeta.label}
+                </span>
+              </div>
+              <p className="mt-2 text-base text-slate-600 dark:text-slate-300">
+                {selectedSheetLabel || 'Indicador CdD'} · Compromiso de Desempeño
+              </p>
+              <p className="mt-2 inline-flex items-center gap-2 text-sm text-slate-500 dark:text-slate-400">
+                <Clock size={15} />
+                Última actualización: {formatCddDateTime(state.meta?.lastSavedAt || activeInstance?.updated_at || cddFechaValue)}
+              </p>
+            </div>
+          </div>
+
+          <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
+            <div className="space-y-6">
+              <Card className="border-slate-200/80 bg-white/95 p-5 shadow-[0_18px_40px_rgba(15,23,42,0.06)] dark:border-[#a9927d]/35 dark:bg-[#151c23] sm:p-6">
+                <div className="grid gap-5 sm:grid-cols-3">
+                  {[
+                    ['Meta', cddMetaNumber || 0, 'text-slate-950 dark:text-slate-50'],
+                    ['Avance', cddAvanceNumber || 0, 'text-cyan-700 dark:text-cyan-200'],
+                    ['Cumplimiento', cddProgressLabel, 'text-cyan-600 dark:text-cyan-200'],
+                  ].map(([label, value, className]) => (
+                    <div key={label} className="rounded-2xl border border-slate-100 bg-slate-50/80 p-4 dark:border-white/10 dark:bg-white/5">
+                      <p className="text-xs font-bold uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">{label}</p>
+                      <p className={`mt-2 text-3xl font-extrabold tracking-tight ${className}`}>{value}</p>
+                    </div>
+                  ))}
+                </div>
+                <div className="mt-6 space-y-3">
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="font-semibold text-slate-700 dark:text-slate-200">Progreso actual del compromiso</span>
+                    <span className="font-bold text-cyan-700 dark:text-cyan-200">{cddAvanceNumber || 0}/{cddMetaNumber || 0}</span>
+                  </div>
+                  <div className="h-3 overflow-hidden rounded-full bg-slate-100 dark:bg-white/10">
+                    <div
+                      className="h-full rounded-full bg-cyan-500 shadow-[0_0_16px_rgba(6,182,212,0.25)]"
+                      style={{ width: `${cddProgress}%` }}
+                    />
+                  </div>
+                </div>
+              </Card>
+
+              <Card className="overflow-hidden border-slate-200/80 bg-white/95 p-0 shadow-[0_18px_40px_rgba(15,23,42,0.06)] dark:border-[#a9927d]/35 dark:bg-[#151c23]">
+                <div className="border-b border-slate-100 bg-slate-50/70 px-5 py-4 dark:border-white/10 dark:bg-white/5 sm:px-6">
+                  <h2 className="text-lg font-extrabold text-slate-950 dark:text-slate-50">Actualizar avance</h2>
+                  <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Actualiza solo los valores ejecutivos del compromiso.</p>
+                </div>
+                <fieldset disabled={isReadOnly} className="grid gap-5 p-5 sm:grid-cols-2 sm:p-6">
+                  <label className="space-y-2">
+                    <span className="text-xs font-bold uppercase tracking-[0.16em] text-slate-500 dark:text-slate-400">Meta</span>
+                    <input
+                      type="number"
+                      value={cddMetaValue}
+                      onChange={(event) => updateCddMetric('meta', event.target.value)}
+                      className="h-[52px] w-full rounded-2xl border border-slate-200 bg-white px-4 text-xl font-extrabold text-slate-950 shadow-sm outline-none transition focus:border-cyan-500 focus:ring-4 focus:ring-cyan-100 dark:border-[#a9927d]/45 dark:bg-[#22333b] dark:text-slate-50 dark:focus:ring-cyan-400/15"
+                    />
+                  </label>
+                  <label className="space-y-2">
+                    <span className="text-xs font-bold uppercase tracking-[0.16em] text-slate-500 dark:text-slate-400">Avance actual</span>
+                    <input
+                      type="number"
+                      value={cddAvanceValue}
+                      onChange={(event) => updateCddMetric('avance', event.target.value)}
+                      className="h-[52px] w-full rounded-2xl border border-cyan-200 bg-cyan-50/70 px-4 text-xl font-extrabold text-cyan-700 shadow-sm outline-none transition focus:border-cyan-500 focus:ring-4 focus:ring-cyan-100 dark:border-cyan-400/30 dark:bg-cyan-400/10 dark:text-cyan-100 dark:focus:ring-cyan-400/15"
+                    />
+                  </label>
+                  <label className="space-y-2">
+                    <span className="text-xs font-bold uppercase tracking-[0.16em] text-slate-500 dark:text-slate-400">Fecha de actualización</span>
+                    <input
+                      type="date"
+                      value={cddFechaValue}
+                      onChange={(event) => dispatch({ type: 'UPDATE_DYNAMIC_FIELD', field: 'cddFechaActualizacion', value: event.target.value })}
+                      className="h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-800 outline-none transition focus:border-cyan-500 focus:ring-4 focus:ring-cyan-100 dark:border-[#a9927d]/45 dark:bg-[#22333b] dark:text-slate-100 dark:focus:ring-cyan-400/15"
+                    />
+                  </label>
+                  <label className="space-y-2">
+                    <span className="text-xs font-bold uppercase tracking-[0.16em] text-slate-500 dark:text-slate-400">Responsable</span>
+                    <input
+                      value={cddResponsableValue}
+                      onChange={(event) => dispatch({ type: 'UPDATE_DYNAMIC_FIELD', field: 'cddResponsable', value: event.target.value })}
+                      className="h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-800 outline-none transition focus:border-cyan-500 focus:ring-4 focus:ring-cyan-100 dark:border-[#a9927d]/45 dark:bg-[#22333b] dark:text-slate-100 dark:focus:ring-cyan-400/15"
+                    />
+                  </label>
+                  <label className="space-y-2 sm:col-span-2">
+                    <span className="text-xs font-bold uppercase tracking-[0.16em] text-slate-500 dark:text-slate-400">Observación</span>
+                    <textarea
+                      rows={4}
+                      value={cddObservacionValue}
+                      onChange={(event) => dispatch({ type: 'UPDATE_DYNAMIC_FIELD', field: 'cddObservacion', value: event.target.value })}
+                      placeholder="Añada notas breves sobre el avance, evidencias o alertas relevantes..."
+                      className="w-full resize-none rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-cyan-500 focus:ring-4 focus:ring-cyan-100 dark:border-[#a9927d]/45 dark:bg-[#22333b] dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:ring-cyan-400/15"
+                    />
+                  </label>
+                </fieldset>
+              </Card>
+
+              <Card className="border-slate-200/80 bg-white/95 p-5 shadow-[0_18px_40px_rgba(15,23,42,0.06)] dark:border-[#a9927d]/35 dark:bg-[#151c23] sm:p-6">
+                <div className="mb-5 flex items-center gap-2">
+                  <History size={20} className="text-cyan-600 dark:text-cyan-200" />
+                  <h2 className="text-lg font-extrabold text-slate-950 dark:text-slate-50">Historial de avances</h2>
+                </div>
+                <div className="relative space-y-7 before:absolute before:left-[9px] before:top-2 before:h-[calc(100%-1rem)] before:w-0.5 before:-translate-x-1/2 before:rounded-full before:bg-cyan-500 dark:before:bg-cyan-300">
+                  {historyItems.map((item) => (
+                    <div key={`${item.title}-${item.detail}`} className="relative grid grid-cols-[18px_minmax(0,1fr)] items-start gap-4">
+                      <span className="z-10 mt-1.5 flex h-[18px] w-[18px] items-center justify-center rounded-full border-2 border-cyan-600 bg-cyan-600 shadow-sm dark:border-cyan-300 dark:bg-cyan-400">
+                        {item.active ? (
+                          <span className="h-[14px] w-[14px] animate-pulse rounded-full border-[3px] border-cyan-600 bg-white shadow-[0_0_8px_rgba(8,182,212,0.45)] dark:border-cyan-400 dark:bg-[#151c23]" />
+                        ) : (
+                          <Check size={12} strokeWidth={3} className="text-white dark:text-[#151c23]" />
+                        )}
+                      </span>
+                      <div>
+                        <p className={`font-bold ${item.active ? 'text-cyan-700 dark:text-cyan-200' : 'text-slate-700 dark:text-slate-200'}`}>{item.title}</p>
+                        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{item.detail}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </Card>
+            </div>
+
+            <aside className="xl:sticky xl:top-24 xl:h-fit">
+              <Card className="border-slate-200/80 bg-white/95 p-5 shadow-[0_18px_40px_rgba(15,23,42,0.06)] dark:border-[#a9927d]/35 dark:bg-[#151c23] sm:p-6">
+                <div className="mb-5 flex items-center justify-between border-b border-slate-100 pb-4 dark:border-white/10">
+                  <h2 className="text-lg font-extrabold text-slate-950 dark:text-slate-50">Detalles de la ficha</h2>
+                  <Info size={20} className="text-slate-400 dark:text-slate-500" />
+                </div>
+                <div className="space-y-4">
+                  {detailItems.map(([label, value]) => (
+                    <div key={label} className="rounded-2xl border border-slate-100 bg-slate-50/75 p-4 dark:border-white/10 dark:bg-white/5">
+                      <p className="text-xs font-bold uppercase tracking-[0.18em] text-slate-400 dark:text-slate-500">{label}</p>
+                      {label === 'Estado' ? (
+                        <span className={`mt-2 inline-flex w-fit items-center gap-2 rounded-full border px-2.5 py-1 text-[11px] font-black uppercase tracking-[0.08em] ${cddStatusMeta.badgeClass}`}>
+                          <span className={`h-1.5 w-1.5 rounded-full ${cddStatusMeta.dotClass}`} />
+                          {value}
+                        </span>
+                      ) : (
+                        <p className="mt-1 text-sm font-bold text-slate-900 dark:text-slate-100">{value}</p>
+                      )}
+                    </div>
+                  ))}
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    {auditItems.map(([label, value]) => (
+                      <div key={label} className="rounded-2xl border border-slate-100 bg-slate-50/75 p-4 dark:border-white/10 dark:bg-white/5">
+                        <p className="text-xs font-bold uppercase tracking-[0.18em] text-slate-400 dark:text-slate-500">{label}</p>
+                        <p className="mt-1 text-sm font-bold text-slate-900 dark:text-slate-100">{value}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div className="mt-5 rounded-2xl border border-cyan-100 bg-cyan-50/70 p-4 dark:border-cyan-400/20 dark:bg-cyan-400/10">
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-cyan-500 text-white">
+                      <TrendingUp size={20} />
+                    </div>
+                    <div>
+                      <p className="text-sm font-black text-slate-950 dark:text-slate-50">Seguimiento ejecutivo</p>
+                      <p className="text-xs text-slate-500 dark:text-slate-400">Meta, avance y cumplimiento en una sola ficha CdD.</p>
+                    </div>
+                  </div>
+                </div>
+              </Card>
+            </aside>
+          </div>
+        </section>
+
+        {!isReadOnly ? (
+          <div className="fixed bottom-[calc(0.75rem+env(safe-area-inset-bottom,0px))] left-1/2 z-50 w-[min(980px,calc(100vw-1.5rem))] -translate-x-1/2">
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white/92 px-4 py-3 shadow-[0_18px_50px_rgba(15,23,42,0.18)] backdrop-blur-md dark:border-[#a9927d]/35 dark:bg-[#151c23]/92">
+              <div className="flex items-center gap-3 text-sm font-semibold">
+                <span className={`h-2.5 w-2.5 rounded-full ${state.meta.saved ? 'bg-emerald-500' : 'bg-amber-500 animate-pulse'}`} />
+                <span className="text-slate-700 dark:text-slate-200">
+                  {state.meta.saved ? 'Guardado correctamente' : 'Cambios sin guardar'}
+                </span>
+              </div>
+              <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={handleReset}
+                  className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-4 py-2 text-sm font-bold text-slate-600 transition hover:bg-slate-50 dark:border-white/10 dark:text-slate-200 dark:hover:bg-white/5"
+                >
+                  <RotateCcw size={16} />
+                  Restablecer
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSave}
+                  disabled={isSaving}
+                  className="inline-flex items-center gap-2 rounded-xl bg-cyan-600 px-5 py-2 text-sm font-black text-white shadow-lg shadow-cyan-600/20 transition hover:bg-cyan-500 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {isSaving ? <RefreshCw size={16} className="animate-spin" /> : <Save size={16} />}
+                  {isSaving ? 'Guardando...' : 'Guardar cambios'}
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        <ConfirmModal
+          open={isResetConfirmOpen}
+          tone="warning"
+          title="Limpiar ficha CdD"
+          description="Se limpiaran los valores editados de esta ficha CdD. Deseas continuar?"
+          confirmText="Si, limpiar"
+          cancelText="Cancelar"
+          onCancel={() => setIsResetConfirmOpen(false)}
+          onConfirm={handleConfirmReset}
+        />
+
+        <Toast
+          message={toast}
+          onClose={() => setToast('')}
+          positionClass="bottom-[calc(5.75rem+env(safe-area-inset-bottom,0px))] right-6"
+        />
       </div>
     );
   }
@@ -2358,7 +2835,11 @@ export default function FichaEscritura() {
         onConfirm={handleConfirmReset}
       />
 
-      <Toast message={toast} onClose={() => setToast('')} />
+      <Toast
+        message={toast}
+        onClose={() => setToast('')}
+        positionClass="bottom-[calc(5.75rem+env(safe-area-inset-bottom,0px))] right-6"
+      />
     </div>
   );
 }

@@ -5,13 +5,17 @@ import {
   CheckCircle2,
   Eye,
   EyeOff,
+  KeyRound,
   LayoutDashboard,
   LogIn,
   Loader2,
   Lock,
+  Mail,
   Moon,
+  ShieldCheck,
   Sun,
   Users,
+  X,
 } from 'lucide-react';
 import { isSupabaseConfigured, supabase } from '../lib/supabase.js';
 
@@ -58,19 +62,17 @@ export default function Login() {
     docNumber: '',
   });
   const [isRecoveryOpen, setIsRecoveryOpen] = useState(false);
-  const [isRecoveryStatusLoading, setIsRecoveryStatusLoading] = useState(false);
   const [isRecoverySubmitting, setIsRecoverySubmitting] = useState(false);
-  const [recoveryStatus, setRecoveryStatus] = useState({
-    activeAdmins: null,
-    loginCapableAdmins: null,
-    recoverable: false,
-  });
   const [recoveryError, setRecoveryError] = useState('');
   const [recoverySuccess, setRecoverySuccess] = useState('');
-  const [recoveryForm, setRecoveryForm] = useState({
-    email: '',
+  const [recoveryEmail, setRecoveryEmail] = useState('');
+  const [isPasswordResetOpen, setIsPasswordResetOpen] = useState(false);
+  const [isPasswordResetSubmitting, setIsPasswordResetSubmitting] = useState(false);
+  const [passwordResetError, setPasswordResetError] = useState('');
+  const [passwordResetSuccess, setPasswordResetSuccess] = useState('');
+  const [passwordResetForm, setPasswordResetForm] = useState({
     password: '',
-    code: '',
+    confirmPassword: '',
   });
   const [loginTheme, setLoginTheme] = useState(() => {
     if (typeof window === 'undefined') return 'light';
@@ -212,6 +214,34 @@ export default function Login() {
     localStorage.removeItem(SESSION_LOGOUT_REASON_KEY);
   }, []);
 
+  useEffect(() => {
+    const { data } = supabase.auth.onAuthStateChange((event) => {
+      if (event === 'PASSWORD_RECOVERY') {
+        setIsRecoveryOpen(false);
+        setIsPasswordResetOpen(true);
+        setPasswordResetError('');
+        setPasswordResetSuccess('');
+      }
+    });
+
+    const openFromRecoveryLink = async () => {
+      if (typeof window === 'undefined') return;
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('recovery') !== '1') return;
+      const { data: sessionData } = await supabase.auth.getSession();
+      if (sessionData?.session?.access_token) {
+        setIsRecoveryOpen(false);
+        setIsPasswordResetOpen(true);
+      }
+    };
+
+    openFromRecoveryLink();
+
+    return () => {
+      data?.subscription?.unsubscribe?.();
+    };
+  }, []);
+
   const resolveLoginEmail = async () => {
     const loginInput = form.docType === 'CORREO' ? buildEmailFromForm() : form.docNumber.trim();
 
@@ -253,49 +283,18 @@ export default function Login() {
     return { email: lookupData.email, error: '' };
   };
 
-  const loadRecoveryStatus = async () => {
-    if (!isSupabaseConfigured) {
-      setRecoveryError('Supabase no esta configurado en este entorno.');
-      return;
-    }
-
-    setRecoveryError('');
-    setRecoverySuccess('');
-    setIsRecoveryStatusLoading(true);
-    try {
-      const { data, error: fnError } = await supabase.functions.invoke('admin-recovery', {
-        body: { action: 'status' },
-      });
-      if (fnError) {
-        setRecoveryError('No se pudo validar el estado de recuperacion.');
-        return;
-      }
-      const activeAdmins = Number(data?.activeAdmins || 0);
-      const loginCapableAdmins = Number(
-        data?.loginCapableAdmins !== undefined ? data?.loginCapableAdmins : data?.activeAdmins || 0,
-      );
-      setRecoveryStatus({
-        activeAdmins,
-        loginCapableAdmins,
-        recoverable: Boolean(data?.recoverable),
-      });
-    } finally {
-      setIsRecoveryStatusLoading(false);
-    }
-  };
-
-  const openRecoveryModal = async () => {
+  const openRecoveryModal = () => {
+    const emailFromLogin = form.docType === 'CORREO' ? buildEmailFromForm() : '';
     setIsRecoveryOpen(true);
     setRecoveryError('');
     setRecoverySuccess('');
-    await loadRecoveryStatus();
+    setRecoveryEmail((current) => current || emailFromLogin);
   };
 
   const closeRecoveryModal = () => {
     setIsRecoveryOpen(false);
     setRecoveryError('');
     setRecoverySuccess('');
-    setRecoveryForm({ email: '', password: '', code: '' });
   };
 
   const handleRecoverySubmit = async (event) => {
@@ -303,66 +302,91 @@ export default function Login() {
     setRecoveryError('');
     setRecoverySuccess('');
 
-    if (!recoveryStatus.recoverable) {
-      setRecoveryError('La recuperacion solo se habilita cuando no hay administradores con acceso.');
+    if (!isSupabaseConfigured) {
+      setRecoveryError('Supabase no esta configurado en este entorno.');
       return;
     }
 
-    const email = recoveryForm.email.trim().toLowerCase();
-    const password = recoveryForm.password;
-    const code = recoveryForm.code.trim();
-
+    const email = recoveryEmail.trim().toLowerCase();
     if (!email || !email.includes('@')) {
       setRecoveryError('Ingresa un correo valido.');
-      return;
-    }
-    if (!password || password.length < 6) {
-      setRecoveryError('La contrasena debe tener al menos 6 caracteres.');
-      return;
-    }
-    if (!code) {
-      setRecoveryError('Ingresa el codigo de recuperacion.');
       return;
     }
 
     setIsRecoverySubmitting(true);
     try {
-      const { data, error: fnError } = await supabase.functions.invoke('admin-recovery', {
-        body: {
-          action: 'recover',
-          email,
-          password,
-          code,
-        },
+      const { data: lookupData, error: lookupError } = await supabase.functions.invoke('auth-lookup', {
+        body: { email },
       });
 
-      if (fnError || !data?.success) {
-        const message = data?.error || 'No se pudo recuperar el acceso admin.';
-        setRecoveryError(message);
-        await loadRecoveryStatus();
+      if (lookupError) {
+        setRecoveryError('No se pudo validar el correo. Intenta nuevamente.');
+        return;
+      }
+      if (lookupData?.error || !lookupData?.email) {
+        setRecoveryError(String(lookupData?.error || 'No existe un usuario activo con ese correo.'));
         return;
       }
 
-      const requiresEmailVerification = Boolean(data?.requiresEmailVerification);
+      const redirectTo =
+        typeof window !== 'undefined' ? `${window.location.origin}/login?recovery=1` : undefined;
+      const { error: resetError } = await supabase.auth.resetPasswordForEmail(lookupData.email, {
+        redirectTo,
+      });
+
+      if (resetError) {
+        setRecoveryError(
+          resetError.message || 'No se pudo enviar el enlace de recuperacion. Verifica el correo e intenta nuevamente.',
+        );
+        return;
+      }
+
       setRecoverySuccess(
-        requiresEmailVerification
-          ? 'Cuenta admin creada/actualizada. Revisa tu correo y verifica la cuenta antes de iniciar sesion.'
-          : 'Acceso admin recuperado. Ahora inicia sesion con el correo recuperado.',
+        'Solicitud enviada. Si el correo no llega en unos minutos, revisa la configuracion SMTP de Supabase Auth.',
       );
-      setRole('admin');
-      const parsedEmail = parseEmailForFormState(email);
-      setForm((prev) => ({
-        ...prev,
-        docType: 'CORREO',
-        emailUser: parsedEmail.emailUser,
-        emailDomain: parsedEmail.emailDomain,
-        emailDomainCustom: parsedEmail.emailDomainCustom,
-        password,
-        docNumber: '',
-      }));
-      await loadRecoveryStatus();
     } finally {
       setIsRecoverySubmitting(false);
+    }
+  };
+
+  const closePasswordResetModal = async () => {
+    setIsPasswordResetOpen(false);
+    setPasswordResetError('');
+    setPasswordResetSuccess('');
+    setPasswordResetForm({ password: '', confirmPassword: '' });
+    await supabase.auth.signOut();
+  };
+
+  const handlePasswordResetSubmit = async (event) => {
+    event.preventDefault();
+    setPasswordResetError('');
+    setPasswordResetSuccess('');
+
+    if (passwordResetForm.password.length < 8) {
+      setPasswordResetError('La nueva contrasena debe tener al menos 8 caracteres.');
+      return;
+    }
+    if (passwordResetForm.password !== passwordResetForm.confirmPassword) {
+      setPasswordResetError('Las contrasenas no coinciden.');
+      return;
+    }
+
+    setIsPasswordResetSubmitting(true);
+    try {
+      const { error: updateError } = await supabase.auth.updateUser({
+        password: passwordResetForm.password,
+      });
+      if (updateError) {
+        setPasswordResetError('No se pudo actualizar la contrasena. Solicita un nuevo enlace.');
+        return;
+      }
+      setPasswordResetSuccess('Contrasena actualizada. Ya puedes iniciar sesion con tu nueva clave.');
+      setForm((prev) => ({ ...prev, password: '' }));
+      setTimeout(() => {
+        closePasswordResetModal();
+      }, 1800);
+    } finally {
+      setIsPasswordResetSubmitting(false);
     }
   };
 
@@ -836,87 +860,168 @@ export default function Login() {
 
       {isRecoveryOpen ? (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4 backdrop-blur-sm"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 p-4 backdrop-blur-sm"
           onClick={closeRecoveryModal}
         >
           <div
-            className="w-full max-w-md rounded-2xl border border-slate-700/70 bg-slate-900 p-5 shadow-2xl"
+            className={`w-full max-w-lg overflow-hidden rounded-2xl border shadow-2xl ${
+              isDarkTheme ? 'border-[#5e503f]/70 bg-[#17242a] text-slate-100' : 'border-slate-200 bg-white text-slate-900'
+            }`}
             onClick={(event) => event.stopPropagation()}
           >
-            <div className="flex items-center justify-between gap-3">
-              <p className="text-sm font-semibold text-slate-100">Recuperar acceso admin</p>
+            <div className={`flex items-center justify-between gap-3 border-b px-5 py-4 ${isDarkTheme ? 'border-[#5e503f]/60' : 'border-slate-200'}`}>
+              <div className="flex items-center gap-3">
+                <span className={`inline-flex h-10 w-10 items-center justify-center rounded-xl ${isDarkTheme ? 'bg-[#22333b] text-[#b5ca8d]' : 'bg-teal-50 text-teal-700'}`}>
+                  <KeyRound size={20} />
+                </span>
+                <div>
+                  <p className="text-base font-bold">Recuperar contraseña</p>
+                  <p className={`text-xs ${isDarkTheme ? 'text-slate-300' : 'text-slate-500'}`}>Enviaremos un enlace seguro a tu correo.</p>
+                </div>
+              </div>
               <button
                 type="button"
                 onClick={closeRecoveryModal}
-                className="rounded-lg border border-slate-700/60 px-2 py-1 text-xs text-slate-300"
+                className={`inline-flex h-9 w-9 items-center justify-center rounded-lg transition ${
+                  isDarkTheme ? 'text-slate-300 hover:bg-white/5 hover:text-white' : 'text-slate-500 hover:bg-slate-100 hover:text-slate-800'
+                }`}
+                aria-label="Cerrar"
               >
-                Cerrar
+                <X size={18} />
               </button>
             </div>
 
-            {isRecoveryStatusLoading ? (
-              <p className="mt-4 text-sm text-slate-400">Validando estado...</p>
-            ) : (
-              <div className="mt-4 rounded-xl border border-slate-700/70 bg-slate-950/60 px-3 py-2">
-                <p className="text-xs text-slate-300">
-                  Admins en perfil (activos): {recoveryStatus.activeAdmins ?? 'No registrado'}
-                </p>
-                <p className="mt-1 text-xs text-slate-300">
-                  Admins con acceso (login): {recoveryStatus.loginCapableAdmins ?? 'No registrado'}
-                </p>
-                <p className="mt-1 text-xs text-slate-500">
-                  {recoveryStatus.recoverable
-                    ? 'Recuperacion habilitada: no hay administradores con acceso.'
-                    : 'Recuperacion bloqueada: existe al menos un administrador con acceso.'}
+            <form onSubmit={handleRecoverySubmit} className="space-y-4 px-5 py-5">
+              <div className={`rounded-xl border px-4 py-3 ${
+                isDarkTheme ? 'border-[#5e503f]/60 bg-[#22333b]/70' : 'border-teal-100 bg-teal-50'
+              }`}>
+                <p className={`flex items-start gap-2 text-sm ${isDarkTheme ? 'text-slate-200' : 'text-slate-700'}`}>
+                  <ShieldCheck size={16} className={isDarkTheme ? 'mt-0.5 text-[#b5ca8d]' : 'mt-0.5 text-teal-700'} />
+                  Por seguridad no mostramos si el correo existe. Si está registrado, recibirá el enlace de recuperación.
                 </p>
               </div>
-            )}
 
-            <form onSubmit={handleRecoverySubmit} className="mt-4 space-y-3">
-              <label className="flex flex-col gap-1 text-xs text-slate-300">
-                Correo admin
+              <label className={`block text-xs font-bold uppercase tracking-[0.14em] ${isDarkTheme ? 'text-slate-300' : 'text-slate-500'}`}>
+                Correo institucional
+              </label>
+              <div className="relative">
+                <Mail size={17} className={`absolute left-3 top-1/2 -translate-y-1/2 ${isDarkTheme ? 'text-slate-400' : 'text-slate-500'}`} />
                 <input
                   type="email"
-                  value={recoveryForm.email}
-                  onChange={(event) => setRecoveryForm((prev) => ({ ...prev, email: event.target.value }))}
-                  className="h-9 rounded-xl border border-slate-700/60 bg-slate-900/70 px-3 text-sm text-slate-100 placeholder:text-slate-500"
-                  placeholder="admin@dominio.com"
+                  value={recoveryEmail}
+                  onChange={(event) => setRecoveryEmail(event.target.value)}
+                  className={`h-11 w-full rounded-xl border pl-10 pr-3 text-sm outline-none transition focus:border-teal-500 focus:ring-2 focus:ring-teal-500/20 ${
+                    isDarkTheme
+                      ? 'border-[#5e503f]/80 bg-[#0a0908]/40 text-slate-100 placeholder:text-slate-500'
+                      : 'border-slate-200 bg-slate-50 text-slate-800 placeholder:text-slate-400'
+                  }`}
+                  placeholder="usuario@ugel.gob.pe"
+                  autoComplete="email"
                 />
-              </label>
-
-              <label className="flex flex-col gap-1 text-xs text-slate-300">
-                Nueva contrasena
-                <input
-                  type="password"
-                  value={recoveryForm.password}
-                  onChange={(event) => setRecoveryForm((prev) => ({ ...prev, password: event.target.value }))}
-                  className="h-9 rounded-xl border border-slate-700/60 bg-slate-900/70 px-3 text-sm text-slate-100 placeholder:text-slate-500"
-                  placeholder="Min. 6 caracteres"
-                />
-              </label>
-
-              <label className="flex flex-col gap-1 text-xs text-slate-300">
-                Codigo de recuperacion
-                <input
-                  type="password"
-                  value={recoveryForm.code}
-                  onChange={(event) => setRecoveryForm((prev) => ({ ...prev, code: event.target.value }))}
-                  className="h-9 rounded-xl border border-slate-700/60 bg-slate-900/70 px-3 text-sm text-slate-100 placeholder:text-slate-500"
-                  placeholder="Codigo secreto"
-                />
-              </label>
+              </div>
 
               <button
                 type="submit"
-                disabled={isRecoverySubmitting || isRecoveryStatusLoading || !recoveryStatus.recoverable}
-                className="w-full rounded-xl bg-slate-100 py-2 text-sm font-semibold text-slate-900 transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
+                disabled={isRecoverySubmitting}
+                className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-teal-700 text-sm font-bold text-white shadow-lg shadow-teal-900/20 transition hover:bg-teal-800 disabled:cursor-not-allowed disabled:opacity-70"
               >
-                {isRecoverySubmitting ? 'Recuperando...' : 'Recuperar admin'}
+                {isRecoverySubmitting ? (
+                  <>
+                    <Loader2 size={16} className="animate-spin" />
+                    Enviando enlace...
+                  </>
+                ) : (
+                  'Enviar enlace de recuperación'
+                )}
               </button>
-            </form>
 
-            {recoveryError ? <p className="mt-3 text-xs text-rose-400">{recoveryError}</p> : null}
-            {recoverySuccess ? <p className="mt-3 text-xs text-emerald-300">{recoverySuccess}</p> : null}
+              {recoveryError ? <p className="text-sm text-rose-400">{recoveryError}</p> : null}
+              {recoverySuccess ? <p className="text-sm text-emerald-300">{recoverySuccess}</p> : null}
+            </form>
+          </div>
+        </div>
+      ) : null}
+
+      {isPasswordResetOpen ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 p-4 backdrop-blur-sm">
+          <div
+            className={`w-full max-w-lg overflow-hidden rounded-2xl border shadow-2xl ${
+              isDarkTheme ? 'border-[#5e503f]/70 bg-[#17242a] text-slate-100' : 'border-slate-200 bg-white text-slate-900'
+            }`}
+          >
+            <div className={`flex items-center justify-between gap-3 border-b px-5 py-4 ${isDarkTheme ? 'border-[#5e503f]/60' : 'border-slate-200'}`}>
+              <div className="flex items-center gap-3">
+                <span className={`inline-flex h-10 w-10 items-center justify-center rounded-xl ${isDarkTheme ? 'bg-[#22333b] text-[#b5ca8d]' : 'bg-teal-50 text-teal-700'}`}>
+                  <Lock size={20} />
+                </span>
+                <div>
+                  <p className="text-base font-bold">Nueva contraseña</p>
+                  <p className={`text-xs ${isDarkTheme ? 'text-slate-300' : 'text-slate-500'}`}>Define una clave segura para continuar.</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={closePasswordResetModal}
+                className={`inline-flex h-9 w-9 items-center justify-center rounded-lg transition ${
+                  isDarkTheme ? 'text-slate-300 hover:bg-white/5 hover:text-white' : 'text-slate-500 hover:bg-slate-100 hover:text-slate-800'
+                }`}
+                aria-label="Cerrar"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <form onSubmit={handlePasswordResetSubmit} className="space-y-4 px-5 py-5">
+              <label className={`block text-xs font-bold uppercase tracking-[0.14em] ${isDarkTheme ? 'text-slate-300' : 'text-slate-500'}`}>
+                Nueva contraseña
+              </label>
+              <input
+                type="password"
+                value={passwordResetForm.password}
+                onChange={(event) => setPasswordResetForm((prev) => ({ ...prev, password: event.target.value }))}
+                className={`h-11 w-full rounded-xl border px-3 text-sm outline-none transition focus:border-teal-500 focus:ring-2 focus:ring-teal-500/20 ${
+                  isDarkTheme
+                    ? 'border-[#5e503f]/80 bg-[#0a0908]/40 text-slate-100 placeholder:text-slate-500'
+                    : 'border-slate-200 bg-slate-50 text-slate-800 placeholder:text-slate-400'
+                }`}
+                placeholder="Mínimo 8 caracteres"
+                autoComplete="new-password"
+              />
+
+              <label className={`block text-xs font-bold uppercase tracking-[0.14em] ${isDarkTheme ? 'text-slate-300' : 'text-slate-500'}`}>
+                Confirmar contraseña
+              </label>
+              <input
+                type="password"
+                value={passwordResetForm.confirmPassword}
+                onChange={(event) => setPasswordResetForm((prev) => ({ ...prev, confirmPassword: event.target.value }))}
+                className={`h-11 w-full rounded-xl border px-3 text-sm outline-none transition focus:border-teal-500 focus:ring-2 focus:ring-teal-500/20 ${
+                  isDarkTheme
+                    ? 'border-[#5e503f]/80 bg-[#0a0908]/40 text-slate-100 placeholder:text-slate-500'
+                    : 'border-slate-200 bg-slate-50 text-slate-800 placeholder:text-slate-400'
+                }`}
+                placeholder="Repite la nueva contraseña"
+                autoComplete="new-password"
+              />
+
+              <button
+                type="submit"
+                disabled={isPasswordResetSubmitting}
+                className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-teal-700 text-sm font-bold text-white shadow-lg shadow-teal-900/20 transition hover:bg-teal-800 disabled:cursor-not-allowed disabled:opacity-70"
+              >
+                {isPasswordResetSubmitting ? (
+                  <>
+                    <Loader2 size={16} className="animate-spin" />
+                    Actualizando...
+                  </>
+                ) : (
+                  'Actualizar contraseña'
+                )}
+              </button>
+
+              {passwordResetError ? <p className="text-sm text-rose-400">{passwordResetError}</p> : null}
+              {passwordResetSuccess ? <p className="text-sm text-emerald-300">{passwordResetSuccess}</p> : null}
+            </form>
           </div>
         </div>
       ) : null}

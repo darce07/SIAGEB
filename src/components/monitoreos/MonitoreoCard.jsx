@@ -6,6 +6,7 @@ import {
   FileText,
   ImageOff,
   ImagePlus,
+  Lock,
   Pencil,
   Trash2,
 } from 'lucide-react';
@@ -63,6 +64,8 @@ const PRIMARY_ACTION_CONFIG_LIGHT = {
     'inline-flex h-9 w-full items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50',
   muted:
     'inline-flex h-9 w-full items-center justify-center gap-2 rounded-lg border border-slate-200 bg-slate-100 px-3 text-sm font-semibold text-slate-500 transition hover:bg-slate-200',
+  blocked:
+    'inline-flex h-9 w-full items-center justify-center gap-2 rounded-lg border border-slate-300 bg-slate-200 px-3 text-sm font-semibold text-slate-600 transition',
 };
 
 const PRIMARY_ACTION_CONFIG_DARK = {
@@ -72,6 +75,8 @@ const PRIMARY_ACTION_CONFIG_DARK = {
     'inline-flex h-9 w-full items-center justify-center gap-2 rounded-lg border border-slate-600/80 bg-slate-900/70 px-3 text-sm font-semibold text-slate-200 transition hover:bg-slate-800/80',
   muted:
     'inline-flex h-9 w-full items-center justify-center gap-2 rounded-lg border border-slate-700/80 bg-slate-900/50 px-3 text-sm font-semibold text-slate-400 transition hover:bg-slate-800/70',
+  blocked:
+    'inline-flex h-9 w-full items-center justify-center gap-2 rounded-lg border border-[#5e503f]/80 bg-[#5e503f]/35 px-3 text-sm font-semibold text-slate-200 transition',
 };
 
 const FALLBACK_COVERS = [
@@ -160,6 +165,7 @@ export default function MonitoreoCard({
 
   const hasActionBar = Boolean(onEdit || onDuplicate || onDelete);
   const isDraft = status === 'draft';
+  const isClosed = status === 'closed';
   const hasCustomCover = Boolean(String(coverImageUrl || '').trim());
   const fallbackCover = getDefaultCover(`${templateId}-${title}`);
   const coverLabel = isDraft ? 'Borrador' : statusLabel;
@@ -392,15 +398,21 @@ export default function MonitoreoCard({
               type="button"
               onClick={onPrimaryAction}
               disabled={primaryActionDisabled}
+              title={isClosed ? 'Monitoreo vencido: ya no permite registrar fichas.' : undefined}
+              aria-disabled={primaryActionDisabled}
               className={`w-full ${primaryActionClass} ${
                 primaryActionDisabled ? 'cursor-not-allowed opacity-90' : ''
               }`}
             >
               {primaryActionLabel}
-              <ArrowRight
-                size={13}
-                className={primaryActionDisabled ? '' : 'transition-transform group-hover:translate-x-0.5'}
-              />
+              {isClosed ? (
+                <Lock size={13} />
+              ) : (
+                <ArrowRight
+                  size={13}
+                  className={primaryActionDisabled ? '' : 'transition-transform group-hover:translate-x-0.5'}
+                />
+              )}
             </button>
           </footer>
         </section>
