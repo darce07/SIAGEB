@@ -13,6 +13,7 @@ const jsonResponse = (status: number, body: Record<string, unknown>) =>
 
 const normalizeDocType = (value: unknown) => String(value || '').trim().toUpperCase();
 const normalizeDocNumber = (value: unknown) => String(value || '').trim();
+const normalizeEmail = (value: unknown) => String(value || '').trim().toLowerCase();
 const normalizeStatus = (value: unknown) => String(value || '').trim().toLowerCase();
 const normalizeDocComparable = (value: unknown) =>
   String(value || '')
@@ -94,6 +95,29 @@ const findAuthEmailsByDocument = async (
   return Array.from(matches);
 };
 
+const findAuthUserByEmail = async (
+  adminClient: ReturnType<typeof createClient>,
+  email: string,
+) => {
+  const target = normalizeEmail(email);
+  if (!target) return null;
+
+  let page = 1;
+  while (page <= 100) {
+    const { data, error } = await adminClient.auth.admin.listUsers({ page, perPage: 200 });
+    if (error) break;
+
+    const users = data?.users || [];
+    const found = users.find((user) => normalizeEmail(user?.email) === target) || null;
+    if (found) return found as unknown as Record<string, unknown>;
+
+    if (users.length < 200) break;
+    page += 1;
+  }
+
+  return null;
+};
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
@@ -113,6 +137,50 @@ Deno.serve(async (req) => {
     payload = await req.json();
   } catch {
     payload = {};
+  }
+
+  const email = normalizeEmail(payload.email);
+  if (email) {
+    const { data, error } = await adminClient
+      .from('profiles')
+      .select('email,status')
+      .ilike('email', email)
+      .order('updated_at', { ascending: false })
+      .limit(5);
+
+    if (error) {
+      return jsonResponse(500, { error: error.message || 'No se pudo consultar perfiles.' });
+    }
+
+    const rows = Array.isArray(data) ? data : [];
+    const activeProfile = rows.find((row) => isActiveStatus(row?.status));
+    if (!activeProfile) {
+      return jsonResponse(200, {
+        email: null,
+        error: 'No existe un usuario activo con ese correo en el sistema.',
+      });
+    }
+
+    const authUser = await findAuthUserByEmail(adminClient, email);
+    if (!authUser) {
+      return jsonResponse(200, {
+        email: null,
+        error: 'El correo existe en perfiles, pero no tiene cuenta de acceso. Contacta a un administrador.',
+      });
+    }
+
+    const bannedUntilRaw = String(authUser?.banned_until || '').trim();
+    if (bannedUntilRaw) {
+      const bannedUntil = new Date(bannedUntilRaw);
+      if (!Number.isNaN(bannedUntil.valueOf()) && bannedUntil.valueOf() > Date.now()) {
+        return jsonResponse(200, {
+          email: null,
+          error: 'La cuenta esta bloqueada temporalmente. Contacta a un administrador.',
+        });
+      }
+    }
+
+    return jsonResponse(200, { email });
   }
 
   const docType = normalizeDocType(payload.doc_type);

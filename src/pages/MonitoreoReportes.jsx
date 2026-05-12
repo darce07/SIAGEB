@@ -1,14 +1,21 @@
 ﻿import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import {
+  ArrowLeft,
+  ArrowRight,
   ArrowUpDown,
   BarChart3,
+  Building2,
+  CalendarDays,
+  Clock,
   Download,
   Eye,
+  Filter,
   FileText,
   Loader2,
   MoreVertical,
   Package,
+  Pencil,
   Search,
   Star,
   Trash2,
@@ -64,6 +71,7 @@ const getReportStatusLabel = (template) => {
 
   const timelineStatus = getTemplateStatus(template);
   if (timelineStatus === 'closed') return 'Vencido';
+  if (timelineStatus === 'scheduled') return 'Programado';
   return 'Activo';
 };
 
@@ -104,43 +112,65 @@ const formatTemplateRangeCompact = (template) => {
 const getReportRowState = (template, instance) => {
   if (!template) return 'active';
   if (template.status !== 'published') return 'draft';
-  if (getTemplateStatus(template) === 'closed') return 'expired';
-  if (instance.status === 'completed') return 'completed';
-  if (instance.status === 'in_progress') return 'in_progress';
+  const templateStatus = getTemplateStatus(template);
+  if (templateStatus === 'closed') return 'expired';
+  if (templateStatus === 'scheduled') return 'scheduled';
   return 'active';
 };
 
 const getTemplateOnlyState = (template) => {
   if (!template) return 'active';
   if (template.status !== 'published') return 'draft';
-  if (getTemplateStatus(template) === 'closed') return 'expired';
+  const templateStatus = getTemplateStatus(template);
+  if (templateStatus === 'closed') return 'expired';
+  if (templateStatus === 'scheduled') return 'scheduled';
   return 'active';
 };
 
 const REPORT_STATE_META = {
   active: {
     label: 'Activo',
-    className: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200',
+    className: 'border-emerald-300 bg-emerald-100 text-emerald-900 dark:border-emerald-300/70 dark:bg-emerald-300 dark:text-emerald-950',
   },
   in_progress: {
-    label: 'En progreso',
-    className: 'border-cyan-500/40 bg-cyan-500/10 text-cyan-200',
+    label: 'Activo',
+    className: 'border-cyan-300 bg-cyan-100 text-cyan-900 dark:border-cyan-300/70 dark:bg-cyan-300 dark:text-cyan-950',
   },
   completed: {
-    label: 'Completado',
-    className: 'border-indigo-500/40 bg-indigo-500/10 text-indigo-200',
+    label: 'Activo',
+    className: 'border-emerald-300 bg-emerald-100 text-emerald-900 dark:border-emerald-300/70 dark:bg-emerald-300 dark:text-emerald-950',
+  },
+  scheduled: {
+    label: 'Programado',
+    className: 'border-amber-300 bg-amber-100 text-amber-950 dark:border-amber-200/80 dark:bg-amber-300 dark:text-amber-950',
   },
   expired: {
     label: 'Vencido',
-    className: 'border-amber-500/40 bg-amber-500/10 text-amber-200',
+    className: 'border-rose-300 bg-rose-100 text-rose-900 dark:border-rose-300/80 dark:bg-rose-300 dark:text-rose-950',
   },
   draft: {
     label: 'Borrador',
-    className: 'border-slate-600/70 bg-slate-800/60 text-slate-200',
+    className: 'border-slate-300 bg-slate-100 text-slate-700 dark:border-slate-300/60 dark:bg-slate-300 dark:text-slate-950',
   },
 };
 
 const pluralize = (count, singular, plural) => (count === 1 ? singular : plural);
+
+const getInitials = (value = '') => {
+  const parts = String(value || '')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  if (!parts.length) return 'SR';
+  return parts.slice(0, 2).map((part) => part[0]?.toUpperCase() || '').join('');
+};
+
+const getProfileDisplayName = (profile) => {
+  if (!profile) return '';
+  const fullName = String(profile.full_name || '').trim();
+  if (fullName) return fullName;
+  return `${profile.first_name || ''} ${profile.last_name || ''}`.trim();
+};
 
 const getTemplateScope = (template) =>
   template?.levelsConfig?.scope || template?.levels_config?.scope || {};
@@ -183,11 +213,148 @@ const isBinaryAnswer = (value) => {
   return token === 'SI' || token === 'NO';
 };
 
+const isEmailLike = (value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || '').trim());
+
 const looksLikeInstitutionValue = (value) => {
   const text = String(value || '').trim();
-  if (!text || isBinaryAnswer(text)) return false;
+  if (!text || isBinaryAnswer(text) || isEmailLike(text)) return false;
   const hasLetterOrNumber = /[A-Za-z0-9ÁÉÍÓÚáéíóúÑñ]/.test(text);
   return hasLetterOrNumber && text.length >= 4;
+};
+
+const normalizeFieldKey = (value) =>
+  String(value || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+
+const isInstitutionFieldKey = (key) => {
+  const normalized = normalizeFieldKey(key);
+  return (
+    normalized.includes('institucion') ||
+    normalized.includes('institution') ||
+    normalized.includes('nombre_ie') ||
+    normalized.includes('nombreie') ||
+    normalized === 'ie'
+  );
+};
+
+const firstValidInstitutionValue = (...values) =>
+  values.find((value) => looksLikeInstitutionValue(value)) || '';
+
+const findInstitutionValueInObject = (source) => {
+  if (!source || typeof source !== 'object') return '';
+  for (const [key, value] of Object.entries(source)) {
+    if (isInstitutionFieldKey(key) && looksLikeInstitutionValue(value)) {
+      return String(value).trim();
+    }
+    if (value && typeof value === 'object') {
+      const nested = findInstitutionValueInObject(value);
+      if (nested) return nested;
+    }
+  }
+  return '';
+};
+
+const parseNumericValue = (value) => {
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'object') {
+    const direct = value.value ?? value.answer ?? value.valor ?? value.score ?? value.level ?? value.meta ?? value.avance;
+    return parseNumericValue(direct);
+  }
+  const normalized = String(value)
+    .replace(',', '.')
+    .replace(/[^\d.-]/g, '');
+  if (!normalized) return null;
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const isMetaMetricKey = (value) => {
+  const normalized = normalizeFieldKey(value);
+  return normalized.includes('meta') || normalized.includes('objetivo');
+};
+
+const isProgressMetricKey = (value) => {
+  const normalized = normalizeFieldKey(value);
+  return (
+    normalized.includes('avance') ||
+    normalized.includes('logrado') ||
+    normalized.includes('real') ||
+    normalized.includes('cumplimiento')
+  );
+};
+
+const findMetricValueInObject = (source, matcher) => {
+  if (!source || typeof source !== 'object') return null;
+  for (const [key, value] of Object.entries(source)) {
+    if (matcher(key)) {
+      const parsed = parseNumericValue(value);
+      if (parsed !== null) return parsed;
+    }
+    if (value && typeof value === 'object') {
+      const nested = findMetricValueInObject(value, matcher);
+      if (nested !== null) return nested;
+    }
+  }
+  return null;
+};
+
+const extractCddMetrics = (row) => {
+  const template = row?.template || {};
+  const data = row?.instance?.data || {};
+  const questionState = data.questions && typeof data.questions === 'object' ? data.questions : {};
+  const questionLabelById = new Map();
+  (template?.sections || []).forEach((section) => {
+    (section?.questions || []).forEach((question) => {
+      if (!question?.id) return;
+      questionLabelById.set(question.id, String(question.text || '').trim());
+    });
+  });
+
+  let meta = findMetricValueInObject(data, isMetaMetricKey);
+  let advance = findMetricValueInObject(data, isProgressMetricKey);
+
+  Object.entries(questionState).forEach(([questionId, answer]) => {
+    const label = questionLabelById.get(questionId) || questionId;
+    if (meta === null && isMetaMetricKey(label)) meta = parseNumericValue(answer);
+    if (advance === null && isProgressMetricKey(label)) advance = parseNumericValue(answer);
+  });
+
+  const normalizedMeta = meta !== null && meta > 0 ? meta : 100;
+  const normalizedAdvance = advance !== null && advance >= 0 ? advance : 0;
+  const progress = Math.max(0, Math.min(100, (normalizedAdvance / normalizedMeta) * 100));
+  return {
+    meta: normalizedMeta,
+    advance: normalizedAdvance,
+    progress,
+  };
+};
+
+const getCddKpiStatus = (progress) => {
+  if (progress >= 100) {
+    return {
+      label: 'Completado',
+      className: 'bg-emerald-50 text-emerald-700 border-emerald-100',
+      barClassName: 'bg-emerald-500',
+      barColor: '#10b981',
+    };
+  }
+  if (progress > 0) {
+    return {
+      label: 'En proceso',
+      className: 'bg-amber-50 text-amber-700 border-amber-100',
+      barClassName: 'bg-cyan-500',
+      barColor: '#06b6d4',
+    };
+  }
+  return {
+    label: 'Pendiente',
+    className: 'bg-rose-50 text-rose-700 border-rose-100',
+    barClassName: 'bg-rose-400',
+    barColor: '#fb7185',
+  };
 };
 
 const isInstitutionQuestion = (questionLabel) => {
@@ -277,10 +444,23 @@ const getQuestionInsights = (instance, template) => {
 };
 
 const getInstanceReferenceData = (instance, insights = {}) => {
+  const data = instance?.data || {};
   const header = instance?.data?.header || {};
-  const institutionFromHeader =
-    header.institucion || header.institution || header.institution_name || header.institucion_educativa || '';
-  const institution = institutionFromHeader || insights.institutionAnswer || '';
+  const institutionFromHeader = firstValidInstitutionValue(
+    header.institucion,
+    header.institution,
+    header.institution_name,
+    header.institucion_educativa,
+    header.nombre_ie,
+    header.ie,
+  );
+  const institution =
+    institutionFromHeader ||
+    findInstitutionValueInObject(data.headerExtras) ||
+    findInstitutionValueInObject(data.dynamicFields) ||
+    findInstitutionValueInObject(data.meta) ||
+    insights.institutionAnswer ||
+    '';
   const docente = header.docente || header.monitored_name || '';
   const monitor = header.director || header.monitor || header.monitor_name || '';
   const fallbackUser = typeof instance?.created_by === 'string' ? instance.created_by.trim() : '';
@@ -364,6 +544,7 @@ const buildPdf = (template, instance, statusLabel) => {
 
   const statusTheme = {
     Activo: { fill: [220, 252, 231], stroke: [16, 185, 129], text: [6, 95, 70] },
+    Programado: { fill: [254, 243, 199], stroke: [217, 119, 6], text: [146, 64, 14] },
     Vencido: { fill: [254, 243, 199], stroke: [217, 119, 6], text: [146, 64, 14] },
     Oculto: { fill: [226, 232, 240], stroke: [100, 116, 139], text: [51, 65, 85] },
     Cerrado: { fill: [254, 226, 226], stroke: [239, 68, 68], text: [153, 27, 27] },
@@ -755,9 +936,12 @@ export default function MonitoreoReportes() {
 
   const [instances, setInstances] = useState([]);
   const [templates, setTemplates] = useState([]);
+  const [profiles, setProfiles] = useState([]);
   const [pdfLoadingId, setPdfLoadingId] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
+  const [detailSearchTerm, setDetailSearchTerm] = useState('');
+  const [detailStatusFilter, setDetailStatusFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
   const [typeFilter, setTypeFilter] = useState('all');
   const [yearFilter, setYearFilter] = useState('all');
@@ -815,6 +999,14 @@ export default function MonitoreoReportes() {
       setInstances(instancesData || []);
     }
 
+    const { data: profilesData, error: profilesError } = await supabase
+      .from('profiles')
+      .select('id,full_name,first_name,last_name,email,doc_number');
+
+    if (!profilesError) {
+      setProfiles(profilesData || []);
+    }
+
     if (withLoading) setIsLoading(false);
   }, [isAdmin, userId]);
 
@@ -842,6 +1034,16 @@ export default function MonitoreoReportes() {
     return map;
   }, [templates]);
 
+  const profilesById = useMemo(() => {
+    const map = new Map();
+    profiles.forEach((profile) => {
+      if (profile.id) map.set(profile.id, profile);
+      if (profile.email) map.set(profile.email, profile);
+      if (profile.doc_number) map.set(profile.doc_number, profile);
+    });
+    return map;
+  }, [profiles]);
+
   const templatesForReportListing = useMemo(() => {
     if (isAdmin) return templates;
     const instanceTemplateIds = new Set(instances.map((item) => item.template_id).filter(Boolean));
@@ -862,12 +1064,14 @@ export default function MonitoreoReportes() {
       const dueAtTs =
         new Date(template?.availability?.endAt || 0).getTime() || Number.MAX_SAFE_INTEGER;
       const isCdd = isCddTemplate(template);
+      const registeredBy = getProfileDisplayName(profilesById.get(instance.created_by)) || 'Usuario registrador';
 
       return {
         id: instance.id,
         templateId: instance.template_id,
         template,
         templateTitle,
+        registeredBy,
         docente: reference.referenceType === 'Docente' ? reference.referenceLabel : '',
         displayName: reference.institution || reference.referenceLabel,
         displayType: reference.institution ? 'IE' : reference.referenceType,
@@ -934,12 +1138,13 @@ export default function MonitoreoReportes() {
       });
 
     return [...instanceRows, ...templateOnlyRows];
-  }, [instances, templatesById, templatesForReportListing]);
+  }, [instances, profilesById, templatesById, templatesForReportListing]);
 
   const summary = useMemo(() => {
     const base = {
       total: 0,
       active: 0,
+      scheduled: 0,
       in_progress: 0,
       completed: 0,
       expired: 0,
@@ -1020,6 +1225,7 @@ export default function MonitoreoReportes() {
     const groups = Array.from(groupsMap.values()).map((group) => {
       const stateCount = {
         active: 0,
+        scheduled: 0,
         in_progress: 0,
         completed: 0,
         expired: 0,
@@ -1059,9 +1265,8 @@ export default function MonitoreoReportes() {
       });
 
       let groupState = 'active';
-      if (stateCount.in_progress > 0) groupState = 'in_progress';
-      else if (stateCount.active > 0) groupState = 'active';
-      else if (stateCount.completed > 0) groupState = 'completed';
+      if (stateCount.active > 0) groupState = 'active';
+      else if (stateCount.scheduled > 0) groupState = 'scheduled';
       else if (stateCount.expired > 0) groupState = 'expired';
       else if (stateCount.draft > 0) groupState = 'draft';
 
@@ -1086,22 +1291,91 @@ export default function MonitoreoReportes() {
     return groups;
   }, [filteredRows, sortBy]);
 
-  const detailGroup = useMemo(
-    () => groupedReports.find((group) => String(group.templateId || '') === String(detailTemplateId || '')) || null,
-    [groupedReports, detailTemplateId],
-  );
+  const detailGroup = useMemo(() => {
+    if (!detailTemplateId) return null;
+    const rows = reportRows.filter((row) => String(row.templateId || '') === String(detailTemplateId || ''));
+    if (!rows.length) return null;
+
+    const first = rows[0];
+    const stateCount = {
+      active: 0,
+      scheduled: 0,
+      in_progress: 0,
+      completed: 0,
+      expired: 0,
+      draft: 0,
+    };
+
+    const sheetGroupsMap = new Map();
+    rows.forEach((report) => {
+      if (stateCount[report.state] !== undefined) stateCount[report.state] += 1;
+      const sheetKey = report.sheetId || '__sheet_general__';
+      if (!sheetGroupsMap.has(sheetKey)) {
+        sheetGroupsMap.set(sheetKey, {
+          sheetKey,
+          sheetId: report.sheetId || '',
+          sheetTitle: report.sheetTitle || 'Ficha general',
+          sheetCode: report.sheetCode || '',
+          reports: [],
+          reportCount: 0,
+          latestUpdatedTs: report.updatedAtTs,
+        });
+      }
+
+      const sheetGroup = sheetGroupsMap.get(sheetKey);
+      sheetGroup.reports.push(report);
+      if (report.hasReport) sheetGroup.reportCount += 1;
+      if (report.updatedAtTs > sheetGroup.latestUpdatedTs) {
+        sheetGroup.latestUpdatedTs = report.updatedAtTs;
+      }
+    });
+
+    const sheetGroups = Array.from(sheetGroupsMap.values()).sort((left, right) => {
+      if (left.sheetTitle === right.sheetTitle) return right.latestUpdatedTs - left.latestUpdatedTs;
+      return left.sheetTitle.localeCompare(right.sheetTitle, 'es', { sensitivity: 'base' });
+    });
+
+    let groupState = 'active';
+    if (stateCount.active > 0) groupState = 'active';
+    else if (stateCount.scheduled > 0) groupState = 'scheduled';
+    else if (stateCount.expired > 0) groupState = 'expired';
+    else if (stateCount.draft > 0) groupState = 'draft';
+
+    return {
+      groupKey: first.templateId || first.id,
+      templateId: first.templateId,
+      template: first.template,
+      templateTitle: first.templateTitle,
+      rangeLabel: first.rangeLabel,
+      reports: rows,
+      reportCount: rows.filter((row) => row.hasReport).length,
+      isCdd: first.isCdd,
+      cddArea: first.cddArea,
+      stateCount,
+      sheetGroups,
+      groupState,
+    };
+  }, [detailTemplateId, reportRows]);
   const detailRows = useMemo(
     () => (detailGroup ? detailGroup.sheetGroups.flatMap((sheetGroup) => sheetGroup.reports).filter((row) => row.hasReport) : []),
     [detailGroup],
   );
+  const filteredDetailRows = useMemo(() => {
+    const normalizedSearch = detailSearchTerm.trim().toLowerCase();
+    return detailRows.filter((row) => {
+      if (detailStatusFilter !== 'all' && row.state !== detailStatusFilter) return false;
+      if (!normalizedSearch) return true;
+      const haystack = `${row.registeredBy || ''} ${row.displayName || ''} ${row.institution || ''} ${row.sheetTitle || ''} ${row.templateTitle || ''} ${row.docente || ''}`.toLowerCase();
+      return haystack.includes(normalizedSearch);
+    });
+  }, [detailRows, detailSearchTerm, detailStatusFilter]);
   const cddReportGroups = useMemo(() => groupedReports.filter((group) => group.isCdd), [groupedReports]);
   const standardReportGroups = useMemo(() => groupedReports.filter((group) => !group.isCdd), [groupedReports]);
 
   const stateFilters = [
     { value: 'all', label: 'Todos' },
     { value: 'active', label: 'Activos' },
-    { value: 'in_progress', label: 'En progreso' },
-    { value: 'completed', label: 'Completados' },
+    { value: 'scheduled', label: 'Programados' },
     { value: 'expired', label: 'Vencidos' },
     { value: 'draft', label: 'Borradores' },
   ];
@@ -1228,7 +1502,15 @@ export default function MonitoreoReportes() {
 
   return (
     <div className="flex flex-col gap-6">
-      <Card className="flex flex-col gap-6">
+      <Card
+        className={
+          isDetailView
+            ? '!border-0 !bg-transparent !p-0 !shadow-none !backdrop-blur-0'
+            : 'flex flex-col gap-6'
+        }
+      >
+        {!isDetailView ? (
+          <>
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
             <h1 className="text-3xl font-extrabold tracking-tight text-slate-900 dark:text-slate-100">Reportes</h1>
@@ -1318,6 +1600,8 @@ export default function MonitoreoReportes() {
           </div>
 
         </div>
+          </>
+        ) : null}
 
         {isLoading ? (
           <div className="rounded-2xl border border-slate-800/70 bg-slate-900/50 px-4 py-5">
@@ -1330,7 +1614,7 @@ export default function MonitoreoReportes() {
           <div className="rounded-2xl border border-slate-800/70 bg-slate-900/50 px-4 py-5 text-sm text-slate-400">
             Aún no hay reportes disponibles. Cuando finalices un monitoreo, aquí podrás ver los resultados.
           </div>
-        ) : filteredRows.length === 0 ? (
+        ) : !isDetailView && filteredRows.length === 0 ? (
           <div className="rounded-2xl border border-slate-800/70 bg-slate-900/50 px-4 py-5 text-sm text-slate-400">
             No hay resultados con esos filtros.
           </div>
@@ -1350,13 +1634,13 @@ export default function MonitoreoReportes() {
                   {cddReportGroups.map((group) => {
                     const primaryRow = group.reports.find((row) => row.hasReport) || group.reports[0];
                     const progressLabel =
-                      group.groupState === 'completed'
-                        ? 'Completado 100%'
-                        : group.groupState === 'expired'
-                          ? 'Retrasado'
-                          : group.reportCount
-                            ? 'En progreso'
-                            : 'Sin ficha';
+                      group.groupState === 'expired'
+                        ? 'Vencido'
+                        : group.groupState === 'scheduled'
+                          ? 'Programado'
+                          : group.groupState === 'draft'
+                            ? 'Borrador'
+                            : 'Activo';
                     return (
                       <article key={group.groupKey} className="relative flex min-h-[250px] flex-col gap-4 overflow-hidden rounded-xl border border-cyan-300/70 bg-white p-5 shadow-[0_12px_28px_-14px_rgba(6,182,212,0.45)] transition hover:shadow-[0_18px_36px_-16px_rgba(6,182,212,0.5)] dark:border-cyan-400/35 dark:bg-[#171d23]">
                         <div className="absolute -right-12 -top-12 h-24 w-24 rounded-bl-full bg-cyan-100/80 dark:bg-cyan-400/10" />
@@ -1366,10 +1650,12 @@ export default function MonitoreoReportes() {
                           </div>
                           <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold uppercase ${
                             group.groupState === 'expired'
-                              ? 'bg-rose-100 text-rose-700 dark:bg-rose-400/15 dark:text-rose-200'
-                              : group.groupState === 'completed'
-                                ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-400/15 dark:text-emerald-200'
-                                : 'bg-indigo-100 text-indigo-700 dark:bg-indigo-400/15 dark:text-indigo-200'
+                              ? 'border border-rose-300 bg-rose-100 text-rose-900 dark:border-rose-300/80 dark:bg-rose-300 dark:text-rose-950'
+                              : group.groupState === 'scheduled'
+                                ? 'border border-amber-300 bg-amber-100 text-amber-950 dark:border-amber-200/80 dark:bg-amber-300 dark:text-amber-950'
+                                : group.groupState === 'draft'
+                                  ? 'border border-slate-300 bg-slate-100 text-slate-700 dark:border-slate-300/60 dark:bg-slate-300 dark:text-slate-950'
+                                  : 'border border-emerald-300 bg-emerald-100 text-emerald-900 dark:border-emerald-300/70 dark:bg-emerald-300 dark:text-emerald-950'
                           }`}>
                             {progressLabel}
                           </span>
@@ -1393,16 +1679,19 @@ export default function MonitoreoReportes() {
                         <div className="mt-auto flex gap-2">
                           <button
                             type="button"
-                            onClick={() => (group.reportCount ? navigate(`/monitoreo/reportes/${group.templateId}`) : handleCreateReport(group.template, { reuseExisting: true }))}
+                            onClick={() => navigate(`/monitoreo/reportes/${group.templateId}`)}
                             className="flex-1 rounded-lg bg-cyan-700 py-2 text-sm font-bold text-white transition hover:bg-cyan-800 dark:bg-[#426b69] dark:hover:bg-[#4f7d7a]"
                           >
                             Ver Reportes
                           </button>
                           <button
                             type="button"
-                            onClick={() => primaryRow?.instance ? openPdf(primaryRow.template, primaryRow.instance) : handleCreateReport(group.template, { reuseExisting: true })}
-                            className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-slate-300 text-slate-600 transition hover:bg-slate-50 dark:border-[#a9927d]/35 dark:text-slate-200 dark:hover:bg-white/10"
-                            title={primaryRow?.instance ? 'Descargar PDF' : 'Crear ficha'}
+                            onClick={() => {
+                              if (primaryRow?.instance) openPdf(primaryRow.template, primaryRow.instance);
+                            }}
+                            disabled={!primaryRow?.instance}
+                            className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-slate-300 text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-45 dark:border-[#a9927d]/35 dark:text-slate-200 dark:hover:bg-white/10"
+                            title={primaryRow?.instance ? 'Descargar PDF' : 'Sin ficha para descargar'}
                           >
                             <Download size={17} />
                           </button>
@@ -1455,7 +1744,7 @@ export default function MonitoreoReportes() {
                             <p className="truncate text-xs text-slate-400">Código: {String(group.templateId || group.groupKey).slice(0, 13).toUpperCase()}</p>
                           </td>
                           <td className="px-4 py-4">
-                            <span className="inline-flex rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-bold uppercase text-slate-600 dark:bg-[#22333b] dark:text-slate-200">
+                            <span className={`inline-flex rounded-full border px-2.5 py-1 text-[10px] font-bold uppercase ${groupMeta.className}`}>
                               {groupMeta.label}
                             </span>
                           </td>
@@ -1493,100 +1782,370 @@ export default function MonitoreoReportes() {
             </section>
           </div>
         ) : !detailGroup ? (
-          <div className="rounded-2xl border border-slate-800/70 bg-slate-900/50 px-4 py-5 text-sm text-slate-400">
+          <div className="rounded-2xl border border-slate-200 bg-white px-5 py-6 text-sm text-slate-500 dark:border-[#a9927d]/35 dark:bg-[#171d23] dark:text-slate-400">
             No se encontró el monitoreo seleccionado.
           </div>
-        ) : (
-          <div className="space-y-4">
-            <div className="rounded-2xl border border-slate-800/70 bg-slate-900/45 px-4 py-4">
-              <button
-                type="button"
-                onClick={() => navigate('/monitoreo/reportes')}
-                className="mb-2 inline-flex items-center gap-2 rounded-full border border-slate-700/60 px-3 py-1 text-xs font-semibold text-slate-300 transition hover:border-slate-500"
-              >
-                ? Volver a Reportes
-              </button>
-              <p className="text-base font-semibold text-slate-100">{detailGroup.templateTitle}</p>
-              <p className="mt-1 text-xs text-slate-400">{detailGroup.rangeLabel}</p>
-              <div className="mt-3 grid gap-2 sm:grid-cols-4">
-                <div className="rounded-xl border border-slate-800/70 bg-slate-950/40 px-3 py-2 text-xs text-slate-300">Total fichas: <span className="font-semibold text-slate-100">{detailGroup.reportCount}</span></div>
-                <div className="rounded-xl border border-cyan-500/30 bg-cyan-500/10 px-3 py-2 text-xs text-cyan-100">En progreso: <span className="font-semibold">{detailGroup.stateCount.in_progress}</span></div>
-                <div className="rounded-xl border border-indigo-500/30 bg-indigo-500/10 px-3 py-2 text-xs text-indigo-100">Completadas: <span className="font-semibold">{detailGroup.stateCount.completed}</span></div>
-                <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">Vencidas: <span className="font-semibold">{detailGroup.stateCount.expired}</span></div>
+        ) : detailGroup.isCdd ? (
+          <div
+            className="cdd-kpi-surface rounded-[28px] bg-[#f6fafe] p-5 text-slate-900 shadow-sm ring-1 ring-slate-200/80 sm:p-7 lg:p-8"
+          >
+            <section className="mb-7 flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
+              <div className="min-w-0">
+                <button
+                  type="button"
+                  onClick={() => navigate('/monitoreo/reportes')}
+                    className="mb-3 inline-flex items-center gap-1.5 text-sm font-semibold text-cyan-700 transition hover:text-cyan-900"
+                >
+                  <ArrowLeft size={15} />
+                  Volver a Reportes
+                </button>
+                <nav className="mb-2 flex flex-wrap items-center gap-2 text-xs text-slate-500">
+                  <span>Monitoreo</span>
+                  <span>/</span>
+                  <span className="font-semibold text-cyan-700">Compromiso de Desempeño</span>
+                </nav>
+                <h1 className="text-3xl font-extrabold tracking-tight text-slate-950 sm:text-4xl">
+                  Fichas de Monitoreo CdD
+                </h1>
+                <p className="mt-2 max-w-3xl text-base text-slate-600">
+                  Visualización ejecutiva de meta, avance y cumplimiento del compromiso seleccionado.
+                </p>
+                <p className="mt-2 line-clamp-2 text-sm font-semibold uppercase tracking-wide text-slate-700">
+                  {detailGroup.templateTitle}
+                </p>
               </div>
-            </div>
+
+              <div className="flex w-full flex-col gap-3 sm:w-auto sm:flex-row sm:items-center">
+                <div className="flex min-w-[180px] items-center gap-4 rounded-2xl !border !border-slate-100 bg-white p-4 shadow-sm">
+                  <span className="inline-flex h-11 w-11 items-center justify-center rounded-xl bg-cyan-50 text-cyan-700">
+                    <FileText size={22} />
+                  </span>
+                  <div>
+                    <p className="text-[11px] font-extrabold uppercase tracking-widest text-slate-500">Total fichas</p>
+                    <p className="text-2xl font-extrabold text-slate-950">{detailRows.length}</p>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <section className="mb-8 rounded-2xl !border !border-slate-100 bg-white p-4 shadow-sm">
+              <div className="flex flex-col gap-3 md:flex-row md:items-center">
+                <label className="cdd-kpi-search-control flex min-h-12 flex-1 items-center gap-3 rounded-xl !border !border-slate-200 bg-slate-50 px-4 transition focus-within:!border-cyan-500 focus-within:ring-2 focus-within:ring-cyan-100">
+                  <Search size={22} className="shrink-0 text-slate-400" />
+                  <input
+                    value={detailSearchTerm}
+                    onChange={(event) => setDetailSearchTerm(event.target.value)}
+                    placeholder="Buscar por nombre de usuario, IE o código modular..."
+                    className="cdd-kpi-input w-full border-0 bg-transparent p-0 text-base text-slate-800 shadow-none outline-none placeholder:text-slate-500 focus:border-0 focus:outline-none focus:ring-0"
+                  />
+                </label>
+
+                <div className="flex flex-col gap-2 sm:flex-row">
+                  <label className="cdd-kpi-filter-control inline-flex min-h-12 items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-600 transition hover:bg-slate-50">
+                    <Filter size={18} />
+                    <select
+                      value={detailStatusFilter}
+                      onChange={(event) => setDetailStatusFilter(event.target.value)}
+                      className="cdd-kpi-select border-0 bg-transparent p-0 text-sm font-semibold text-slate-600 shadow-none focus:border-0 focus:ring-0"
+                    >
+                      {stateFilters.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.value === 'all' ? 'Filtros' : option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const firstReport = detailRows[0];
+                      if (firstReport?.template && firstReport?.instance) openPdf(firstReport.template, firstReport.instance);
+                    }}
+                    disabled={!detailRows.length || pdfLoadingId === detailRows[0]?.id}
+                    className="inline-flex min-h-12 items-center justify-center gap-2 rounded-xl !border !border-slate-200 bg-white px-4 text-sm font-semibold text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {pdfLoadingId === detailRows[0]?.id ? <Loader2 size={18} className="animate-spin" /> : <Download size={18} />}
+                    Exportar
+                  </button>
+                </div>
+              </div>
+            </section>
 
             {!detailRows.length ? (
-              <div className="rounded-2xl border border-slate-800/70 bg-slate-900/45 px-4 py-4">
-                <p className="text-sm text-slate-300">No quedan reportes en este monitoreo.</p>
-                <p className="mt-1 text-xs text-slate-400">La vista se actualiza automáticamente después de eliminar.</p>
+              <section className="rounded-2xl border border-dashed border-slate-300 bg-white px-6 py-10 text-center shadow-sm">
+                <p className="text-base font-bold text-slate-900">Este CdD aún no tiene ficha registrada.</p>
+                <p className="mt-1 text-sm text-slate-500">Crea la ficha única para iniciar el seguimiento de meta y avance.</p>
+                <button
+                  type="button"
+                  onClick={() => handleCreateReport(detailGroup.template, { reuseExisting: true })}
+                  className="mt-5 inline-flex h-10 items-center rounded-lg bg-cyan-700 px-4 text-sm font-bold text-white transition hover:bg-cyan-800"
+                >
+                  Crear ficha CdD
+                </button>
+              </section>
+            ) : !filteredDetailRows.length ? (
+              <section className="rounded-2xl border border-dashed border-slate-300 bg-white px-6 py-10 text-center text-sm text-slate-500 shadow-sm">
+                No hay fichas CdD que coincidan con la búsqueda o filtro seleccionado.
+              </section>
+            ) : (
+              <section className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+                {filteredDetailRows.map((row) => {
+                  const metrics = extractCddMetrics(row);
+                  const kpiStatus = getCddKpiStatus(metrics.progress);
+                  const registrantName = row.registeredBy || 'Usuario registrador';
+                  const institutionName =
+                    row.institution ||
+                    (looksLikeInstitutionValue(row.displayName) ? row.displayName : 'Institución no registrada');
+                  return (
+                    <article
+                      key={row.id}
+                    className="group rounded-2xl !border !border-slate-100 bg-white p-4 shadow-[0_10px_22px_rgba(15,23,42,0.04)] transition hover:!border-cyan-200 hover:shadow-[0_14px_28px_rgba(15,23,42,0.07)] sm:p-5"
+                    >
+                      <div className="mb-4 flex items-start justify-between gap-3">
+                        <div className="flex min-w-0 items-center gap-3">
+                          <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-cyan-100 text-sm font-extrabold text-cyan-800 ring-4 ring-slate-50">
+                            {getInitials(registrantName)}
+                          </span>
+                          <div className="min-w-0">
+                            <h3 className="line-clamp-1 text-base font-extrabold text-slate-950 transition group-hover:text-cyan-700">
+                              {registrantName}
+                            </h3>
+                            <p className="mt-0.5 flex items-start gap-1.5 text-xs text-slate-500">
+                              <Building2 size={13} className="mt-0.5 shrink-0" />
+                              <span className="line-clamp-1">{institutionName}</span>
+                            </p>
+                          </div>
+                        </div>
+                        <span className={`shrink-0 rounded-full border px-2.5 py-0.5 text-[10px] font-extrabold uppercase tracking-wide ${kpiStatus.className}`}>
+                          {kpiStatus.label}
+                        </span>
+                      </div>
+
+                      <div className="mb-4 grid grid-cols-2 gap-3">
+                        <div className="rounded-xl !border !border-slate-100 bg-slate-50 p-3">
+                          <p className="mb-1 text-[11px] font-semibold text-slate-500">Meta Asignada</p>
+                          <div className="flex items-baseline gap-2">
+                            <span className="text-2xl font-extrabold text-slate-950">{metrics.meta}</span>
+                            <span className="text-xs text-slate-400">puntos</span>
+                          </div>
+                        </div>
+                        <div className="rounded-xl !border !border-cyan-100 bg-cyan-50 p-3">
+                          <p className="mb-1 text-[11px] font-semibold text-cyan-700">Avance Logrado</p>
+                          <div className="flex items-baseline gap-2">
+                            <span className="text-2xl font-extrabold text-cyan-700">{metrics.advance}</span>
+                            <span className="text-xs text-cyan-500">puntos</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="mb-4 space-y-2">
+                        <div className="flex justify-between text-[11px] font-extrabold text-slate-600">
+                          <span>Progreso del Compromiso</span>
+                          <span className="text-cyan-700">{metrics.progress.toFixed(1)}%</span>
+                        </div>
+                        <div className="h-2 overflow-hidden rounded-full bg-slate-100">
+                          <div
+                            className="h-full rounded-full"
+                            style={{ width: `${metrics.progress}%`, backgroundColor: kpiStatus.barColor }}
+                          />
+                        </div>
+                      </div>
+
+                      <div className="flex flex-col gap-3 border-t border-slate-100 pt-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-400">
+                          <span className="inline-flex items-center gap-1.5">
+                            <CalendarDays size={13} />
+                            Registro: {formatDateCompact(row.instance?.created_at)}
+                          </span>
+                          <span className="inline-flex items-center gap-1.5">
+                            <Clock size={13} />
+                            Act: {row.updatedDateLabel}
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => openReport(row)}
+                          className="inline-flex items-center justify-end gap-1.5 text-sm font-semibold text-cyan-700 transition hover:gap-2 hover:text-cyan-900"
+                        >
+                          Ver Detalle
+                          <ArrowRight size={16} />
+                        </button>
+                      </div>
+                    </article>
+                  );
+                })}
+              </section>
+            )}
+
+            <section className="mt-10 border-t border-slate-200 pt-7 text-center">
+              <p className="text-sm text-slate-500">
+                Mostrando {filteredDetailRows.length} de {detailRows.length} fichas de monitoreo CdD registradas.
+              </p>
+              <div className="mt-4 flex justify-center gap-2">
+                <button type="button" disabled className="inline-flex h-10 w-10 cursor-not-allowed items-center justify-center rounded-lg border border-slate-200 text-slate-300">
+                  <ArrowLeft size={18} />
+                </button>
+                <button type="button" className="inline-flex h-10 w-10 items-center justify-center rounded-lg bg-cyan-600 font-bold text-white">1</button>
+                <button type="button" disabled className="inline-flex h-10 w-10 cursor-not-allowed items-center justify-center rounded-lg border border-slate-200 text-slate-300">
+                  <ArrowRight size={18} />
+                </button>
               </div>
-            ) : detailRows.map((row) => {
-              const stateMeta = REPORT_STATE_META[row.state] || REPORT_STATE_META.active;
-              const canDeleteRow = isAdmin || row.state !== 'expired';
-              return (
-                <article key={row.id} className="rounded-2xl border border-slate-800/70 bg-slate-900/45 px-4 py-4">
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div className="space-y-1">
-                      <p className="text-sm font-semibold text-slate-100">{truncateLabel(row.displayName || 'Reporte registrado', 84)}</p>
-                      <p className="text-xs text-slate-400">Ficha: {row.sheetTitle || 'Ficha general'}</p>
-                      <p className="text-xs text-slate-400">Actualizado: {row.updatedDateLabel}</p>
-                      <p className="text-xs text-slate-300">IE: {row.institution || 'No registrada'}</p>
+            </section>
+          </div>
+        ) : (
+          <div className="space-y-6">
+            <section className="space-y-4">
+              <div className="flex flex-wrap items-start justify-between gap-4">
+                <div className="min-w-0 space-y-2">
+                  <button
+                    type="button"
+                    onClick={() => navigate('/monitoreo/reportes')}
+                    className="inline-flex items-center gap-1.5 text-sm font-semibold text-cyan-700 transition hover:text-cyan-900 dark:text-cyan-200 dark:hover:text-cyan-100"
+                  >
+                    <ArrowLeft size={15} />
+                    Volver a Reportes
+                  </button>
+                  <div>
+                    <h1 className="max-w-5xl text-2xl font-extrabold uppercase tracking-wide text-slate-900 dark:text-slate-100">
+                      {detailGroup.templateTitle}
+                    </h1>
+                    <div className="mt-2 flex flex-wrap items-center gap-x-5 gap-y-1 text-xs text-slate-500 dark:text-slate-300">
+                      <span className="inline-flex items-center gap-1.5">
+                        <CalendarDays size={14} />
+                        {detailGroup.rangeLabel}
+                      </span>
+                      <span className="inline-flex items-center gap-1.5">
+                        <Building2 size={14} />
+                        Unidad Responsable: {detailGroup.cddArea || 'No definida'}
+                      </span>
                     </div>
-                    <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${stateMeta.className}`}>
-                      {stateMeta.label}
-                    </span>
                   </div>
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      onClick={() => openReport(row)}
-                      className="inline-flex items-center gap-2 rounded-full border border-slate-700/60 px-3 py-1.5 text-xs font-semibold text-slate-100 transition hover:border-cyan-400/60"
-                    >
-                      <Eye size={13} />
-                      Ver
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => openReport(row)}
-                      className="inline-flex items-center gap-2 rounded-full border border-cyan-500/35 bg-cyan-500/10 px-3 py-1.5 text-xs font-semibold text-cyan-100 transition hover:border-cyan-400/65"
-                    >
-                      <FileText size={13} />
-                      Editar
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => openPdf(row.template, row.instance)}
-                      disabled={pdfLoadingId === row.id || !row.template}
-                      className="inline-flex items-center gap-2 rounded-full border border-rose-500/35 bg-rose-500/10 px-3 py-1.5 text-xs font-semibold text-rose-100 transition hover:border-rose-400/70 disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      {pdfLoadingId === row.id ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />}
-                      {pdfLoadingId === row.id ? 'Generando...' : 'PDF'}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        handleRequestDelete({
-                          instanceId: row.id,
-                          isAdminAction: isAdmin,
-                          details: `${row.templateTitle} - ${row.displayName || 'Reporte registrado'}`,
-                        })
-                      }
-                      disabled={!canDeleteRow}
-                      title={!canDeleteRow ? 'Monitoreo vencido: solo administrador puede eliminar.' : undefined}
-                      className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
-                        canDeleteRow
-                          ? 'border-rose-500/30 text-rose-200 hover:border-rose-400/60'
-                          : 'cursor-not-allowed border-slate-700/70 text-slate-500'
-                      }`}
-                    >
-                      <Trash2 size={13} />
-                      Eliminar
-                    </button>
-                  </div>
-                </article>
-              );
-            })}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    const firstReport = detailRows[0];
+                    if (firstReport?.template && firstReport?.instance) openPdf(firstReport.template, firstReport.instance);
+                  }}
+                  disabled={!detailRows.length || pdfLoadingId === detailRows[0]?.id}
+                  className="inline-flex h-10 items-center gap-2 rounded-lg border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-[#a9927d]/35 dark:bg-[#151c23] dark:text-slate-200 dark:hover:bg-white/10"
+                >
+                  {pdfLoadingId === detailRows[0]?.id ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
+                  Descargar Resumen
+                </button>
+              </div>
+
+              <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:border-[#a9927d]/35 dark:bg-[#171d23]">
+                <label className="flex h-11 items-center gap-3 rounded-lg border border-slate-200 bg-slate-50 px-3 dark:border-[#a9927d]/25 dark:bg-[#22333b]">
+                  <Search size={18} className="text-slate-400" />
+                  <input
+                    value={detailSearchTerm}
+                    onChange={(event) => setDetailSearchTerm(event.target.value)}
+                    placeholder="Buscar por nombre de registrador, IE o ficha..."
+                    className="w-full bg-transparent text-sm text-slate-700 placeholder:text-slate-400 focus:outline-none dark:text-slate-100"
+                  />
+                </label>
+              </div>
+            </section>
+
+            <section className="space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <h2 className="text-lg font-bold text-slate-900 dark:text-slate-100">Fichas Registradas</h2>
+                <label className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-300">
+                  Filtrar por estado:
+                  <select
+                    value={detailStatusFilter}
+                    onChange={(event) => setDetailStatusFilter(event.target.value)}
+                    className="h-9 rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-700 focus:border-cyan-500 focus:outline-none dark:border-[#a9927d]/35 dark:bg-[#22333b] dark:text-slate-100"
+                  >
+                    {stateFilters.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.value === 'all' ? 'Todos los estados' : option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+
+              {!detailRows.length ? (
+                <div className="rounded-2xl border border-slate-200 bg-white px-5 py-6 dark:border-[#a9927d]/35 dark:bg-[#171d23]">
+                  <p className="text-sm text-slate-700 dark:text-slate-300">No quedan reportes en este monitoreo.</p>
+                  <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">La vista se actualiza automáticamente después de eliminar.</p>
+                </div>
+              ) : !filteredDetailRows.length ? (
+                <div className="rounded-2xl border border-dashed border-slate-300 bg-white px-5 py-6 text-sm text-slate-500 dark:border-[#a9927d]/35 dark:bg-[#171d23] dark:text-slate-400">
+                  No hay fichas que coincidan con la búsqueda o el estado seleccionado.
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 xl:grid-cols-3">
+                  {filteredDetailRows.map((row) => {
+                    const stateMeta = REPORT_STATE_META[row.state] || REPORT_STATE_META.active;
+                    const registrantName = row.registeredBy || 'Usuario registrador';
+                    const institutionName =
+                      row.institution ||
+                      (looksLikeInstitutionValue(row.displayName) ? row.displayName : 'Institución no registrada');
+                    return (
+                      <article key={row.id} className="group flex min-h-[230px] flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm transition hover:shadow-md dark:border-[#a9927d]/35 dark:bg-[#171d23]">
+                        <div className="flex-1 p-6">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="flex min-w-0 items-center gap-3">
+                              <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-cyan-100 text-sm font-bold text-cyan-800 dark:bg-cyan-400/15 dark:text-cyan-100">
+                                {getInitials(registrantName)}
+                              </span>
+                              <div className="min-w-0">
+                                <p className="truncate text-sm font-semibold text-slate-900 dark:text-slate-100">{registrantName}</p>
+                              </div>
+                            </div>
+                            <span className={`rounded-full border px-2.5 py-1 text-[10px] font-bold uppercase ${stateMeta.className}`}>
+                              {stateMeta.label}
+                            </span>
+                          </div>
+
+                          <div className="mt-4 rounded-lg border border-slate-100 bg-slate-50 px-3 py-3 dark:border-[#a9927d]/20 dark:bg-[#22333b]">
+                            <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Institución educativa</p>
+                            <p className="mt-1 line-clamp-2 text-sm font-bold text-slate-900 dark:text-slate-100">{institutionName}</p>
+                          </div>
+
+                          <div className="mt-4">
+                            <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Fecha registro</p>
+                            <p className="mt-1 text-sm font-semibold text-cyan-700 dark:text-cyan-200">{row.updatedDateLabel}</p>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-1 border-t border-slate-100 bg-slate-50 p-4 dark:border-[#a9927d]/20 dark:bg-[#151c23]">
+                          <button
+                            type="button"
+                            onClick={() => openReport(row)}
+                            className="inline-flex h-8 w-8 items-center justify-center rounded-md text-slate-500 transition hover:bg-white hover:text-cyan-700 dark:text-slate-300 dark:hover:bg-white/10 dark:hover:text-cyan-100"
+                            title="Ver ficha"
+                          >
+                            <Eye size={16} />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => openReport(row)}
+                            className="inline-flex h-8 w-8 items-center justify-center rounded-md text-slate-500 transition hover:bg-white hover:text-cyan-700 dark:text-slate-300 dark:hover:bg-white/10 dark:hover:text-cyan-100"
+                            title="Editar ficha"
+                          >
+                            <Pencil size={16} />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => openPdf(row.template, row.instance)}
+                            disabled={pdfLoadingId === row.id || !row.template}
+                            className="inline-flex h-8 w-8 items-center justify-center rounded-md text-slate-500 transition hover:bg-white hover:text-cyan-700 disabled:cursor-not-allowed disabled:opacity-50 dark:text-slate-300 dark:hover:bg-white/10 dark:hover:text-cyan-100"
+                            title="Descargar PDF"
+                          >
+                            {pdfLoadingId === row.id ? <Loader2 size={15} className="animate-spin" /> : <FileText size={16} />}
+                          </button>
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+              )}
+            </section>
           </div>
         )}
       </Card>
